@@ -138,7 +138,6 @@ describe("kids conversation", () => {
       message: "Can we practice?",
       idempotencyKey: expect.any(String),
       deliver: false,
-      suppressCommandInterpretation: true,
     });
   });
 

@@ -295,7 +295,6 @@ export class KidsConversation {
         message,
         idempotencyKey: generateUUID(),
         deliver: false,
-        suppressCommandInterpretation: true,
       },
     });
   }

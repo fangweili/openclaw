@@ -58,12 +58,15 @@ the microphone still stops synchronously and the Gateway owns remote expiry.
 
 ## Build and verification
 
-Use the exact source release deployed with the Gateway. From the repository root:
+Use the exact reviewed source release in an isolated checkout whose build outputs
+are not used by a running Gateway. From that checkout's repository root:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
 pnpm --dir ui exec vite build --config vite.kids.config.ts
+mkdir -p dist/extensions/kids-ui/assets
+cp -R extensions/kids-ui/assets/. dist/extensions/kids-ui/assets/
 node scripts/run-vitest.mjs run --config test/vitest/vitest.ui.config.ts ui/src/kids/conversation.test.ts ui/src/kids/voice.test.ts ui/src/kids/notifications.test.ts
 node scripts/run-vitest.mjs run --config test/vitest/vitest.ui-e2e.config.ts --configLoader runner ui/src/kids/app.e2e.test.ts
 ```
@@ -75,11 +78,18 @@ use `scripts/lib/ui-build-environment.mts`; Vite does not import the CLI owner
 that publishes output or manages child processes. Missing or stale build
 provenance stops production builds with guidance to rebuild the Gateway. Keep the
 checkout and build environment unchanged between these commands, and rebuild both
-artifacts after source changes. A development server is not a deployable bundle.
+artifacts and repeat the asset copy after source changes or a Gateway rebuild. A
+development server is not a deployable bundle. Never rebuild or copy build output
+into a checkout serving a running Gateway.
 
-The kids build writes `extensions/kids-ui/assets/`. The hosting plugin README owns
-installation and rollback. Preview and tests use isolated ports and synthetic
-profiles; they never send a Slack message or open a paid voice call.
+The optional kids build writes `extensions/kids-ui/assets/`; the copy step places
+those assets beside the compiled bundled plugin. Deploy the complete matching
+Gateway installation tree, then enable bundled `kids-ui` as described in the
+[hosting plugin README](../../../extensions/kids-ui/README.md#deployment).
+That document owns activation and rollback; linked source and a detached compiled
+plugin directory are not supported deployment paths. Preview and tests use
+isolated ports and synthetic profiles; they never send a Slack message or open a
+paid voice call.
 
 Each child needs an individual verified login, one allowed tutor agent, own-session
 access, and `operator.sessions.write` plus `operator.talk` in both identity grants

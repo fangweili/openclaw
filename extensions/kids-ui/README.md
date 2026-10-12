@@ -17,11 +17,11 @@ cached immutably. Missing or unsafe assets return 404; a missing entry page
 returns 503 with an installation message. A later request can recover after the
 build is installed without retaining a failed read.
 
-Build the kids frontend with Vite's base set to `/kids/` and output set to
-`extensions/kids-ui/assets`. Install the complete plugin directory, including
-those generated assets, using the host's local plugin install workflow. Keep the
-Gateway and frontend on the tested release, 2026.10.1. The asset directory is a
-build artifact and is intentionally absent from Git.
+The kids frontend is an optional, separate build with Vite's base set to `/kids/`.
+Vite writes `extensions/kids-ui/assets`; deployment copies that tree beside the
+compiled bundled plugin at `dist/extensions/kids-ui/assets`. These generated
+assets are intentionally absent from Git. Keep the Gateway and frontend on the
+same reviewed source release and build identity.
 
 The static route uses `auth: "plugin"` because there is no private data in its
 response. It is accessible wherever the Gateway HTTP listener is reachable;
@@ -39,18 +39,40 @@ conversation; existing Slack-only jobs are not migrated by plugin installation.
 
 ## Deployment
 
-After building and reviewing the assets, install this local plugin on the Gateway
-host (installation enables the plugin and changes live configuration):
+Prepare the reviewed source release in an isolated checkout whose build outputs
+are not used by a running Gateway. From that checkout's repository root:
 
 ```sh
-openclaw plugins install --link /absolute/path/to/extensions/kids-ui --force --accept-capabilities
+pnpm install --frozen-lockfile
+pnpm build
+pnpm --dir ui exec vite build --config vite.kids.config.ts
+mkdir -p dist/extensions/kids-ui/assets
+cp -R extensions/kids-ui/assets/. dist/extensions/kids-ui/assets/
 ```
 
-The `--force` flag confirms a reviewed local source; it does not bypass host
-install policy. The linked directory must remain available. Use the normal
-Gateway plugin lifecycle to activate the installed route, then verify `/kids/`
-and its exact built asset hash. Keep any pre-existing installation record for
-rollback; disable `kids-ui` to remove its route without changing the Control UI.
+Build the Gateway first: the kids build validates and embeds its exact
+`dist/build-info.json` identity. Keep the commit and build environment unchanged
+through the build and copy steps. After rebuilding the Gateway, rebuild and copy
+the kids assets again. Do all preparation in the isolated checkout; never rebuild
+or copy build output into a checkout serving a running Gateway.
+
+Deploy the complete matching Gateway installation tree through the host's normal
+deployment workflow, including the full `dist` tree and copied kids assets. The
+compiled plugin imports shared modules from the Gateway's `dist` root, so copying
+only `dist/extensions/kids-ui` is not a standalone plugin installation. Linking
+the source plugin is also unsupported here: its workspace SDK dependency resolves
+outside the plugin root checked by the installer.
+
+Once the matching Gateway tree is installed, enable its bundled plugin on the
+Gateway host (this changes live configuration):
+
+```sh
+openclaw plugins enable kids-ui --accept-capabilities
+```
+
+Verify `/kids/` and the exact built assets it references. Retain the previous
+complete Gateway installation for rollback; `openclaw plugins disable kids-ui`
+removes the route without changing the Control UI.
 
 Install the fork's Gateway changes before enabling notifications for restricted
 profiles. Assign each child a verified individual identity and a role with
