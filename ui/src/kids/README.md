@@ -1,8 +1,8 @@
 # Rocky for kids
 
 This separate frontend opens one child's verified tutor conversation. V1 includes
-text, photos, short videos, live voice, and private notifications. Family messages and groups are
-deferred. There is no agent/model picker, session list, administrative navigation,
+text, photos, short videos, voice dictation, live voice, and private notifications.
+Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
 
@@ -60,6 +60,15 @@ the child's messages and finished assistant replies; voice shows spoken captions
   serializer. Mutable display labels stay out of transcript retry identity.
   Activity collectors can count verified speech without inferring authorship from
   session ownership; legacy unstamped voice remains unknown.
+- `dictation.ts` owns one bounded recording and transcription request. It reuses
+  the microphone acquisition owner and sends compressed audio to the hosting
+  plugin's authenticated `kids.transcribe` method. The existing media-understanding
+  runtime selects the configured audio provider; the browser never chooses a model
+  or receives credentials. Stop inserts speech into the draft for review without
+  sending. The app owns the draft selection and verified binding; late results
+  cannot enter a replaced conversation. Hiding the page or disposing cancels
+  capture and discards late results. Teardown joins admitted work before dropping
+  the connection. Dictation and live calls cannot capture together.
 - `view.ts` renders supplied state and emits actions. Markdown goes through the
   existing sanitizer; messages cannot introduce controls, remote images, raw HTML,
   or session navigation. Views never make permission or routing decisions.
@@ -68,15 +77,17 @@ the child's messages and finished assistant replies; voice shows spoken captions
   open `/kids/`; payload URLs never select a conversation. There is no offline chat
   cache. Current profile, device, agent access, and session ownership are rechecked
   at delivery by the Gateway.
-  While this chat is visible and focused, the connection renews a short-lived
+  While this chat is visible, the connection renews a short-lived
   foreground claim for its own push subscription and exact conversation. The
   Gateway skips that device's completion push while the claim is live; other
-  devices and conversations keep their normal notification behavior. Blur/hide
+  devices and conversations keep their normal notification behavior. Hiding the page
   clears the claim, and disconnect or lease expiry restores delivery if browser
   shutdown prevents cleanup. The worker still displays every received push, as
   required by Safari's Web Push contract.
-- `extensions/kids-ui` serves only public build assets. It neither handles secrets
-  nor proxies privileged calls. The existing Control UI remains a separate app.
+- `extensions/kids-ui` serves public build assets and owns bounded, authenticated
+  dictation requests. Its service joins provider work and deletes private temporary
+  recordings; provider selection and credentials stay with the existing runtime.
+  The existing Control UI remains a separate app.
 
 Every asynchronous owner fences results against its active connection. Startup
 errors leave the composer unavailable; there is no fallback to a main/shared

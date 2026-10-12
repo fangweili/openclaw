@@ -1,13 +1,15 @@
-/** Static hosting only; the browser authenticates tutor access with the Gateway. */
+/** Minimal tutor hosting and bounded dictation; Gateway scopes authorize private requests. */
 import { fileURLToPath } from "node:url";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createKidsUiHandler } from "./src/http.js";
+import { registerKidsTranscription } from "./src/transcription.js";
 
 export default definePluginEntry({
   id: "kids-ui",
   name: "Kids Tutor",
   description: "A minimal browser interface for a child's assigned tutor",
   register(api) {
+    registerKidsTranscription(api);
     api.registerHttpRoute({
       path: "/kids",
       match: "prefix",

@@ -19,6 +19,7 @@ function readyState(): KidsViewState {
       error: null,
     },
     voice: { status: "idle", active: false, detail: null, entries: [] },
+    dictation: { active: false, finishing: false, detail: null },
     draft: privateDraft,
     connectionError: null,
     voiceAllowed: true,
@@ -52,6 +53,7 @@ describe("kids draft privacy", () => {
         attach: vi.fn(),
         removeAttachment: vi.fn(),
         talk: vi.fn(),
+        dictate: vi.fn(),
         retry: vi.fn(),
         notifications: vi.fn(),
       };
@@ -111,6 +113,7 @@ describe("kids media composer", () => {
       attach: vi.fn(),
       removeAttachment: vi.fn(),
       talk: vi.fn(),
+      dictate: vi.fn(),
       retry: vi.fn(),
       notifications: vi.fn(),
     };

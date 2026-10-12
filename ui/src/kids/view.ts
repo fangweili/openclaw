@@ -21,6 +21,7 @@ registerKidsEnglish();
 export type KidsViewState = {
   conversation: KidsConversationState;
   voice: KidsVoiceState;
+  dictation: { active: boolean; finishing: boolean; detail: string | null };
   draft: string;
   connectionError: string | null;
   voiceAllowed: boolean;
@@ -34,6 +35,7 @@ export type KidsViewActions = {
   attach: (files: readonly File[]) => void;
   removeAttachment: (id: string) => void;
   talk: () => void;
+  dictate: () => void;
   retry: () => void;
   notifications: () => void;
 };
@@ -79,6 +81,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const { conversation: chat, voice } = state;
   const calling = voice.active || voice.status === "stopping";
   const ready = chat.status === "ready";
+  const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
   const status = calling
     ? t(`kids.voice.${voice.status}`)
@@ -219,6 +222,8 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       : nothing
                   }
                   ${ready && state.attachments.error ? html`<p class="kids-attachment-error" role="alert">${state.attachments.error}</p>` : nothing}
+                  ${ready && dictating ? html`<p class="kids-dictation-status" role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
+                  ${ready && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
                   <form
                     class="kids-composer"
                     @submit=${(event: SubmitEvent) => {
@@ -257,6 +262,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       placeholder=${t("kids.placeholder")}
                       .value=${ready ? state.draft : ""}
                       ?disabled=${!ready}
+                      ?readonly=${dictating}
                       @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
                       @keydown=${(event: KeyboardEvent) => {
                         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -266,10 +272,20 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       }}
                     ></textarea>
                     <button
+                      class="kids-dictate"
+                      type="button"
+                      aria-label=${t(dictating ? "kids.dictation.stop" : "kids.dictation.start")}
+                      aria-pressed=${dictating}
+                      ?disabled=${!ready || !state.voiceAllowed || state.dictation.finishing}
+                      @click=${actions.dictate}
+                    >
+                      ${dictating ? stop : microphone}
+                    </button>
+                    <button
                       class="kids-send"
                       type="submit"
                       aria-label=${t("kids.send")}
-                      ?disabled=${!ready || chat.busy || state.attachments.reading || (!state.draft.trim() && !state.attachments.items.some((item) => item.status === "ready"))}
+                      ?disabled=${!ready || dictating || chat.busy || state.attachments.reading || (!state.draft.trim() && !state.attachments.items.some((item) => item.status === "ready"))}
                     >
                       ${arrow}
                     </button>
@@ -277,7 +293,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                 </div>
                 <button
                   class="kids-talk"
-                  ?disabled=${!ready || chat.busy || !state.voiceAllowed}
+                  ?disabled=${!ready || dictating || chat.busy || !state.voiceAllowed}
                   @click=${actions.talk}
                 >
                   ${microphone}<span>${t("kids.talk")}</span>

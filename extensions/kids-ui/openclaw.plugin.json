@@ -1,7 +1,7 @@
 {
   "id": "kids-ui",
   "name": "Kids Tutor",
-  "description": "Serves a minimal tutor interface at /kids/",
+  "description": "Serves a minimal tutor interface at /kids/ with private recorded dictation",
   "categories": ["infrastructure"],
   "activation": {
     "onStartup": true

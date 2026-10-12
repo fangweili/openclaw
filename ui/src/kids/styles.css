@@ -431,7 +431,8 @@ html[data-kids] body {
   background: var(--kids-paper);
 }
 
-.kids-attach {
+.kids-attach,
+.kids-dictate {
   flex: 0 0 40px;
   border-radius: 50%;
   background: transparent;
@@ -488,4 +489,16 @@ html[data-kids] body {
   width: 44px;
   border-radius: 50%;
   background: transparent;
+}
+
+.kids-dictate[aria-pressed="true"] {
+  background: var(--kids-tint);
+  color: var(--kids-accent) !important;
+}
+
+.kids-dictation-status {
+  margin: 0 8px 10px;
+  color: var(--kids-muted);
+  font-size: 14px;
+  line-height: 1.5;
 }

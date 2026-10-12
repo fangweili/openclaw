@@ -485,3 +485,84 @@ it("previews photos and videos, sends without text, and keeps mobile focus on th
     await context.close();
   }
 });
+
+it("records dictation into an editable draft and sends only on request", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  try {
+    await context.addInitScript(notificationPermissionFixture);
+    // Observe the actual browser recorder, so finish cannot race microphone startup.
+    await context.addInitScript(() => {
+      const NativeRecorder = MediaRecorder;
+      window.MediaRecorder = class extends NativeRecorder {
+        override start(timeslice?: number) {
+          this.addEventListener(
+            "start",
+            () => {
+              document.documentElement.dataset.recorderStarted = "true";
+            },
+            { once: true },
+          );
+          super.start(timeslice);
+        }
+      };
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const gateway = await installMockGateway(page, {
+      awaitInitialRoster: false,
+      sessionKey,
+      operatorScopes: ["operator.sessions.write", "operator.talk"],
+      methodResponses: {
+        "users.self": { profile },
+        "agents.list": roster,
+        "sessions.create": { key: sessionKey },
+        "chat.history": {
+          sessionId: "student-session",
+          sessionInfo: { sessionId: "student-session", activeLeafEntryId: "leaf-one" },
+          messages: [],
+        },
+        "kids.transcribe": { text: "Can we practice fractions?" },
+      },
+    });
+    await page.goto(baseUrl);
+    await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
+    await page.getByRole("button", { name: "Dictate a message" }).click();
+    await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
+    expect(await page.getByRole("button", { name: "Send message" }).isDisabled()).toBe(true);
+    expect(
+      await page.getByRole("button", { name: "Talk to Rocky", exact: true }).isDisabled(),
+    ).toBe(true);
+    await page.screenshot({ path: path.join(proof, "dictation-recording.png"), fullPage: true });
+    examples.push({ id: "dictation-recording", label: "Recording a message" });
+    await page.getByRole("button", { name: "Finish dictation" }).click();
+    const request = await gateway.waitForRequest("kids.transcribe");
+    expect(request.params).toEqual({
+      audioBase64: expect.any(String),
+      mimeType: expect.stringMatching(/^audio\/(webm|mp4|ogg)/),
+    });
+    expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
+    const composer = page.getByLabel("Message Rocky", { exact: true });
+    await page.waitForFunction(
+      () =>
+        document.querySelector<HTMLTextAreaElement>("textarea")?.value ===
+        "Can we practice fractions?",
+    );
+    expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+    await composer.fill("Can we practice fractions together?");
+    await page.screenshot({ path: path.join(proof, "dictation-draft.png"), fullPage: true });
+    examples.push({ id: "dictation-draft", label: "Review and edit before sending" });
+    await page.getByRole("button", { name: "Send message" }).click();
+    const send = await gateway.waitForRequest("chat.send");
+    expect(send.params).toMatchObject({
+      sessionKey,
+      message: "Can we practice fractions together?",
+      deliver: false,
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});

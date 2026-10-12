@@ -205,9 +205,10 @@ describe("kids notifications", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("keeps only the focused visible tutor quiet, renews its lease, and clears on disposal", async () => {
+  it("keeps an on-screen tutor quiet without keyboard focus and restores alerts when hidden", async () => {
     const f = fixture();
     f.existing();
+    f.hasFocus.mockReturnValue(false);
     await f.owner.initialize();
     expect(f.request).toHaveBeenCalledWith(
       "push.web.foreground",
@@ -226,8 +227,18 @@ describe("kids notifications", () => {
       }),
       expect.anything(),
     );
-    f.hasFocus.mockReturnValue(false);
     window.dispatchEvent(new Event("blur"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.request).toHaveBeenLastCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: "agent:tutor:kids:fixture",
+      },
+      expect.anything(),
+    );
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(f.request).toHaveBeenLastCalledWith(
       "push.web.foreground",
@@ -240,8 +251,8 @@ describe("kids notifications", () => {
     f.request.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(f.request).not.toHaveBeenCalled();
-    f.hasFocus.mockReturnValue(true);
-    window.dispatchEvent(new Event("focus"));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(f.request).toHaveBeenLastCalledWith(
       "push.web.foreground",
@@ -276,7 +287,7 @@ describe("kids notifications", () => {
       }
       return {};
     });
-    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
     await claimed.promise;
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     document.dispatchEvent(new Event("visibilitychange"));

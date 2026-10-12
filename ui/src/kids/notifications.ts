@@ -3,8 +3,9 @@
  * worker. The shared Web Push owner handles subscription identity, VAPID, and
  * rollback; Gateway authorization owns which replies this device may receive.
  * This surface fixes device preferences to private tutor-reply notifications.
- * A focused visible document renews a short connection-local foreground claim;
- * blur/hide/retirement clear it. Failed claims expire without muting offline push.
+ * A visible document renews a short connection-local foreground claim. This
+ * single-conversation app stays quiet while on screen, regardless of keyboard
+ * focus; hide/retirement clear it. Failed claims expire without muting offline push.
  * The worker always displays received pushes, as Safari requires.
  *
  * initialize() never prompts. enable() must run directly in a user gesture.
@@ -238,8 +239,6 @@ export class KidsNotifications {
     if (preferences.enabled) {
       if (!this.foregroundEndpoint) {
         document.addEventListener("visibilitychange", this.refreshForeground);
-        window.addEventListener("focus", this.refreshForeground);
-        window.addEventListener("blur", this.leaveForeground);
         window.addEventListener("pageshow", this.refreshForeground);
         window.addEventListener("pagehide", this.leaveForeground);
       }
@@ -253,10 +252,8 @@ export class KidsNotifications {
     this.publish({ status: preferences.enabled ? "enabled" : "off", detail: null });
   }
 
-  /** Coalesce focus changes behind one bounded request; renewed leases never persist preferences. */
-  private updateForeground(
-    active = document.visibilityState === "visible" && document.hasFocus(),
-  ): Promise<void> {
+  /** Coalesce visibility changes behind one bounded request; leases never persist preferences. */
+  private updateForeground(active = document.visibilityState === "visible"): Promise<void> {
     if (!this.foregroundEndpoint) {
       return Promise.resolve();
     }
@@ -300,8 +297,6 @@ export class KidsNotifications {
   /** Remove document listeners synchronously, clear the lease, and join accepted foreground work. */
   private async stopForeground(): Promise<void> {
     document.removeEventListener("visibilitychange", this.refreshForeground);
-    window.removeEventListener("focus", this.refreshForeground);
-    window.removeEventListener("blur", this.leaveForeground);
     window.removeEventListener("pageshow", this.refreshForeground);
     window.removeEventListener("pagehide", this.leaveForeground);
     await this.updateForeground(false);

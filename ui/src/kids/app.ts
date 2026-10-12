@@ -1,6 +1,6 @@
 /**
  * Document owner: one same-origin Gateway connection, one authenticated tutor
- * conversation, and at most one microphone call. Reconnect retires old voice
+ * conversation, and at most one microphone capture (dictation or a live call). Reconnect retires old voice
  * before binding the next verified identity. No URL parameter, shared token,
  * local session selection, or model preference can redirect this surface.
  *
@@ -17,13 +17,17 @@ import { createApplicationConfigCapability } from "../app/config.ts";
 import { CONTROL_UI_BUILD_INFO } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import { insertComposerDictation } from "../pages/chat/composer-dictation.ts";
 import { KidsAttachments } from "./attachments.ts";
 import { KidsConversation, type KidsConversationState } from "./conversation.ts";
+import { KidsDictation } from "./dictation.ts";
 import { KidsNotifications } from "./notifications.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
 
 registerKidsEnglish();
+
+const idleDictation = () => ({ active: false, finishing: false, detail: null as string | null });
 
 const idleVoice = (): KidsVoiceState => ({
   status: "idle",
@@ -38,6 +42,7 @@ export class KidsApp {
   private readonly uploads = createApplicationConfigCapability({ resourceBasePath: "" });
   private readonly attachments: KidsAttachments;
   private voice: KidsVoice | null = null;
+  private dictation: KidsDictation | null = null;
   private notifications: KidsNotifications | null = null;
   private capabilityRetirement: Promise<unknown> = Promise.resolve();
   private generation = 0;
@@ -85,6 +90,7 @@ export class KidsApp {
     this.snapshot = {
       conversation: this.conversation.state,
       voice: idleVoice(),
+      dictation: idleDictation(),
       draft: "",
       connectionError: null,
       voiceAllowed: false,
@@ -148,6 +154,7 @@ export class KidsApp {
   }
 
   private retireCapabilities(): void {
+    this.retireDictation();
     this.configAbort?.abort();
     this.configAbort = null;
     const voice = this.voice;
@@ -204,6 +211,7 @@ export class KidsApp {
     if (conversation.sessionKey && conversation.sessionId) {
       const binding = `${conversation.sessionKey}\0${conversation.sessionId}`;
       if (binding !== this.boundSession) {
+        this.retireDictation();
         this.boundSession = binding;
         this.snapshot.draft = "";
       }
@@ -251,6 +259,8 @@ export class KidsApp {
       this.snapshot.conversation.status !== "ready" ||
       this.snapshot.conversation.busy ||
       this.snapshot.attachments.reading ||
+      this.snapshot.dictation.active ||
+      this.snapshot.dictation.finishing ||
       this.voice?.state.active ||
       this.snapshot.voice.status === "stopping"
     ) {
@@ -275,7 +285,13 @@ export class KidsApp {
 
   private async talk(): Promise<void> {
     const voice = this.voice;
-    if (!voice || !this.snapshot.voiceAllowed || this.snapshot.voice.status === "stopping") {
+    if (
+      !voice ||
+      !this.snapshot.voiceAllowed ||
+      this.snapshot.voice.status === "stopping" ||
+      this.snapshot.dictation.active ||
+      this.snapshot.dictation.finishing
+    ) {
       return;
     }
     try {
@@ -286,6 +302,72 @@ export class KidsApp {
       }
     } catch {
       // The voice owner publishes the redacted, actionable failure.
+    }
+  }
+
+  /** Dictation edits only the current draft; it never sends or creates a tutor turn. */
+  private async dictate(): Promise<void> {
+    if (this.disposed || this.snapshot.dictation.finishing) {
+      return;
+    }
+    if (this.dictation?.state.active) {
+      await this.dictation.finish();
+      return;
+    }
+    if (
+      this.snapshot.conversation.status !== "ready" ||
+      !this.snapshot.voiceAllowed ||
+      this.voice?.state.active ||
+      this.snapshot.voice.status === "stopping"
+    ) {
+      return;
+    }
+    this.retireDictation();
+    const field = this.root.querySelector<HTMLTextAreaElement>("#kids-message");
+    const target = {
+      binding: this.boundSession,
+      value: this.snapshot.draft,
+      start: field?.selectionStart ?? this.snapshot.draft.length,
+      end: field?.selectionEnd ?? this.snapshot.draft.length,
+    };
+    const generation = this.generation;
+    const current = () =>
+      !this.disposed && generation === this.generation && this.dictation === owner;
+    const owner = new KidsDictation(
+      this.client,
+      (state) => {
+        if (current()) {
+          this.snapshot.dictation = state;
+          this.paint();
+        }
+      },
+      (transcript) => {
+        if (!current() || target.binding !== this.boundSession) {
+          return;
+        }
+        // Preserve an edit made while transcription was pending; never replay
+        // the captured draft over newer text.
+        const unchanged = this.snapshot.draft === target.value;
+        this.snapshot.draft = insertComposerDictation(
+          this.snapshot.draft,
+          transcript,
+          unchanged ? target.start : this.snapshot.draft.length,
+          unchanged ? target.end : this.snapshot.draft.length,
+        ).value;
+        this.paint();
+      },
+    );
+    this.dictation = owner;
+    await owner.start();
+  }
+
+  /** Fence draft callbacks, stop capture now, and join remote cleanup before transport retirement. */
+  private retireDictation(): void {
+    const owner = this.dictation;
+    this.dictation = null;
+    this.snapshot.dictation = idleDictation();
+    if (owner) {
+      this.capabilityRetirement = Promise.allSettled([this.capabilityRetirement, owner.dispose()]);
     }
   }
 
@@ -310,6 +392,7 @@ export class KidsApp {
         },
         removeAttachment: (id) => this.attachments.remove(id),
         talk: () => void this.talk(),
+        dictate: () => void this.dictate(),
         retry: () => void this.retry(),
         notifications: () => {
           const owner = this.notifications;

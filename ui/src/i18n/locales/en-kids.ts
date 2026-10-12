@@ -20,6 +20,17 @@ const enKids = {
     placeholder: "Ask Rocky anything…",
     send: "Send message",
     talk: "Talk to Rocky",
+    dictation: {
+      start: "Dictate a message",
+      stop: "Finish dictation",
+      listening: "Listening… Tap stop when you’re done.",
+      finishing: "Finishing your words…",
+      unsupported:
+        "This browser can’t record a message. You can use your keyboard’s microphone instead.",
+      tooLarge: "That recording is too long. Try a shorter message.",
+      failed: "Your recording could not be transcribed. Try again.",
+      noSpeech: "No words were found. Try recording again.",
+    },
     endCall: "End call",
     liveVoice: "Live conversation with Rocky",
     voiceHint: "Just talk naturally. You can interrupt me anytime.",

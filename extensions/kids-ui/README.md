@@ -1,14 +1,14 @@
 # Kids Tutor hosting
 
 This optional, private plugin serves the minimal tutor app at `/kids/` on the
-existing Gateway origin. It owns only public static files from its adjacent
-`assets/` directory. It does not replace the Control UI, register tools, create
+existing Gateway origin. It owns public static files from its adjacent
+`assets/` directory and bounded private dictation requests. It does not replace the Control UI, register tools, create
 sessions, grant permissions, or handle credentials. The browser connects directly
 to the Gateway's authenticated WebSocket; configured identity and agent policies
 remain authoritative.
 
 The Gateway plugin registry installs and removes the route with the plugin.
-Requests run independently with no retained mutable state or background work.
+Static requests run independently with no retained mutable state or background work.
 The public file-access SDK bounds each read to 8 MiB, enforces directory
 containment, and closes file handles before the response. Only web asset types
 are served; source maps, arbitrary JSON, and directory listings are unavailable.
@@ -22,6 +22,31 @@ Vite writes `extensions/kids-ui/assets`; deployment copies that tree beside the
 compiled bundled plugin at `dist/extensions/kids-ui/assets`. These generated
 assets are intentionally absent from Git. Keep the Gateway and frontend on the
 same reviewed source release and build identity.
+
+## Recorded dictation
+
+`kids.transcribe` accepts only `{ audioBase64, mimeType }` and returns `{ text }`.
+It requires an authenticated connection and the existing `operator.talk` scope.
+Its profile-independent registration is intentional: it processes only the
+caller's uploaded recording and never selects, reads, or writes a user profile,
+conversation, memory, or message. The browser owns inserting the result into an
+editable draft; sending remains an explicit chat action.
+
+The service admits one request per connection and at most four total. It accepts
+canonical base64 containing at most 1 MiB of WebM, MP4, or Ogg audio. Each request
+owns a mode-700 temporary directory and mode-600 recording, removed after the
+configured media-understanding runtime settles. Provider selection, credentials,
+transcription instructions, and fallback behavior remain with that runtime; the
+plugin never calls a provider directly or changes configuration. Errors expose
+fixed recovery instructions instead of provider details or recording contents.
+
+Authority and service lifetime are checked after preparation and before invoking
+the runtime and returning text. Disconnect or revocation discards the result.
+Service shutdown closes admission and joins accepted work and file cleanup;
+restart creates fresh capacity. The runtime receives a 30-second timeout hint.
+Its configured per-model timeout and fallback behavior remain authoritative, so
+this is not a total request deadline. The SDK cannot cancel an admitted provider
+call; shutdown and file cleanup therefore wait for it to settle.
 
 The static route uses `auth: "plugin"` because there is no private data in its
 response. It is accessible wherever the Gateway HTTP listener is reachable;
