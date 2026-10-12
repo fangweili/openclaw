@@ -155,6 +155,56 @@ describe("kids notifications", () => {
     }
   });
 
+  it("accepts Disable while the independent foreground claim is still pending", async () => {
+    const f = fixture();
+    f.existing();
+    const claiming = createDeferred();
+    const claim = createDeferred();
+    const request = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params) => {
+      if (
+        method === "push.web.foreground" &&
+        (params as { sessionKey: string | null }).sessionKey
+      ) {
+        claiming.resolve();
+        await claim.promise;
+      }
+      return request(method, params);
+    });
+    let initialized = false;
+    const initializing = f.owner.initialize().then(() => {
+      initialized = true;
+    });
+    let disabling: Promise<void> | undefined;
+    try {
+      await claiming.promise;
+      await vi.advanceTimersByTimeAsync(0);
+      const readyBeforeDisable = initialized;
+      expect(f.owner.state.status).toBe("enabled");
+      disabling = f.owner.disable();
+      claim.resolve();
+      await Promise.all([initializing, disabling]);
+      expect(f.unsubscribe).toHaveBeenCalledOnce();
+      expect(readyBeforeDisable).toBe(true);
+      expect(f.owner.state.status).toBe("off");
+      const requests = f.request.mock.calls.map(([method, params]) => ({ method, params }));
+      const clear = requests.findIndex(
+        ({ method, params }) =>
+          method === "push.web.foreground" &&
+          (params as { sessionKey: string | null }).sessionKey === null,
+      );
+      expect(clear).toBeGreaterThanOrEqual(0);
+      expect(requests.findIndex(({ method }) => method === "push.web.unsubscribe")).toBeGreaterThan(
+        clear,
+      );
+    } finally {
+      claim.resolve();
+      await Promise.all([initializing, disabling]);
+      await f.owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("keeps only the focused visible tutor quiet, renews its lease, and clears on disposal", async () => {
     const f = fixture();
     f.existing();

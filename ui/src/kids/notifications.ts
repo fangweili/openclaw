@@ -235,7 +235,6 @@ export class KidsNotifications {
       preferences,
     });
     this.lifetime.signal.throwIfAborted();
-    this.publish({ status: preferences.enabled ? "enabled" : "off", detail: null });
     if (preferences.enabled) {
       if (!this.foregroundEndpoint) {
         document.addEventListener("visibilitychange", this.refreshForeground);
@@ -245,10 +244,13 @@ export class KidsNotifications {
         window.addEventListener("pagehide", this.leaveForeground);
       }
       this.foregroundEndpoint = subscription.endpoint;
-      await this.updateForeground();
+      // Foreground refresh has its own lifetime; it must not hold the settings
+      // operation after Enable/Disable becomes available. Cleanup still joins it.
+      void this.updateForeground();
     } else {
       await this.stopForeground();
     }
+    this.publish({ status: preferences.enabled ? "enabled" : "off", detail: null });
   }
 
   /** Coalesce focus changes behind one bounded request; renewed leases never persist preferences. */
