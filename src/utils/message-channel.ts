@@ -57,7 +57,10 @@ export function isEphemeralGatewayClient(client?: GatewayClientInfoLike | null):
   );
 }
 
-/** Return whether a client is one of the operator UI clients. */
+/**
+ * Management UI classification, also used by Control UI pairing/auth policy.
+ * Browser policy membership alone must not grant these management exemptions.
+ */
 export function isOperatorUiClient(client?: GatewayClientInfoLike | null): boolean {
   const clientId = normalizeGatewayClientName(client?.id);
   return (
@@ -67,12 +70,13 @@ export function isOperatorUiClient(client?: GatewayClientInfoLike | null): boole
   );
 }
 
-/** Return whether a client is the browser Control UI. */
+/** Browser clients sharing origin, profile, and session policy; no pairing exemption. */
 export function isBrowserOperatorUiClient(client?: GatewayClientInfoLike | null): boolean {
   const clientId = normalizeGatewayClientName(client?.id);
   return (
     clientId === GATEWAY_CLIENT_NAMES.CONTROL_UI ||
-    clientId === GATEWAY_CLIENT_NAMES.BROWSER_COPILOT
+    clientId === GATEWAY_CLIENT_NAMES.BROWSER_COPILOT ||
+    clientId === GATEWAY_CLIENT_NAMES.WEBCHAT_UI
   );
 }
 

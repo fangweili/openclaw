@@ -89,6 +89,21 @@ describe("message-channel", () => {
     expect(isBrowserCopilotClient({ id: "openclaw-browser-copilot", mode: "webchat" })).toBe(true);
   });
 
+  it.each([
+    ["openclaw-control-ui", true, true],
+    ["openclaw-browser-copilot", true, true],
+    ["webchat-ui", true, false],
+    [" WEBCHAT-UI ", true, false],
+    ["openclaw-tui", false, true],
+    ["test-client", false, false],
+  ])(
+    "separates browser policy from management UI classification for %s",
+    (id, browser, operator) => {
+      expect(isBrowserOperatorUiClient({ id })).toBe(browser);
+      expect(isOperatorUiClient({ id })).toBe(operator);
+    },
+  );
+
   it("normalizes plugin aliases when registered", () => {
     setActivePluginRegistry(
       createTestRegistry([

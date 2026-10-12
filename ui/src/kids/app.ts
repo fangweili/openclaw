@@ -9,6 +9,7 @@
  * only and are cleared when the verified profile changes. Completed calls keep
  * text and new calls blocked until saved history supplies the current branch.
  */
+import { GATEWAY_CLIENT_NAMES } from "@openclaw/gateway-client/browser";
 import { render } from "lit";
 import { roleScopesAllow } from "../../../src/shared/operator-scope-compat.js";
 import { GatewayBrowserClient, type GatewayHelloOk } from "../api/gateway.ts";
@@ -59,6 +60,8 @@ export class KidsApp {
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     this.client = new GatewayBrowserClient({
       url: url.href,
+      // A private chat client needs canonical device pairing for offline push authority.
+      clientName: GATEWAY_CLIENT_NAMES.WEBCHAT_UI,
       clientVersion: CONTROL_UI_BUILD_INFO.version ?? undefined,
       clientBuildId: CONTROL_UI_BUILD_INFO.buildId,
       scopes: ["operator.sessions.write", "operator.talk"],

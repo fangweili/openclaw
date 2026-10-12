@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { shouldSkipControlUiPairing } from "../../../src/gateway/server/ws-connection/connect-policy.js";
 import { resolveControlUiBuildMismatch } from "../../../src/gateway/server/ws-connection/control-ui-build-admission.js";
 import { resolveKidsBuildInfo } from "../../vite.kids.config.ts";
 import { buildBrowserGatewayConnectPlan } from "../api/gateway-connect-plan.ts";
@@ -74,9 +75,8 @@ describe("kids production build identity", () => {
     expect(() => resolveKidsBuildInfo({ ...sources(), ...changes })).toThrow("Run pnpm build");
   });
 
-  it("advertises the kids artifact identity through the real connect plan and enforces matching admission", async () => {
-    // No browser signing or network is required to exercise build admission.
-    vi.stubGlobal("crypto", { randomUUID: () => "fixture-build-request" });
+  it("uses the paired WebChat route and enforces matching artifact admission through the real connect plan", async () => {
+    // Local browser signing exercises the real plan without opening a connection.
     const app = new KidsApp(document.createElement("div"));
     try {
       const opts = captured.options;
@@ -94,10 +94,21 @@ describe("kids production build identity", () => {
         onDeviceIdentityReady: () => undefined,
       });
       expect(plan.params.client).toMatchObject({
-        id: "openclaw-control-ui",
+        id: "webchat-ui",
         version: captured.buildInfo.version,
         buildId: resolveKidsBuildInfo(sources()).buildId,
       });
+      expect(plan.params.scopes).toEqual(["operator.sessions.write", "operator.talk"]);
+      expect(plan.params.device).toBeDefined();
+      expect(
+        shouldSkipControlUiPairing({
+          isControlUi: plan.params.client.id === "openclaw-control-ui",
+          device: plan.params.device,
+          role: "operator",
+          authMode: "token",
+          authMethod: "tailscale",
+        }),
+      ).toBeNull();
       const admission = {
         clientId: plan.params.client.id,
         clientBuildId: plan.params.client.buildId,

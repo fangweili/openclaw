@@ -13,6 +13,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   callbacks, retires microphone work, then admits the next authenticated context.
   A retained draft stays hidden until that conversation is ready again; binding a
   different verified profile or backing session clears it.
+  It identifies as the canonical WebChat UI, requiring an approved signed browser
+  device even when Tailscale authenticates the person. The Control UI's Tailscale
+  pairing bypass cannot establish the durable device authority used by Web Push.
 - `conversation.ts` asks `users.self` and the access-filtered `agents.list`. Only a
   verified non-shared profile with exactly one accessible agent is admitted. It
   derives one stable key from those server facts and asks the Gateway to create or

@@ -51,69 +51,74 @@ function requesterProfile(text: string) {
 }
 
 describe("prepareChatSendUserTurn", () => {
-  it.each([
-    { profileId: "profile-ada", synthetic: false, verified: true, allowed: true },
-    { profileId: "profile-other", synthetic: false, verified: true, allowed: false },
-    { profileId: "profile-ada", synthetic: true, verified: true, allowed: false },
-    { profileId: "profile-ada", synthetic: false, verified: false, allowed: false },
-  ])(
-    "projects the verified requester without changing command allowlists: %j",
-    async ({ profileId, synthetic, verified, allowed }) => {
-      const { controller } = createUserTurnInputController("/status");
-      const prepared = await prepareChatSendUserTurn({
-        request: {
-          inboundMessage: "/status",
-          clientInfo: createClientInfo({
-            id: GATEWAY_CLIENT_IDS.CONTROL_UI,
-            mode: GATEWAY_CLIENT_MODES.UI,
+  for (const clientId of [GATEWAY_CLIENT_IDS.CONTROL_UI, GATEWAY_CLIENT_IDS.WEBCHAT_UI]) {
+    it.each([
+      { profileId: "profile-ada", synthetic: false, verified: true, allowed: true },
+      { profileId: "profile-other", synthetic: false, verified: true, allowed: false },
+      { profileId: "profile-ada", synthetic: true, verified: true, allowed: false },
+      { profileId: "profile-ada", synthetic: false, verified: false, allowed: false },
+    ])(
+      `projects the verified requester for ${clientId} without changing command allowlists: %j`,
+      async ({ profileId, synthetic, verified, allowed }) => {
+        const clientInfo = createClientInfo({
+          id: clientId,
+          mode: GATEWAY_CLIENT_MODES.WEBCHAT,
+        });
+        const { controller } = createUserTurnInputController("/status");
+        const prepared = await prepareChatSendUserTurn({
+          request: {
+            inboundMessage: "/status",
+            clientInfo,
+            suppressCommandInterpretation: false,
+            systemInputProvenance: undefined,
+            systemProvenanceReceipt: undefined,
+          },
+          session: { agentId: "main", clientRunId: "run-1", sessionKey: "agent:main:main" },
+          admission: {
+            originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
+          },
+          attachments: createAttachments({ parsedMessage: "/status" }),
+          client: {
+            authenticatedUserId: verified ? "ada@example.test" : undefined,
+            authenticatedUserProfile: {
+              profileId,
+              displayName: "Ada",
+              hasAvatar: false,
+              updatedAt: 1,
+            },
+            internal: synthetic ? { syntheticClient: true } : undefined,
+            connect: {
+              minProtocol: 1,
+              maxProtocol: 1,
+              client: clientInfo,
+              scopes: ["operator.write"],
+            },
+          },
+          logGateway: { warn: vi.fn() } as never,
+          userTurn: controller,
+        });
+        expect(
+          resolveCommandAuthorization({
+            ctx: finalizeInboundContext({ ...prepared.ctx }),
+            cfg: {
+              commands: { ownerAllowFrom: ["profile-ada"], allowFrom: { "*": ["profile-ada"] } },
+            },
+            commandAuthorized: prepared.ctx.CommandAuthorized === true,
           }),
-          suppressCommandInterpretation: false,
-          systemInputProvenance: undefined,
-          systemProvenanceReceipt: undefined,
-        },
-        session: { agentId: "main", clientRunId: "run-1", sessionKey: "agent:main:main" },
-        admission: {
-          originatingRoute: { originatingChannel: "webchat", explicitDeliverRoute: false },
-        },
-        attachments: createAttachments({ parsedMessage: "/status" }),
-        client: {
-          authenticatedUserId: verified ? "ada@example.test" : undefined,
-          authenticatedUserProfile: {
-            profileId,
-            displayName: "Ada",
-            hasAvatar: false,
-            updatedAt: 1,
-          },
-          internal: synthetic ? { syntheticClient: true } : undefined,
-          connect: {
-            minProtocol: 1,
-            maxProtocol: 1,
-            client: createClientInfo({ id: GATEWAY_CLIENT_IDS.CONTROL_UI }),
-            scopes: ["operator.write"],
-          },
-        },
-        logGateway: { warn: vi.fn() } as never,
-        userTurn: controller,
-      });
-      expect(
-        resolveCommandAuthorization({
-          ctx: finalizeInboundContext({ ...prepared.ctx }),
-          cfg: {
-            commands: { ownerAllowFrom: ["profile-ada"], allowFrom: { "*": ["profile-ada"] } },
-          },
-          commandAuthorized: prepared.ctx.CommandAuthorized === true,
-        }),
-      ).toMatchObject({ senderIsOwner: allowed, isAuthorizedSender: allowed });
-      const ctx = finalizeInboundContext({ ...prepared.ctx });
-      const prompt = buildInboundUserContextPrefix(ctx);
-      if (verified && !synthetic) {
-        expect(requesterProfile(prompt)).toEqual({ id: profileId, display_name: "Ada" });
-      } else {
-        expect(prompt).not.toContain("requester_profile");
-      }
-      expect(prepared.ctx).not.toHaveProperty("SenderId");
-    },
-  );
+        ).toMatchObject({ senderIsOwner: allowed, isAuthorizedSender: allowed });
+        const ctx = finalizeInboundContext({ ...prepared.ctx });
+        const prompt = buildInboundUserContextPrefix(ctx);
+        if (verified && !synthetic) {
+          expect(requesterProfile(prompt)).toEqual({ id: profileId, display_name: "Ada" });
+        } else {
+          expect(prompt).not.toContain("requester_profile");
+        }
+        expect(prepared.ctx.SenderId).toBe(
+          clientId === GATEWAY_CLIENT_IDS.WEBCHAT_UI && !synthetic ? clientId : undefined,
+        );
+      },
+    );
+  }
 
   it.each(["profile", "synthetic", "profileless", "profileless-ui", "system"] as const)(
     "records only accepted authenticated external input after retargeting: %s",

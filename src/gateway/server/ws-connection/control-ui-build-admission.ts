@@ -7,8 +7,10 @@ type ControlUiBuildMismatch = {
 };
 
 /**
- * The Gateway owns bundled same-origin UI admission. Browser code still owns
- * reload, but an older document must never become an RPC-capable session.
+ * The Gateway owns bundled same-origin Control UI and Webchat UI admission.
+ * Browser code still owns reload, but an older document must never become an
+ * RPC-capable session. This artifact check does not classify management clients
+ * or select pairing exemptions.
  *
  * The exemptions are deliberate, not gaps (ui/AGENTS.md "Gateway Coupling"):
  * configured roots serve an independently built artifact the Gateway owns no
@@ -29,7 +31,8 @@ export function resolveControlUiBuildMismatch(params: {
   const gatewayBuildId = params.gatewayBuildId?.trim();
   const clientBuildId = params.clientBuildId?.trim();
   if (
-    params.clientId !== GATEWAY_CLIENT_IDS.CONTROL_UI ||
+    (params.clientId !== GATEWAY_CLIENT_IDS.CONTROL_UI &&
+      params.clientId !== GATEWAY_CLIENT_IDS.WEBCHAT_UI) ||
     params.configuredControlUiRoot ||
     !gatewayBuildId ||
     clientBuildId === "dev" ||
