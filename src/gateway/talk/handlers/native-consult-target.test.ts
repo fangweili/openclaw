@@ -250,7 +250,8 @@ it.each([undefined, "main"])(
   async (sessionKey) => {
     config.session = { scope: "global" };
     const { sessionId } = await createRelayCall();
-    expect(providerInstructions).toBe(REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS);
+    expect(providerInstructions).toContain(REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS);
+    expect(providerInstructions).toContain('"selected_agent":{"id":"voice"}');
     await replaceSessionEntry(
       { agentId: "primary", sessionKey: "global" },
       {
@@ -748,12 +749,7 @@ it("restores bounded relay history after the original voice provider finishes cl
     expect(instructions).not.toContain("HISTORY_ENTRY_00");
     expect([...instructions.matchAll(/HISTORY_ENTRY_\d{2}/gu)].length).toBeLessThanOrEqual(16);
     expect(
-      Buffer.byteLength(
-        instructions.slice(
-          configuredInstructions.length + 2 + REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS.length,
-        ),
-        "utf8",
-      ),
+      Buffer.byteLength(instructions.slice(requests[0]!.instructions!.length), "utf8"),
     ).toBeLessThanOrEqual(8_000);
 
     await expect(
@@ -773,6 +769,48 @@ it("restores bounded relay history after the original voice provider finishes cl
 });
 
 describe.each(["browser", "relay"] as const)("native %s Talk consultation", (transport) => {
+  it.each(["learner", "parent"] as const)(
+    "preserves admitted agent and %s identity through the actual embedded consult boundary",
+    async (caller) => {
+      config.agents!.entries!.voice = { workspace: state.workspaceDir, name: "Indigo tutor" };
+      const profile = ensureProfileForEmail(`${caller}@example.test`);
+      client = {
+        ...sharingPolicyClient({
+          user: profile.id,
+          displayName: caller === "learner" ? "Indigo" : "Parent",
+        }),
+        connId: "native-consult-client",
+      };
+      client.connect.client.id = "webchat-ui";
+      const respond = await dispatch(
+        transport === "browser" ? "talk.client.create" : "talk.session.create",
+        {
+          sessionKey: "main",
+          mode: "realtime",
+          transport: transport === "browser" ? "webrtc" : "gateway-relay",
+          brain: "agent-consult",
+          ...(transport === "browser" ? { capabilities: ["gateway-control-v1"] } : {}),
+        },
+      );
+      expect(respond).toHaveBeenCalledWith(true, expect.any(Object), undefined);
+      // The admitted call owns a snapshot even if mutable presentation changes later.
+      client.authenticatedUserProfile!.displayName = "Changed after admission";
+      config.agents!.entries!.voice.name = "Changed tutor name";
+      await expect(callback!({ prompt: "What is my current learning level?" })).resolves.toEqual({
+        text: "Synthetic consult answer",
+      });
+      const instructions = mocks.runEmbeddedAgent.mock.calls.at(-1)?.[0].extraSystemPrompt;
+      expect(instructions).toContain('"selected_agent":{"id":"voice","name":"Indigo tutor"}');
+      expect(instructions).toContain(
+        `"authenticated_caller":{"profile_id":"${profile.id}","display_name":"${caller === "learner" ? "Indigo" : "Parent"}"}`,
+      );
+      expect(instructions).toContain("do not ask them to choose among people");
+      expect(instructions).toContain("receiving delegated requests from a live voice bridge");
+      expect(instructions).not.toContain("Changed after admission");
+      expect(instructions).not.toContain("Changed tutor name");
+      expect(instructions).not.toContain("Delegate requests");
+    },
+  );
   it.each([
     { name: "custom main", scope: "per-sender" as const, canonicalKey: "agent:voice:home" },
     { name: "global", scope: "global" as const, canonicalKey: "global" },
@@ -789,7 +827,7 @@ describe.each(["browser", "relay"] as const)("native %s Talk consultation", (tra
       ...(transport === "browser" ? { capabilities: ["gateway-control-v1"] } : {}),
     });
     expect(respond).toHaveBeenCalledWith(true, expect.any(Object), undefined);
-    expect(providerInstructions).toBe(
+    expect(providerInstructions).toContain(
       `Keep native answers brief.\n\n${REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS}`,
     );
     const result = respond.mock.calls[0]?.[1] as { voiceSessionId?: string; sessionId?: string };

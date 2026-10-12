@@ -49,6 +49,7 @@ import {
   isUnsupportedBrowserWebRtcSession,
   resolveTalkRealtimeProviderInstructions,
 } from "../session-config.js";
+import { buildTalkSessionContext } from "../session-context.js";
 import { readTalkRealtimeInitialItems } from "../session-history.js";
 import { requirePreparedTalkSessionTarget } from "../session-target.js";
 import {
@@ -179,10 +180,15 @@ export const createTalkClient: GatewayRequestHandler = async ({
       );
     }
     const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
-    const providerInstructions = await resolveTalkRealtimeProviderInstructions({
+    const sessionContext = buildTalkSessionContext({
       config: runtimeConfig,
       agentId,
       sender: transcriptSender,
+    });
+    const providerInstructions = await resolveTalkRealtimeProviderInstructions({
+      config: runtimeConfig,
+      agentId,
+      sessionContext,
       configuredInstructions: realtimeConfig.instructions,
       sessionKey: target.canonicalKey,
       warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
@@ -245,6 +251,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
         }
       };
       const consultRunner = createTalkClientAgentConsultRunner({
+        sessionContext,
         config: runtimeConfig,
         context,
         sessionTarget: target,

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { UserTurnInput } from "../../sessions/user-turn-transcript.types.js";
 import { resolveTalkRealtimeProviderInstructions } from "./session-config.js";
+import { buildTalkSessionContext } from "./session-context.js";
 
 const { loadProfile } = vi.hoisted(() => ({
   loadProfile: vi.fn(async () => "Shared profile mentions Amber and Indigo."),
@@ -30,11 +31,15 @@ describe("Talk realtime session context", () => {
       const instructions = await resolveTalkRealtimeProviderInstructions({
         config,
         agentId,
-        sender: {
-          id: `profile-${agentId}`,
-          identity: { type: "profile", id: `profile-${agentId}` },
-          name: displayName,
-        },
+        sessionContext: buildTalkSessionContext({
+          config,
+          agentId,
+          sender: {
+            id: `profile-${agentId}`,
+            identity: { type: "profile", id: `profile-${agentId}` },
+            name: displayName,
+          },
+        }),
         configuredInstructions: "Speak warmly.",
         sessionKey: `agent:${agentId}:voice:example`,
         warn: vi.fn(),
@@ -66,7 +71,7 @@ describe("Talk realtime session context", () => {
       const instructions = await resolveTalkRealtimeProviderInstructions({
         config,
         agentId: "amber",
-        sender,
+        sessionContext: buildTalkSessionContext({ config, agentId: "amber", sender }),
         sessionKey: "agent:amber:voice:example",
         warn: vi.fn(),
       });
@@ -85,7 +90,7 @@ describe("Talk realtime session context", () => {
     const pending = resolveTalkRealtimeProviderInstructions({
       config,
       agentId: "amber",
-      sender,
+      sessionContext: buildTalkSessionContext({ config, agentId: "amber", sender }),
       sessionKey: "agent:amber:voice:example",
       warn: vi.fn(),
     });

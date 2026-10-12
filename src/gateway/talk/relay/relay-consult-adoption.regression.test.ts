@@ -63,6 +63,7 @@ describe("Talk relay keyed consult adoption", () => {
     const cfg = { agents: { entries: { main: {} } } };
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
     const session = createTalkRealtimeRelaySession({
+      sessionContext: "Synthetic admitted Talk context",
       cfg,
       context: controlContext(),
       connId,

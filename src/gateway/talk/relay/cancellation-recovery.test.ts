@@ -46,6 +46,7 @@ function createRelayFixture(transportOverrides: Partial<RealtimeVoiceBridge> = {
     surface: "gateway-relay",
   });
   const session = createTalkRealtimeRelaySession({
+    sessionContext: "Synthetic admitted Talk context",
     context: {
       broadcastToConnIds,
       broadcast: vi.fn(),

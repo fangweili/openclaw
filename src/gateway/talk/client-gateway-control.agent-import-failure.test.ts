@@ -41,6 +41,7 @@ it("does not create Talk admission when lazy core loading fails", async () => {
     return { text: "unexpected" };
   });
   const runner = createTalkClientAgentConsultRunner({
+    sessionContext: "Synthetic admitted Talk context",
     config: {} as OpenClawConfig,
     context: { chatAbortControllers: new Map(), logGateway: { warn: vi.fn() } } as never,
     sessionTarget: {

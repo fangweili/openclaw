@@ -643,6 +643,7 @@ describe("Direct Talk consult history after call closure", () => {
         return { ...result, payloads: [{ text: directAnswer }] };
       });
       const runner = createTalkClientAgentConsultRunner({
+        sessionContext: "Synthetic admitted Talk context",
         config: getRuntimeConfig(),
         context,
         sessionTarget: { agentId, sessionKey, canonicalKey, storePath },

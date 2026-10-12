@@ -38,6 +38,7 @@ function captureBridgeRequest(params: {
     surface: "gateway-relay",
   });
   const session = createTalkRealtimeRelaySession({
+    sessionContext: "Synthetic admitted Talk context",
     context: {
       broadcastToConnIds: vi.fn(),
       chatAbortControllers: new Map(),

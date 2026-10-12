@@ -86,6 +86,14 @@ remain failures rather than being silently treated as cancellations.
 
 Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions also receive the bounded realtime profile context used by Discord voice.
 
+Browser and Gateway-relay Talk carry the selected agent and, when available, the
+verified caller identity into both realtime instructions and delegated agent
+consultations. The caller is captured at call admission, separately from the agent;
+shared workspace profiles and session ownership do not identify the speaker.
+These facts provide model context without granting permissions. Personalized
+requests go to the selected full agent, which loads its workspace instructions
+and relevant memory with the same caller context.
+
 Speech finalized while an accepted consult is starting remains visible in history
 and does not prevent the agent from adopting that consult's recorded input.
 Completed agent answers and newly admitted tasks still close the older input;

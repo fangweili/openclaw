@@ -29,10 +29,16 @@ vi.mock("../../talk/agent-run-control.js", async (importOriginal) => ({
 
 import { createTalkClientAgentConsultRunner } from "./client-agent-consult.js";
 import type { ConsultParams } from "./client-gateway-control.agent-consult.test-support.js";
+import { buildTalkSessionContext } from "./session-context.js";
 
 function createRunner() {
   return createTalkClientAgentConsultRunner({
     config,
+    sessionContext: buildTalkSessionContext({
+      config,
+      agentId: "researcher",
+      sender: { identity: { type: "profile", id: "profile-listener" }, name: "Listener" },
+    }),
     context: { chatAbortControllers: new Map(), logGateway: { warn: vi.fn() } } as never,
     sessionTarget: {
       agentId: "researcher",
@@ -98,6 +104,9 @@ describe("Talk client agent consult retry context", () => {
       return { text: "done" };
     });
     await createRunner().runArgs({ question: "Confirm", confirmationId });
+    expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toContain(
+      '"authenticated_caller":{"profile_id":"profile-listener","display_name":"Listener"}',
+    );
     expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toContain(
       "previously blocked tool call",
     );

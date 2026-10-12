@@ -82,7 +82,12 @@ const providerErrorCases = [
 ] as const;
 
 type RelaySessionParams = Parameters<typeof createTalkRealtimeRelaySessionRaw>[0];
-type RelayFixtureDefaults = "connId" | "providerConfig" | "instructions" | "tools";
+type RelayFixtureDefaults =
+  | "connId"
+  | "providerConfig"
+  | "instructions"
+  | "tools"
+  | "sessionContext";
 
 function createTalkRealtimeRelaySession(
   params: Omit<RelaySessionParams, "sessionTarget" | "controlSource" | RelayFixtureDefaults> &
@@ -93,6 +98,7 @@ function createTalkRealtimeRelaySession(
     connId = "conn-1",
     providerConfig = {},
     instructions = "brief",
+    sessionContext = "Synthetic admitted Talk context",
     tools = [],
     ...request
   } = params;
@@ -109,6 +115,7 @@ function createTalkRealtimeRelaySession(
     connId,
     providerConfig,
     instructions,
+    sessionContext,
     tools,
     controlSource: capabilities?.handlesAgentConsult === true ? "delegation" : "transcript",
     capabilities,
