@@ -200,6 +200,47 @@ beforeEach(() => {
 });
 
 describe("Web Push request authority across asynchronous storage", () => {
+  it.each([
+    "push.web.subscribe",
+    "push.web.preferences.get",
+    "push.web.preferences.set",
+    "push.web.unsubscribe",
+  ] as const)("keeps %s bound to the caller under narrow session scopes", async (method) => {
+    const invocation = createInvocation(method);
+    invocation.client.connect.scopes = ["operator.sessions.write"];
+    await invocation.invoke();
+    expect(invocation.respond.mock.calls[0]?.[0]).toBe(true);
+    if (method === "push.web.subscribe") {
+      expect(registerWebPushSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: { deviceId: "browser-device", userProfileId: "profile-owner" },
+        }),
+      );
+      return;
+    }
+    invocation.respond.mockClear();
+    vi.mocked(findBoundWebPushSubscriptionByEndpoint).mockResolvedValueOnce(
+      subscription("another-profile"),
+    );
+    await invocation.invoke();
+    expect(invocation.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "FORBIDDEN" }),
+    );
+    invocation.respond.mockClear();
+    vi.mocked(findBoundWebPushSubscriptionByEndpoint).mockResolvedValueOnce({
+      ...subscription(),
+      deviceId: "another-device",
+    });
+    await invocation.invoke();
+    expect(invocation.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "FORBIDDEN" }),
+    );
+  });
+
   it.each(["unchanged", "profile changed", "request revoked", "rejected"] as const)(
     "waits for preference reads and checks authority: %s",
     async (change) => {

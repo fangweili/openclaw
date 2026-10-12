@@ -229,6 +229,7 @@ export function createGatewayConnectionState(params: {
     clients,
     forgetConnectionAncestors,
     connectionWork: new GatewayConnectionWork(),
+    deliverAutomationCompletion: eventWebPush.deliverAutomationCompletion,
     mentionInbox,
     isConnectionActive,
     ...gatewayBroadcaster,

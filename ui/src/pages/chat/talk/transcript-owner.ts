@@ -307,19 +307,34 @@ export function reserveClientVoiceSessionOwner(
   };
 }
 
-export function retireUncommittedRealtimeTalkTransport(params: {
+/** Join every cleanup, even after one fails; reject with the first failure afterward. */
+export async function joinRealtimeTalkCleanup(
+  completions: ReadonlyArray<Promise<void>>,
+): Promise<void> {
+  const results = await Promise.allSettled(completions);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") {
+    throw failure.reason;
+  }
+}
+
+/** Retire a provisional transport and join both transport and logical-call cleanup. */
+export async function retireUncommittedRealtimeTalkTransport(params: {
   nextTransport: RealtimeTalkTransport | null;
   transport: string;
   owner: ClientVoiceSessionOwner;
-  closeVoiceSession: () => void;
-}): void {
-  void params.nextTransport?.stop({ emitClosed: false });
+  closeVoiceSession: () => Promise<void>;
+}): Promise<void> {
+  const stopping = (async () => {
+    await params.nextTransport?.stop({ emitClosed: false });
+  })();
   if (params.transport === "gateway-relay" && params.nextTransport) {
     // The relay transport owns server close once constructed; release browser ownership.
     params.owner.release();
+    await stopping;
     return;
   }
-  params.closeVoiceSession();
+  await joinRealtimeTalkCleanup([stopping, params.closeVoiceSession()]);
 }
 
 function transcriptPersistenceAbortError(): Error {

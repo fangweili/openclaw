@@ -15,6 +15,7 @@ import {
   type ClientVoiceSessionOwner,
   ClientVoiceTranscriptQueue,
   type DetachedVoiceSession,
+  joinRealtimeTalkCleanup,
   reserveClientVoiceSessionOwner,
   retireUncommittedRealtimeTalkTransport,
   retryVoiceTranscriptPersistence,
@@ -38,6 +39,8 @@ type RealtimeTalkLaunchOptions = {
 type RealtimeTalkLocalOptions = {
   inputDeviceId?: string;
   videoDeviceId?: string;
+  /** False for surfaces without the shared voice-selection handoff controller. */
+  supportsVoiceSelection?: boolean;
 };
 
 const activeRealtimeTalkSessions = new Set<RealtimeTalkSession>();
@@ -137,8 +140,10 @@ export class RealtimeTalkSession {
       // this client reports every finalized utterance, so the gate is completable.
       const capabilities: Array<"camera-frame" | "voice-transcript" | "voice-selection"> = [
         "voice-transcript",
-        "voice-selection",
       ];
+      if (this.localOptions.supportsVoiceSelection !== false) {
+        capabilities.push("voice-selection");
+      }
       if (providerVideoCapable) {
         capabilities.push("camera-frame");
       }
@@ -159,7 +164,9 @@ export class RealtimeTalkSession {
         throw new Error("Realtime Talk session did not return a voice session id");
       }
       if (this.closed || lifecycleGeneration !== this.lifecycleGeneration) {
-        this.closeUnadoptedVoiceSession(voiceSessionId, transport, owner);
+        this.rememberCloseCompletion(
+          this.closeUnadoptedVoiceSession(voiceSessionId, transport, owner),
+        );
         ownerTransferred = true;
         return;
       }
@@ -173,15 +180,16 @@ export class RealtimeTalkSession {
         this.clientVoiceSessionOwner = owner;
         ownerTransferred = true;
       }
-      const closeCandidate = () => {
+      const closeCandidate = (): Promise<void> => {
         if (transport === "gateway-relay") {
-          this.closeUnadoptedVoiceSession(voiceSessionId, transport, owner);
+          return this.closeUnadoptedVoiceSession(voiceSessionId, transport, owner);
         } else if (this.clientVoiceSessionOwner === owner) {
           const detached = this.detachVoiceSession();
           if (detached) {
-            void this.closeLogicalVoiceSession(detached);
+            return this.closeLogicalVoiceSession(detached);
           }
         }
+        return Promise.resolve();
       };
       const callbacks =
         transport === "gateway-relay"
@@ -215,12 +223,14 @@ export class RealtimeTalkSession {
         if (this.pendingStartup === nextTransport) {
           this.pendingStartup = null;
         }
-        retireUncommittedRealtimeTalkTransport({
-          nextTransport,
-          transport,
-          owner,
-          closeVoiceSession: closeCandidate,
-        });
+        this.rememberCloseCompletion(
+          retireUncommittedRealtimeTalkTransport({
+            nextTransport,
+            transport,
+            owner,
+            closeVoiceSession: closeCandidate,
+          }),
+        );
         ownerTransferred = true;
         throw error;
       }
@@ -232,12 +242,14 @@ export class RealtimeTalkSession {
         this.closed ||
         lifecycleGeneration !== this.lifecycleGeneration
       ) {
-        retireUncommittedRealtimeTalkTransport({
-          nextTransport,
-          transport,
-          owner,
-          closeVoiceSession: closeCandidate,
-        });
+        this.rememberCloseCompletion(
+          retireUncommittedRealtimeTalkTransport({
+            nextTransport,
+            transport,
+            owner,
+            closeVoiceSession: closeCandidate,
+          }),
+        );
         ownerTransferred = true;
         return;
       }
@@ -373,12 +385,17 @@ export class RealtimeTalkSession {
         mode: "realtime",
         transport: "gateway-relay",
         brain: "agent-consult",
-        capabilities: ["voice-selection"],
+        capabilities: this.localOptions.supportsVoiceSelection === false ? [] : ["voice-selection"],
       },
       { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
     );
   }
 
+  /**
+   * Cancel capture synchronously and join cleanup already admitted by this call.
+   * A caller dropping the Gateway connection during startup must also settle
+   * start(), then call stop() again to join any allocation returned after cancel.
+   */
   stop(): Promise<void> {
     try {
       return this.retireTransport();
@@ -418,8 +435,7 @@ export class RealtimeTalkSession {
       }
     }
     if (detached || transport || hadPendingStartup) {
-      this.closeCompletion = Promise.all(completions).then(() => undefined);
-      void this.closeCompletion.catch(() => undefined);
+      this.rememberCloseCompletion(joinRealtimeTalkCleanup(completions));
     }
     return this.closeCompletion;
   }
@@ -430,27 +446,36 @@ export class RealtimeTalkSession {
     return pending?.stop({ emitClosed: false });
   }
 
+  private rememberCloseCompletion(completion: Promise<void>): void {
+    // Previous teardown must finish even when a replacement fails. Its already
+    // reported failure does not poison cleanup of a later allocation forever.
+    this.closeCompletion = joinRealtimeTalkCleanup([
+      this.closeCompletion.catch(() => undefined),
+      completion,
+    ]);
+    void this.closeCompletion.catch(() => undefined);
+  }
+
   private closeUnadoptedVoiceSession(
     voiceSessionId: string,
     transport: string,
     owner: ClientVoiceSessionOwner,
-  ): void {
+  ): Promise<void> {
     // A stopped or superseded create still owns the allocation returned to it.
     // Close at the provider boundary without installing a stale transport.
     if (transport === "gateway-relay") {
-      void this.client
+      return this.client
         .request(
           "talk.session.close",
           { sessionId: voiceSessionId },
           { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
         )
-        .catch(() => undefined)
+        .then(() => undefined)
         .finally(owner.release);
-      return;
     }
     const transcriptQueue = VOICE_TRANSCRIPT_QUEUE_POLICY.createQueue();
     transcriptQueue.seal();
-    void this.closeLogicalVoiceSession({
+    return this.closeLogicalVoiceSession({
       voiceSessionId,
       transcriptQueue,
       owner,

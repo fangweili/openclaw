@@ -237,6 +237,8 @@ export async function startGatewayCoreRuntime(input: {
     startGatewayEventSubscriptions({
       scheduler: runtime.scheduler,
       signal: runtime.connectionWork.signal,
+      deliverAutomationCompletion: (update, signal) =>
+        runtime.connectionWork.track(() => runtime.deliverAutomationCompletion(update, signal)),
       getSessionRowProjection: runtime.getSessionRowProjection,
       log,
       broadcast,

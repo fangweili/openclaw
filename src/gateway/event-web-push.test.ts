@@ -568,6 +568,113 @@ describe("event Web Push classification", () => {
     },
   );
 
+  it("delivers narrow completion pushes only to current owners of an allowed agent", async () => {
+    const [profiles, preferences, sessions, roles, sharing] = await Promise.all([
+      vi.importActual<typeof import("../state/user-profile-list.js")>(
+        "../state/user-profile-list.js",
+      ),
+      vi.importActual<typeof import("../state/user-preferences.js")>(
+        "../state/user-preferences.js",
+      ),
+      vi.importActual<typeof import("./session-sharing-preparation.js")>(
+        "./session-sharing-preparation.js",
+      ),
+      vi.importActual<typeof import("./operator-role-policy.js")>("./operator-role-policy.js"),
+      vi.importActual<typeof import("./session-sharing.js")>("./session-sharing.js"),
+    ]);
+    prepareUserProfileCatalogMock.mockImplementation(profiles.prepareUserProfileCatalog);
+    getUserPreferenceValuesMock.mockImplementation(preferences.getUserPreferenceValues);
+    prepareSessionMutationFactsMock.mockImplementation(sessions.prepareSessionMutationFacts);
+    resolveOperatorRolePolicyForAssignmentMock.mockImplementation(
+      roles.resolveOperatorRolePolicyForAssignment,
+    );
+    canReceiveSessionEventMock.mockImplementation(sharing.canReceiveSessionEvent);
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const owner = ensureProfileForEmail("tutor-owner@example.test");
+      const other = ensureProfileForEmail("tutor-other@example.test");
+      setUserProfileRole(owner.id, "student");
+      setUserProfileRole(other.id, "student");
+      const cfg: OpenClawConfig = {
+        gateway: {
+          roles: {
+            default: "student",
+            definitions: {
+              student: {
+                scopes: ["operator.sessions.write"],
+                sessions: { others: "none" },
+                agents: ["main"],
+              },
+            },
+          },
+        },
+      };
+      const policy = cfg.gateway!.roles!.definitions.student;
+      const sessionKey = "agent:main:tutor-owner";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey },
+        {
+          sessionId: "tutor-owner",
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: { type: "human", source: "profile", id: owner.id },
+        },
+      );
+      const own = boundSubscription("own-browser", owner.id);
+      const foreign = boundSubscription("other-browser", other.id);
+      listBoundWebPushSubscriptionsMock.mockResolvedValue([own, foreign]);
+      const paired = [
+        pairedOperator("own-browser", ["operator.sessions.write"]),
+        pairedOperator("other-browser", ["operator.sessions.write"]),
+      ];
+      listDevicePairingMock.mockReturnValue({ paired });
+      const delivery = createEventWebPushDelivery({ getRuntimeConfig: () => cfg });
+      const send = async (keys: string[], event = "chat") => {
+        authorityCompleted = createDeferred();
+        preparedWebPushSendMock.mockClear();
+        delivery.handleEvent(
+          event,
+          { state: "final", runId: "tutor-run", id: "tutor-question" },
+          { sessionKeys: keys, agentId: "main" },
+        );
+        await authorityCompleted.promise;
+      };
+
+      await send([sessionKey]);
+      expect(preparedWebPushSendMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ subscriptions: [own] }),
+      );
+      await send([]);
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+      await send(["agent:main:missing"]);
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+      await send([sessionKey], "question.requested");
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+
+      policy.agents = [];
+      await send([sessionKey]);
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+      policy.agents = ["main"];
+      policy.scopes = [];
+      await send([sessionKey]);
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+      policy.scopes = ["operator.sessions.write"];
+      listDevicePairingMock.mockReturnValue({ paired: [paired[1]] });
+      await send([sessionKey]);
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+
+      // Revoke the owning role while sender preparation is pending. The final
+      // synchronous recipient check must use the new policy, not the prior send.
+      listDevicePairingMock.mockReturnValue({ paired });
+      const ready = createDeferred<typeof preparedWebPushSendMock>();
+      prepareWebPushNotificationSenderMock.mockReturnValueOnce(ready.promise);
+      const pending = send([sessionKey]);
+      policy.agents = [];
+      ready.resolve(preparedWebPushSendMock);
+      await pending;
+      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("human mention delivery", () => {
     beforeEach(() => {
       listBoundWebPushSubscriptionsMock.mockResolvedValue([

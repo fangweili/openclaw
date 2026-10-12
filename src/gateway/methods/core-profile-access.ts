@@ -8,6 +8,12 @@ const PROFILE_DEPENDENT_CORE_METHODS = new Set([
   // cache a shared-only catalog before their personal accounts are available.
   "models.list",
   "presence.query",
+  // Subscription ownership must use hydrated identity, never a temporary
+  // profile-less connection during post-hello authentication.
+  "push.web.subscribe",
+  "push.web.unsubscribe",
+  "push.web.preferences.get",
+  "push.web.preferences.set",
   "webSearch.status",
   "webSearch.test",
   // talk.config projects the caller's profile accent; without this gate a

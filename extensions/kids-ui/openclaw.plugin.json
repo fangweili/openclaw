@@ -1,0 +1,14 @@
+{
+  "id": "kids-ui",
+  "name": "Kids Tutor",
+  "description": "Serves a minimal tutor interface at /kids/",
+  "categories": ["infrastructure"],
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
