@@ -14,6 +14,7 @@ function readyState(): KidsViewState {
       sessionKey: "agent:student:kids:child-one",
       messages: [],
       busy: false,
+      canRetrySend: false,
       error: null,
     },
     voice: { status: "idle", active: false, detail: null, entries: [] },

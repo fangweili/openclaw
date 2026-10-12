@@ -20,7 +20,16 @@ the child's messages and finished assistant replies; voice shows spoken captions
 - The Gateway owns authentication, agent permissions, session ownership, transcript
   persistence, branch validation, and idempotent send admission. The conversation
   keeps a bounded memory-only projection, retains draft text on failed sends, and
-  reconciles uncertain outcomes without blind resends. Reconnect removes old data.
+  reconciles uncertain outcomes without blind resends. Reconnect removes old
+  transcript data. One uncertain request stays in memory with its original
+  verified profile, agent, backing session, branch, text, and idempotency key.
+  History receipts can settle it; otherwise an explicit **Try again** makes at
+  most one exact replay through Gateway send admission. Repeated transport
+  failures keep the same request available; reconnect never passively resends.
+  Changing the verified profile, agent, or backing session discards this retry
+  capability rather than retargeting it. The conversation reports accepted text
+  once to the app, whether proved by a response or a receipt; the app clears only
+  an unchanged original draft. Reloading discards memory-only recovery.
 - `voice.ts` adapts the existing Talk owner. It owns a single call and bounded
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close

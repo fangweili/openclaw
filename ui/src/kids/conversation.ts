@@ -9,8 +9,9 @@
  * issuing another request. Disconnect aborts reads and immediately forgets the
  * transcript. Dispose also removes the listener and joins subscription cleanup.
  * Sends are serialized; uncertain transport outcomes are reconciled from input
- * receipts, never retried with a fresh idempotency key. Only the outstanding
- * send's session/key receipt survives disconnect, never transcript content.
+ * receipts or an explicit retry of the exact original request, never a fresh
+ * idempotency key. One uncertain request survives disconnect in memory; a
+ * different verified profile, agent, or backing session discards that request.
  */
 import {
   createSessionProjection,
@@ -21,8 +22,13 @@ import {
   type GatewaySessionMessageSubscription,
   type SessionProjectionState,
 } from "@openclaw/gateway-client/browser";
-import type { AgentsListResult, UsersSelfResult } from "@openclaw/gateway-protocol";
+import type {
+  AgentsListResult,
+  ChatSendParamsSchema,
+  UsersSelfResult,
+} from "@openclaw/gateway-protocol";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import type { Static } from "typebox";
 import { GATEWAY_OWNER_PROFILE_ID } from "../../../packages/gateway-protocol/src/schema/user-profile-constants.js";
 import { isToolCallContentType } from "../../../src/chat/tool-content.js";
 import type { GatewayBrowserClient, GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
@@ -44,6 +50,7 @@ export type KidsConversationState = {
   messages: readonly KidsMessage[];
   status: "disconnected" | "loading" | "ready" | "error";
   busy: boolean;
+  canRetrySend: boolean;
   error: string | null;
 };
 
@@ -53,6 +60,7 @@ type ConversationClient = Pick<
 >;
 
 type Connection = {
+  profileId: string;
   generation: number;
   abort: AbortController;
   subscriptions: GatewaySessionMessageSubscriptionCoordinator;
@@ -71,6 +79,13 @@ type Connection = {
   runError: string | null;
 };
 
+/** One memory-only retry, retaining the original authority and admission fences. */
+type PendingSend = {
+  profileId: string;
+  params: Static<typeof ChatSendParamsSchema>;
+  accepted: boolean;
+};
+
 const HISTORY_LIMIT = 80;
 const HISTORY_MAX_BYTES = 256 * 1024;
 
@@ -82,6 +97,7 @@ function emptyState(): KidsConversationState {
     messages: [],
     status: "disconnected",
     busy: false,
+    canRetrySend: false,
     error: null,
   };
 }
@@ -112,13 +128,18 @@ export class KidsConversation {
   private disposed = false;
   private disposal: Promise<void> | null = null;
   private readonly pending = new Set<Promise<unknown>>();
-  private uncertain: { sessionKey: string; runId: string } | null = null;
+  private uncertain: PendingSend | null = null;
   private readonly removeListener: () => void;
 
-  /** Callbacks receive immutable snapshots and must not throw. */
+  /**
+   * Callbacks must not throw. State snapshots are immutable. onAccepted reports
+   * one acknowledged original text per send, only in its current binding; it
+   * also covers receipt reconciliation after reconnect, without a replay.
+   */
   constructor(
     private readonly client: ConversationClient,
     private readonly onState: (state: KidsConversationState) => void,
+    private readonly onAccepted: (text: string) => void = () => {},
   ) {
     this.removeListener = client.addEventListener((event) => this.handleEvent(event));
   }
@@ -139,6 +160,7 @@ export class KidsConversation {
       return;
     }
     const connection: Connection = {
+      profileId: "",
       generation: this.client.connectionGeneration,
       abort: new AbortController(),
       subscriptions: new GatewaySessionMessageSubscriptionCoordinator({
@@ -164,6 +186,14 @@ export class KidsConversation {
       if (!this.current(connection)) {
         return;
       }
+      if (
+        this.uncertain &&
+        (this.uncertain.profileId !== profile.id ||
+          roster.agents.length !== 1 ||
+          this.uncertain.params.agentId !== roster.agents[0]?.id)
+      ) {
+        this.uncertain = null;
+      }
       if (profile.id === GATEWAY_OWNER_PROFILE_ID || !profile.id || roster.agents.length !== 1) {
         this.publish({
           status: "error",
@@ -187,8 +217,9 @@ export class KidsConversation {
       }
       connection.sessionKey = created.key;
       connection.agentId = agent.id;
-      if (this.uncertain?.sessionKey === created.key) {
-        connection.uncertainSend = this.uncertain.runId;
+      connection.profileId = profile.id;
+      if (this.uncertain?.params.sessionKey === created.key) {
+        connection.uncertainSend = this.uncertain.params.idempotencyKey;
       }
       connection.projection = createSessionProjection({ sessionKey: key, agentId: agent.id });
       this.publish({
@@ -253,7 +284,54 @@ export class KidsConversation {
     ) {
       return false;
     }
-    const runId = generateUUID();
+    return this.transmit(connection, {
+      profileId: connection.profileId,
+      accepted: false,
+      params: {
+        sessionKey: connection.sessionKey,
+        agentId: connection.agentId,
+        sessionId: connection.sessionId,
+        expectedLeafEntryId: connection.leaf,
+        message,
+        idempotencyKey: generateUUID(),
+        deliver: false,
+        suppressCommandInterpretation: true,
+      },
+    });
+  }
+
+  /**
+   * Explicitly retries one unresolved send after any authoritative read finishes.
+   * Reuses its complete original payload, including session/branch and run ID;
+   * Gateway replay admission owns deduplication. Concurrent calls serialize and
+   * each click makes at most one send attempt. No replay crosses a changed binding.
+   * Returns true only for an acknowledged or receipt-proven accepted turn;
+   * onAccepted owns draft cleanup. Transport failure retains the same request.
+   */
+  async retrySend(): Promise<boolean> {
+    const connection = this.connection;
+    const pending = this.uncertain;
+    if (!connection || !pending) {
+      return false;
+    }
+    while (connection.history && this.current(connection)) {
+      await connection.history;
+    }
+    if (!this.current(connection)) {
+      return false;
+    }
+    if (pending.accepted) {
+      return true;
+    }
+    if (!this.snapshot.canRetrySend || this.uncertain !== pending) {
+      return false;
+    }
+    return this.transmit(connection, pending);
+  }
+
+  /** Owns one wire attempt; retired completions cannot change the active retry or presentation. */
+  private async transmit(connection: Connection, pending: PendingSend): Promise<boolean> {
+    const { idempotencyKey: runId, message } = pending.params;
     connection.sending = true;
     connection.runError = null;
     connection.projection = reduceSessionProjection(connection.projection, {
@@ -263,43 +341,39 @@ export class KidsConversation {
     });
     this.render(connection, { busy: true, error: null });
     try {
-      await this.request(
-        connection,
-        "chat.send",
-        {
-          sessionKey: connection.sessionKey,
-          agentId: connection.agentId,
-          sessionId: connection.sessionId,
-          expectedLeafEntryId: connection.leaf,
-          message,
-          idempotencyKey: runId,
-          deliver: false,
-          suppressCommandInterpretation: true,
+      await this.request(connection, "chat.send", pending.params, {
+        onSent: () => {
+          if (this.current(connection)) {
+            this.uncertain = pending;
+          }
         },
-        {
-          onSent: () => {
-            this.uncertain = { sessionKey: connection.sessionKey, runId };
-          },
-        },
-      );
-      if (this.uncertain?.runId === runId) {
-        this.uncertain = null;
-      }
+      });
       if (!this.current(connection)) {
         return false;
       }
+      if (connection.sessionId === pending.params.sessionId) {
+        this.acknowledge(pending);
+      }
       connection.sending = false;
+      connection.uncertainSend = undefined;
       await this.refresh();
       return this.current(connection);
     } catch (error) {
-      if (isGatewayProtocolResponseError(error) && this.uncertain?.runId === runId) {
-        this.uncertain = null;
-      }
       if (!this.current(connection)) {
         return false;
       }
       connection.sending = false;
-      if (isGatewayProtocolResponseError(error) || this.uncertain?.runId !== runId) {
+      // A subscribed/history receipt can prove acceptance while the wire
+      // attempt is still pending. Its authoritative outcome wins a later loss.
+      if (pending.accepted) {
+        await this.refresh();
+        return this.current(connection);
+      }
+      if (isGatewayProtocolResponseError(error) && this.uncertain === pending) {
+        this.uncertain = null;
+      }
+      if (isGatewayProtocolResponseError(error) || this.uncertain !== pending) {
+        connection.uncertainSend = undefined;
         connection.projection = reduceSessionProjection(connection.projection, {
           type: "sendFailed",
           runId,
@@ -316,6 +390,17 @@ export class KidsConversation {
       this.render(connection, { busy: true, error: t("kids.sendUncertain") });
       await this.refresh();
       return this.current(connection) && !connection.uncertainSend;
+    }
+  }
+
+  /** Current-binding acknowledgments transfer draft cleanup once, including passive receipts. */
+  private acknowledge(pending: PendingSend): void {
+    if (this.uncertain === pending) {
+      this.uncertain = null;
+    }
+    if (!pending.accepted) {
+      pending.accepted = true;
+      this.onAccepted(pending.params.message);
     }
   }
 
@@ -420,6 +505,11 @@ export class KidsConversation {
           });
         }
         connection.sessionId = sessionId;
+        if (connection.uncertainSend && this.uncertain?.params.sessionId !== sessionId) {
+          this.uncertain = null;
+          connection.uncertainSend = undefined;
+          connection.runError = t("kids.sendContextChanged");
+        }
         connection.leaf = history.sessionInfo?.activeLeafEntryId ?? null;
         connection.projection = reduceSessionProjection(connection.projection, {
           type: "snapshotLoaded",
@@ -434,8 +524,8 @@ export class KidsConversation {
           connection.uncertainSend &&
           history.inputReceipts?.some((receipt) => receipt.runId === connection.uncertainSend)
         ) {
-          if (this.uncertain?.runId === connection.uncertainSend) {
-            this.uncertain = null;
+          if (this.uncertain?.params.idempotencyKey === connection.uncertainSend) {
+            this.acknowledge(this.uncertain);
           }
           connection.uncertainSend = undefined;
         }
@@ -555,7 +645,14 @@ export class KidsConversation {
         });
       }
     }
-    this.publish({ ...patch, messages });
+    this.publish({
+      ...patch,
+      messages,
+      canRetrySend:
+        (patch.status ?? this.snapshot.status) === "ready" &&
+        Boolean(connection.uncertainSend) &&
+        !connection.sending,
+    });
   }
 
   private publish(patch: Partial<KidsConversationState>): void {

@@ -97,9 +97,14 @@ const owners: KidsConversation[] = [];
 function fixture() {
   const client = new TestGateway();
   const states: KidsConversationState[] = [];
-  const owner = new KidsConversation(client, (state) => states.push(state));
+  const accepted: string[] = [];
+  const owner = new KidsConversation(
+    client,
+    (state) => states.push(state),
+    (text) => accepted.push(text),
+  );
   owners.push(owner);
-  return { owner, client, states };
+  return { owner, client, states, accepted };
 }
 afterEach(async () => {
   await Promise.all(owners.splice(0).map((owner) => owner.dispose()));
@@ -467,7 +472,7 @@ describe("kids conversation", () => {
   });
 
   it("blocks duplicate sends after a transport uncertainty and reconciles the original receipt", async () => {
-    const { owner, client } = fixture();
+    const { owner, client, accepted } = fixture();
     await owner.connect(hello);
     client.override = (method) =>
       method === "chat.send" ? Promise.reject(new Error("Socket failed")) : undefined;
@@ -488,6 +493,187 @@ describe("kids conversation", () => {
     expect(owner.state.busy).toBe(false);
     expect(owner.state.messages.map((message) => message.text)).toEqual(["Practice fractions"]);
     expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(1);
+    expect(accepted).toEqual(["Practice fractions"]);
+    await owner.refresh();
+    expect(accepted).toEqual(["Practice fractions"]);
+  });
+
+  it("settles a retry waiting on history when that read proves the original receipt", async () => {
+    const { owner, client, accepted } = fixture();
+    await owner.connect(hello);
+    client.override = (method) =>
+      method === "chat.send" ? Promise.reject(new Error("Socket failed")) : undefined;
+    await owner.send("Original question");
+    const runId = client.calls.find((call) => call.method === "chat.send")!.params.idempotencyKey;
+    const history = Promise.withResolvers<unknown>();
+    client.override = (method) => (method === "chat.history" ? history.promise : undefined);
+    const refreshing = owner.refresh();
+    const retry = owner.retrySend();
+    history.resolve({ ...client.history, inputReceipts: [{ runId, state: "consumed" }] });
+    await refreshing;
+    await expect(retry).resolves.toBe(true);
+    expect(accepted).toEqual(["Original question"]);
+    expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(1);
+    expect(owner.state).toMatchObject({ busy: false, canRetrySend: false });
+  });
+
+  it("explicitly retries a missing receipt once per click with the original fenced payload", async () => {
+    const { owner, client } = fixture();
+    await owner.connect(hello);
+    client.override = (method) =>
+      method === "chat.send" ? Promise.reject(new Error("Lost admission response")) : undefined;
+    await expect(owner.send("Practice fractions")).resolves.toBe(false);
+    const original = client.calls.find((call) => call.method === "chat.send")!.params;
+    expect(owner.state.canRetrySend).toBe(true);
+
+    owner.disconnect();
+    client.connectionGeneration += 1;
+    // The history moved, but a replay must retain the original admission fence.
+    client.history.sessionInfo = { sessionId: "session-one", activeLeafEntryId: "later-leaf" };
+    await owner.connect(hello);
+    await owner.refresh();
+    expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(1);
+    const held = Promise.withResolvers<unknown>();
+    client.override = (method) => (method === "chat.send" ? held.promise : undefined);
+    const retry = owner.retrySend();
+    await expect(owner.retrySend()).resolves.toBe(false);
+    expect(owner.state.canRetrySend).toBe(false);
+    expect(client.calls.findLast((call) => call.method === "chat.send")!.params).toEqual(original);
+    held.reject(new Error("Another transport failure"));
+    await expect(retry).resolves.toBe(false);
+    expect(owner.state.canRetrySend).toBe(true);
+    await owner.refresh();
+    expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(2);
+
+    // Gateway chat-send-pending-inputs.test.ts proves this same-ID contract
+    // returns the durable cached receipt without dispatching a second run.
+    client.override = (method) =>
+      method === "chat.send"
+        ? Promise.resolve({ runId: original.idempotencyKey, status: "ok" })
+        : undefined;
+    await expect(owner.retrySend()).resolves.toBe(true);
+    expect(
+      client.calls.filter((call) => call.method === "chat.send").map((call) => call.params),
+    ).toEqual([original, original, original]);
+    expect(owner.state).toMatchObject({ busy: false, canRetrySend: false, error: null });
+    await expect(owner.retrySend()).resolves.toBe(false);
+  });
+
+  it("keeps receipt-proven acceptance when its concurrent retry loses the wire response", async () => {
+    const { owner, client, accepted } = fixture();
+    await owner.connect(hello);
+    client.override = (method) =>
+      method === "chat.send" ? Promise.reject(new Error("Socket failed")) : undefined;
+    await owner.send("Original question");
+    const runId = client.calls.find((call) => call.method === "chat.send")!.params.idempotencyKey;
+    const wire = Promise.withResolvers<unknown>();
+    client.override = (method) => (method === "chat.send" ? wire.promise : undefined);
+    const retry = owner.retrySend();
+    client.history.inputReceipts = [{ runId, state: "consumed" }];
+    await owner.refresh();
+    wire.reject(new Error("Lost response"));
+    await expect(retry).resolves.toBe(true);
+    expect(accepted).toEqual(["Original question"]);
+    expect(owner.state).toMatchObject({ busy: false, canRetrySend: false, error: null });
+    expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(2);
+  });
+
+  it.each(["profile", "agent", "session"])(
+    "never replays an unresolved message after the verified %s changes",
+    async (changed) => {
+      const { owner, client } = fixture();
+      await owner.connect(hello);
+      client.override = (method) =>
+        method === "chat.send" ? Promise.reject(new Error("Socket failed")) : undefined;
+      await owner.send("Private original message");
+      owner.disconnect();
+      client.connectionGeneration += 1;
+      if (changed === "profile") {
+        client.profileId = "child-two";
+      }
+      if (changed === "agent") {
+        client.agents = [{ id: "other-student", name: "Rocky" }];
+      }
+      if (changed === "session") {
+        client.history.sessionId = "replacement-session";
+        client.history.sessionInfo = { sessionId: "replacement-session", activeLeafEntryId: null };
+      }
+      await owner.connect(hello);
+      expect(owner.state).toMatchObject({ busy: false, canRetrySend: false });
+      await expect(owner.retrySend()).resolves.toBe(false);
+      expect(
+        owner.state.messages.some((message) => message.text === "Private original message"),
+      ).toBe(false);
+      expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(1);
+    },
+  );
+
+  it("retains explicit recovery when a retired connection acknowledges its old send", async () => {
+    const { owner, client } = fixture();
+    await owner.connect(hello);
+    const admission = Promise.withResolvers<unknown>();
+    client.override = (method) => (method === "chat.send" ? admission.promise : undefined);
+    const sending = owner.send("Original question");
+    const original = client.calls.find((call) => call.method === "chat.send")!.params;
+    owner.disconnect();
+    client.connectionGeneration += 1;
+    client.override = undefined;
+    await owner.connect(hello);
+    admission.resolve({ runId: original.idempotencyKey, status: "started" });
+    await expect(sending).resolves.toBe(false);
+    expect(owner.state.canRetrySend).toBe(true);
+    await expect(owner.retrySend()).resolves.toBe(true);
+    expect(client.calls.findLast((call) => call.method === "chat.send")!.params).toEqual(original);
+  });
+
+  it("keeps the original branch fence on retry and accepts an authoritative rejection", async () => {
+    const { owner, client } = fixture();
+    await owner.connect(hello);
+    client.override = (method) =>
+      method === "chat.send" ? Promise.reject(new Error("Lost before admission")) : undefined;
+    await owner.send("Original question");
+    const original = client.calls.find((call) => call.method === "chat.send")!.params;
+    client.history.sessionInfo = { sessionId: "session-one", activeLeafEntryId: "later-leaf" };
+    await owner.refresh();
+    const rejection = new GatewayProtocolRequestError({
+      code: "INVALID_REQUEST",
+      message: "stale branch",
+    });
+    retainGatewayResponsePayload(rejection, {});
+    client.override = (method) => (method === "chat.send" ? Promise.reject(rejection) : undefined);
+    await expect(owner.retrySend()).resolves.toBe(false);
+    expect(client.calls.findLast((call) => call.method === "chat.send")!.params).toEqual(original);
+    expect(owner.state).toMatchObject({ busy: false, canRetrySend: false });
+    expect(owner.state.messages.some((message) => message.text === "Original question")).toBe(
+      false,
+    );
+    client.override = undefined;
+    await expect(owner.send("A fresh question")).resolves.toBe(true);
+    const fresh = client.calls.findLast((call) => call.method === "chat.send")!.params;
+    expect(fresh.expectedLeafEntryId).toBe("later-leaf");
+    expect(fresh.idempotencyKey).not.toBe(original.idempotencyKey);
+  });
+
+  it("retires a retry awaiting history when the identity changes", async () => {
+    const { owner, client } = fixture();
+    await owner.connect(hello);
+    client.override = (method) =>
+      method === "chat.send" ? Promise.reject(new Error("Socket failed")) : undefined;
+    await owner.send("Private original message");
+    const history = Promise.withResolvers<unknown>();
+    client.override = (method) => (method === "chat.history" ? history.promise : undefined);
+    const refreshing = owner.refresh();
+    const retry = owner.retrySend();
+    owner.disconnect();
+    client.connectionGeneration += 1;
+    client.profileId = "child-two";
+    client.override = undefined;
+    await owner.connect(hello);
+    history.resolve(client.history);
+    await refreshing;
+    await expect(retry).resolves.toBe(false);
+    expect(client.calls.filter((call) => call.method === "chat.send")).toHaveLength(1);
+    expect(owner.state.sessionKey).toBe("agent:student:kids:child-two");
   });
 
   it("removes a definitively rejected optimistic input and makes a fresh branch available", async () => {

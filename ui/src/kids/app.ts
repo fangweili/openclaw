@@ -62,8 +62,10 @@ export class KidsApp {
       },
       onGap: () => void this.conversation.refresh(),
     });
-    this.conversation = new KidsConversation(this.client, (conversation) =>
-      this.onConversation(conversation),
+    this.conversation = new KidsConversation(
+      this.client,
+      (conversation) => this.onConversation(conversation),
+      (text) => this.acknowledgedSend(text),
     );
     this.snapshot = {
       conversation: this.conversation.state,
@@ -137,7 +139,21 @@ export class KidsApp {
     this.snapshot.notifications = null;
   }
 
+  /** Explicit send recovery keeps its original draft; other failures restart the connection. */
   private async retry(): Promise<void> {
+    if (this.snapshot.conversation.canRetrySend) {
+      const generation = this.generation;
+      const sent = await this.conversation.retrySend();
+      if (this.disposed || generation !== this.generation || !sent) {
+        return;
+      }
+      this.paint(true);
+      return;
+    }
+    // A second click from the retired notice must not interrupt the first replay.
+    if (this.snapshot.conversation.status === "ready") {
+      return;
+    }
     const generation = ++this.generation;
     this.retireCapabilities();
     this.snapshot.voice = idleVoice();
@@ -207,10 +223,15 @@ export class KidsApp {
       return;
     }
     if (await this.conversation.send(draft)) {
-      if (this.snapshot.draft.trim() === draft) {
-        this.snapshot.draft = "";
-      }
       this.paint(true);
+    }
+  }
+
+  /** A current conversation's acknowledgment consumes only its unchanged original draft. */
+  private acknowledgedSend(text: string): void {
+    if (!this.disposed && this.snapshot.draft.trim() === text) {
+      this.snapshot.draft = "";
+      this.paint();
     }
   }
 

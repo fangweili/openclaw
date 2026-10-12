@@ -36,7 +36,9 @@ const enKids = {
     voiceUnavailable: "Text is ready. Ask a parent to enable voice for your account.",
     setupNeeded: "Ask a parent to connect your own account to your Rocky tutor.",
     connectionError: "Rocky could not connect. Try reconnecting, or ask a parent for help.",
-    sendUncertain: "Checking whether your message arrived. Please wait before sending it again.",
+    sendUncertain:
+      "We could not confirm your message arrived. Try again to check or finish sending it.",
+    sendContextChanged: "Your conversation changed. Check it before sending your message again.",
     sendFailed: "Your message was not sent. Check the conversation and try again.",
     historyFailed: "The conversation could not refresh. Reconnect to continue.",
     runFailed: "Rocky could not finish that reply. You can try asking again.",

@@ -102,7 +102,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
             ? html`<section class="kids-notice" role="alert">
                 ${!ready ? html`<h2>${t("kids.connectionTitle")}</h2>` : nothing}
                 <p>${error}</p>
-                ${!ready ? html`<button @click=${actions.retry}>${t("kids.retry")}</button>` : nothing}
+                ${!ready || chat.canRetrySend ? html`<button @click=${actions.retry}>${t("kids.retry")}</button>` : nothing}
               </section>`
             : nothing
         }
@@ -128,7 +128,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
               </article>
             `,
           )}
-          ${chat.busy && !calling ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
+          ${chat.busy && !chat.canRetrySend && !calling ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
         </div>
         ${
           calling
