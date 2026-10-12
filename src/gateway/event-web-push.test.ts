@@ -11,6 +11,11 @@ import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import type { HumanMentionWebPush } from "./event-web-push.js";
+import {
+  boundSubscription,
+  pairedOperator,
+  foregroundBrowser,
+} from "./event-web-push.test-support.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 
 const {
@@ -134,32 +139,6 @@ vi.mock("./session-sharing.js", async (importOriginal) => ({
 const { createEventWebPushDelivery } = await import("./event-web-push.js");
 let authorityCompleted = createDeferred();
 
-function boundSubscription(
-  deviceId: string,
-  userProfileId: string | null = null,
-): BoundWebPushSubscription {
-  return {
-    subscriptionId: `subscription-${deviceId}`,
-    endpoint: `https://push.example.test/${deviceId}`,
-    keys: { p256dh: `p256dh-${deviceId}`, auth: `auth-${deviceId}` },
-    createdAtMs: 1,
-    updatedAtMs: 1,
-    deviceId,
-    userProfileId,
-    devicePreferences: {
-      enabled: true,
-      label: "",
-      detailLevel: "identified",
-      categories: {
-        agentFinished: true,
-        agentQuestion: true,
-        humanMentioned: true,
-        scheduledTaskFailed: true,
-      },
-    },
-  };
-}
-
 function humanMention(overrides: Partial<HumanMentionWebPush> = {}): HumanMentionWebPush {
   return {
     id: "mention-1",
@@ -171,19 +150,6 @@ function humanMention(overrides: Partial<HumanMentionWebPush> = {}): HumanMentio
     prepare: async () => {},
     isCurrent: mentionCurrentMock,
     ...overrides,
-  };
-}
-
-function pairedOperator(deviceId: string, scopes = ["operator.read"]) {
-  return {
-    deviceId,
-    roles: ["operator"],
-    role: "operator",
-    scopes,
-    approvedScopes: scopes,
-    tokens: {
-      operator: { token: `token-${deviceId}`, role: "operator", scopes },
-    },
   };
 }
 
@@ -221,6 +187,46 @@ describe("event Web Push classification", () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["foreground", true],
+    ["different session", false],
+    ["different endpoint", false],
+    ["multiple sessions", false],
+    ["background", false],
+    ["expired", false],
+    ["disconnected", false],
+    ["revoked", false],
+    ["profile replaced", false],
+  ] as const)("%s only quiets the exact subscription and conversation", async (state, quiet) => {
+    const own = boundSubscription("browser-device", "owner");
+    const other = boundSubscription("second-device", "owner");
+    listBoundWebPushSubscriptionsMock.mockResolvedValue([own, other]);
+    listDevicePairingMock.mockReturnValue({
+      paired: [pairedOperator("browser-device"), pairedOperator("second-device")],
+    });
+    const client = foregroundBrowser(own, state);
+    const delivery = createEventWebPushDelivery({
+      getRuntimeConfig: () => ({}),
+      clients: [client],
+    });
+    delivery.handleEvent(
+      "chat",
+      { state: "final", runId: "foreground-run" },
+      {
+        agentId: "tutor",
+        sessionKeys:
+          state === "multiple sessions"
+            ? ["agent:tutor:kids:fixture", "agent:tutor:other"]
+            : [state === "different session" ? "agent:tutor:other" : "agent:tutor:kids:fixture"],
+      },
+    );
+    await authorityCompleted.promise;
+    expect(preparedWebPushSendMock).toHaveBeenCalledOnce();
+    expect(preparedWebPushSendMock.mock.calls[0][0].subscriptions).toEqual(
+      quiet ? [other] : [own, other],
+    );
+  });
 
   it("waits for final completion after a parent yields to its children", async () => {
     const delivery = createEventWebPushDelivery({ getRuntimeConfig: () => ({}) });

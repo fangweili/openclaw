@@ -51,6 +51,7 @@ const SESSION_WRITE_METHODS: ReadonlySet<string> = new Set([
   "push.web.subscribe",
   "push.web.unsubscribe",
   "push.web.preferences.set",
+  "push.web.foreground",
   "question.request",
   "question.waitAnswer",
   "question.resolve",

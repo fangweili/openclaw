@@ -14,6 +14,7 @@ const PROFILE_DEPENDENT_CORE_METHODS = new Set([
   "push.web.unsubscribe",
   "push.web.preferences.get",
   "push.web.preferences.set",
+  "push.web.foreground",
   "webSearch.status",
   "webSearch.test",
   // talk.config projects the caller's profile accent; without this gate a

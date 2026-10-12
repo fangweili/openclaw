@@ -115,6 +115,157 @@ afterEach(async () => {
 });
 
 describe("kids conversation", () => {
+  it("shows each send once through accepted custody, durable input, and final reply", async () => {
+    const { owner, client } = fixture();
+    const transcript: unknown[] = [];
+    client.history.messages = transcript;
+    await owner.connect(hello);
+
+    // projectPendingInputMessage deliberately strips message-level send keys;
+    // only the custody row carries run correlation until the canonical user ID exists.
+    for (let turn = 1; turn <= 2; turn += 1) {
+      const inputId = `input-${turn}`;
+      let runId = "";
+      client.override = (method, params) => {
+        if (method !== "chat.send") {
+          return undefined;
+        }
+        runId = String(params.idempotencyKey);
+        client.history.pendingInputs = {
+          items: [
+            {
+              id: inputId,
+              runId,
+              acceptedAt: turn,
+              state: "queued",
+              message: textMessage("user", "Another puzzle, please", `pending:${inputId}`),
+            },
+          ],
+          total: 1,
+        };
+        client.history.inFlightRun = { runId };
+        return Promise.resolve({ runId, status: "started" });
+      };
+      await expect(owner.send("Another puzzle, please")).resolves.toBe(true);
+      expect(owner.state.messages.filter((message) => message.role === "user")).toHaveLength(turn);
+
+      const user = textMessage("user", "Another puzzle, please", inputId, {
+        __openclaw: { id: inputId, seq: turn * 2 - 1, idempotencyKey: runId },
+      });
+      client.emit("session.message", {
+        sessionKey,
+        sessionId: "session-one",
+        messageId: inputId,
+        messageSeq: turn * 2 - 1,
+        message: user,
+      });
+      expect(owner.state.messages.filter((message) => message.role === "user")).toHaveLength(turn);
+
+      transcript.push(user, textMessage("assistant", `Puzzle ${turn}`, `reply-${turn}`));
+      client.history = {
+        ...client.history,
+        messages: [...transcript],
+        pendingInputs: { items: [], total: 0 },
+        inFlightRun: undefined,
+        sessionInfo: { sessionId: "session-one", activeLeafEntryId: `reply-${turn}` },
+      };
+      client.emit("chat", { sessionKey, runId, state: "final" });
+      await owner.refresh();
+      expect(owner.state.busy).toBe(false);
+      expect(owner.state.messages.filter((message) => message.role === "user")).toHaveLength(turn);
+      expect(owner.state.messages.filter((message) => message.role === "assistant")).toHaveLength(
+        turn,
+      );
+    }
+    expect(owner.state.messages.map((message) => message.id)).toEqual([
+      "input-1",
+      "reply-1",
+      "input-2",
+      "reply-2",
+    ]);
+  });
+
+  it("keeps pending and queued custody in Gateway order within the visible 80-message tail", async () => {
+    const { owner, client } = fixture();
+    client.history.messages = Array.from({ length: 79 }, (_, index) =>
+      textMessage("assistant", `Earlier reply ${index}`, `earlier-${index}`),
+    );
+    client.history.pendingInputs = {
+      total: 4,
+      items: [
+        {
+          id: "first",
+          acceptedAt: 1,
+          state: "queued",
+          queued: true,
+          message: textMessage("user", "First question", "pending:first"),
+        },
+        {
+          id: "second",
+          acceptedAt: 2,
+          state: "interrupted",
+          message: textMessage("user", "Second question", "pending:second"),
+        },
+        {
+          id: "hidden-queued",
+          acceptedAt: 3,
+          state: "queued",
+          queued: true,
+          message: textMessage("user", "Hidden queued question", "pending:hidden-queued", {
+            display: false,
+          }),
+        },
+        {
+          id: "hidden-pending",
+          acceptedAt: 4,
+          state: "cancelled",
+          message: textMessage("user", "Hidden withdrawn question", "pending:hidden-pending", {
+            display: false,
+          }),
+        },
+      ],
+    };
+    await owner.connect(hello);
+    expect(owner.state.messages).toHaveLength(80);
+    expect(owner.state.messages[0]?.id).toBe("earlier-1");
+    expect(owner.state.messages.slice(-2).map((message) => message.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(owner.state.messages.some((message) => message.text.startsWith("Hidden"))).toBe(false);
+  });
+
+  it("retires an optimistic input when its custody is withdrawn and hidden", async () => {
+    const { owner, client } = fixture();
+    client.history.messages = [];
+    await owner.connect(hello);
+    client.override = (method, params) => {
+      if (method !== "chat.send") {
+        return undefined;
+      }
+      client.history.pendingInputs = {
+        total: 1,
+        items: [
+          {
+            id: "withdrawn",
+            runId: params.idempotencyKey,
+            acceptedAt: 1,
+            state: "cancelled",
+            message: {
+              role: "user",
+              content: [],
+              display: false,
+              __openclaw: { id: "pending:withdrawn" },
+            },
+          },
+        ],
+      };
+      return Promise.resolve({ runId: params.idempotencyKey, status: "started" });
+    };
+    await owner.send("Withdraw this question");
+    expect(owner.state.messages).toEqual([]);
+  });
+
   it("sends a photo/video-only turn and replays immutable bytes after a lost response", async () => {
     const { owner, client, acceptedIds } = fixture();
     await owner.connect(hello);

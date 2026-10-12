@@ -13,6 +13,7 @@ describe("session-scoped method admission", () => {
       "push.web.subscribe",
       "push.web.unsubscribe",
       "push.web.preferences.set",
+      "push.web.foreground",
     ]) {
       expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.write"])).toEqual({
         allowed: true,

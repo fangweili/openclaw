@@ -12,6 +12,9 @@
  * receipts or an explicit retry of the exact original request, never a fresh
  * idempotency key. One uncertain request survives disconnect in memory; a
  * different verified profile, agent, or backing session discards that request.
+ * Accepted custody stays outside the transcript projection: row run IDs retire
+ * optimistic inputs, and canonical user IDs replace custody. The rendered tail
+ * includes pending and queued inputs in Gateway order, bounded to 80 messages.
  */
 import {
   createSessionProjection,
@@ -29,11 +32,13 @@ import type {
 } from "@openclaw/gateway-protocol";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Static } from "typebox";
+import type { ChatPendingInputsPage } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { GATEWAY_OWNER_PROFILE_ID } from "../../../packages/gateway-protocol/src/schema/user-profile-constants.js";
 import { isToolCallContentType } from "../../../src/chat/tool-content.js";
 import type { GatewayBrowserClient, GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import { retirePendingUserEntries, selectChatInputDisplay } from "../lib/chat/input-custody.ts";
 import { extractText } from "../lib/chat/message-extract.ts";
 import { isVisibleChatHistoryMessage } from "../lib/chat/message-visibility.ts";
 import { generateUUID } from "../lib/uuid.ts";
@@ -74,6 +79,7 @@ type Connection = {
   subscriptions: GatewaySessionMessageSubscriptionCoordinator;
   subscription?: GatewaySessionMessageSubscription;
   projection: SessionProjectionState;
+  pendingInputs: ChatPendingInputsPage["items"];
   sessionKey: string;
   sessionId?: string;
   agentId: string;
@@ -116,7 +122,11 @@ function emptyState(): KidsConversationState {
 function visibleMessage(message: unknown): boolean {
   const record = asOptionalRecord(message);
   const role = record?.role;
-  if ((role !== "user" && role !== "assistant") || !isVisibleChatHistoryMessage(message)) {
+  if (
+    (role !== "user" && role !== "assistant") ||
+    record?.display === false ||
+    !isVisibleChatHistoryMessage(message)
+  ) {
     return false;
   }
   // Tool-bearing turns are activity. A pure-text final may legitimately inherit
@@ -182,6 +192,7 @@ export class KidsConversation {
         request: (method, params, options) => this.request(connection, method, params, options),
       }),
       projection: createSessionProjection(),
+      pendingInputs: [],
       sessionKey: "",
       agentId: "",
       leaf: null,
@@ -542,12 +553,16 @@ export class KidsConversation {
         connection.projection = reduceSessionProjection(connection.projection, {
           type: "snapshotLoaded",
           scope: { sessionId },
-          messages: [
-            ...(history.messages ?? []),
-            ...(history.pendingInputs?.items.map((row) => row.message) ?? []),
-          ],
+          messages: history.messages ?? [],
           options: { shouldIncludeMessage: visibleMessage },
         });
+        connection.pendingInputs = history.pendingInputs?.items ?? [];
+        const acceptedRunIds = new Set(
+          [...connection.pendingInputs, ...(history.inputReceipts ?? [])]
+            .map((input) => input.runId)
+            .filter((runId) => typeof runId === "string"),
+        );
+        connection.projection = retirePendingUserEntries(connection.projection, acceptedRunIds);
         if (
           connection.uncertainSend &&
           history.inputReceipts?.some((receipt) => receipt.runId === connection.uncertainSend)
@@ -647,6 +662,7 @@ export class KidsConversation {
     void this.refresh();
   }
 
+  /** Projects transcript then unconsumed custody without mixing their identity domains. */
   private render(connection: Connection, patch: Partial<KidsConversationState> = {}): void {
     if (!this.current(connection)) {
       return;
@@ -658,26 +674,37 @@ export class KidsConversation {
       entries,
       messages: entries.map((entry) => entry.message),
     };
+    const { pendingInputs, queuedInputs } = selectChatInputDisplay(
+      connection.projection.messages,
+      [],
+      connection.pendingInputs,
+    );
+    const custody = new Set([...pendingInputs, ...queuedInputs]);
+    const display = [
+      ...entries.map((entry, index) => ({
+        id: entry.identity?.id ?? entry.identity?.idempotencyKey ?? `message-${index}`,
+        message: entry.message,
+      })),
+      ...connection.pendingInputs
+        .filter((input) => custody.has(input))
+        .map((input) => ({ id: input.id, message: input.message })),
+    ];
     const messages: KidsMessage[] = [];
-    for (const [index, entry] of entries.entries()) {
-      const identity = entry.identity;
-      if (!identity || !visibleMessage(entry.message)) {
+    for (const entry of display) {
+      const role = asOptionalRecord(entry.message)?.role;
+      if ((role !== "user" && role !== "assistant") || !visibleMessage(entry.message)) {
         continue;
       }
-      const text = extractText(entry.message)?.trim() ?? "";
-      const media = projectKidsMedia(entry.message);
-      if ((text || media.length) && (identity.role === "user" || identity.role === "assistant")) {
-        messages.push({
-          id: identity.id ?? identity.idempotencyKey ?? `message-${index}`,
-          role: identity.role,
-          text,
-          media,
-        });
-      }
+      messages.push({
+        id: entry.id,
+        role,
+        text: extractText(entry.message)?.trim() ?? "",
+        media: projectKidsMedia(entry.message),
+      });
     }
     this.publish({
       ...patch,
-      messages,
+      messages: messages.slice(-HISTORY_LIMIT),
       sessionId: connection.sessionId ?? "",
       canRetrySend:
         (patch.status ?? this.snapshot.status) === "ready" &&

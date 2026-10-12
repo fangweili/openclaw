@@ -130,6 +130,7 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
       displayName: "Rocky",
     });
 
+    await gateway.deferNext("chat.send");
     await page.getByLabel("Message Rocky", { exact: true }).fill("Can we try a fraction puzzle?");
     await page.getByRole("button", { name: "Send message" }).click();
     const request = await gateway.waitForRequest("chat.send");
@@ -139,6 +140,52 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
     expect(params.model).toBeUndefined();
     expect(params.thinkingLevel).toBeUndefined();
     expect(params.deliver).toBe(false);
+    const historyCount = await gateway.deferNext("chat.history");
+    await gateway.resolveDeferred("chat.send", { runId: params.idempotencyKey, status: "started" });
+    await gateway.waitForRequest("chat.history", { after: historyCount });
+    const pendingHistory = {
+      sessionId: "student-session",
+      sessionInfo: { sessionId: "student-session", activeLeafEntryId: "initial-leaf" },
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Hey Alex! What would you like to explore today?" }],
+        },
+      ],
+      inFlightRun: { runId: params.idempotencyKey },
+      pendingInputs: {
+        total: 1,
+        items: [
+          {
+            id: "input-1",
+            runId: params.idempotencyKey,
+            acceptedAt: 1,
+            state: "queued",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Can we try a fraction puzzle?" }],
+              __openclaw: { id: "pending:input-1" },
+            },
+          },
+        ],
+      },
+    };
+    await gateway.setMethodResponse("chat.history", pendingHistory);
+    await gateway.resolveDeferred("chat.history", pendingHistory);
+    expect(await page.getByText("Can we try a fraction puzzle?", { exact: true }).count()).toBe(1);
+    const persistedInput = {
+      __openclaw: { id: "input-1", seq: 1, idempotencyKey: String(params.idempotencyKey) },
+      role: "user",
+      content: [{ type: "text", text: "Can we try a fraction puzzle?" }],
+    };
+    await gateway.emitGatewayEvent("session.message", {
+      sessionKey,
+      sessionId: "student-session",
+      messageId: "input-1",
+      messageSeq: 1,
+      message: persistedInput,
+    });
+    expect(await page.getByText("Can we try a fraction puzzle?", { exact: true }).count()).toBe(1);
     await gateway.emitGatewayEvent("agent", {
       stream: "tool",
       sessionKey,
@@ -157,12 +204,14 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
     expect(await page.getByText(/PRIVATE TOOL OUTPUT|PRIVATE REASONING/).count()).toBe(0);
     const answer =
       "Absolutely. You have 3/4 of a pizza and share half of it. What fraction of a whole pizza did you share?";
+    await gateway.setMethodResponse("chat.history", {
+      ...pendingHistory,
+      inFlightRun: undefined,
+      pendingInputs: { total: 0, items: [] },
+      sessionInfo: { sessionId: "student-session", activeLeafEntryId: "reply-1" },
+    });
     await gateway.setHistoryMessages([
-      {
-        __openclaw: { id: "input-1", seq: 1, idempotencyKey: String(params.idempotencyKey) },
-        role: "user",
-        content: [{ type: "text", text: "Can we try a fraction puzzle?" }],
-      },
+      persistedInput,
       {
         __openclaw: { id: "reply-1", seq: 2, runId: String(params.idempotencyKey) },
         role: "assistant",
@@ -173,6 +222,7 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
     await gateway.emitChatFinal({ runId: String(params.idempotencyKey), sessionKey, text: answer });
     await page.getByText(answer).waitFor();
     expect(await page.getByText(answer).count()).toBe(1);
+    expect(await page.getByText("Can we try a fraction puzzle?", { exact: true }).count()).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );

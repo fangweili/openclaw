@@ -3,6 +3,9 @@
  * worker. The shared Web Push owner handles subscription identity, VAPID, and
  * rollback; Gateway authorization owns which replies this device may receive.
  * This surface fixes device preferences to private tutor-reply notifications.
+ * A focused visible document renews a short connection-local foreground claim;
+ * blur/hide/retirement clear it. Failed claims expire without muting offline push.
+ * The worker always displays received pushes, as Safari requires.
  *
  * initialize() never prompts. enable() must run directly in a user gesture.
  * dispose() fences new writes immediately and joins accepted operations before
@@ -100,11 +103,19 @@ export class KidsNotifications {
   private readonly lifetime = new AbortController();
   private registration: Promise<ServiceWorkerRegistration> | null = null;
   private operation: Promise<void> | null = null;
+  private foregroundEndpoint: string | null = null;
+  private foregroundSession: string | null = null;
+  private foregroundRevision = 0;
+  private foregroundOperation: Promise<void> | null = null;
+  private foregroundTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly refreshForeground = () => void this.updateForeground();
+  private readonly leaveForeground = () => void this.updateForeground(false);
 
   /** The app supplies the Gateway-authorized tutor and owns connection lifetime. */
   constructor(
     private readonly client: GatewayBrowserClient,
     private readonly agentId: string,
+    private readonly sessionKey: string,
     private readonly onState: (state: KidsNotificationsState) => void,
   ) {}
 
@@ -143,6 +154,7 @@ export class KidsNotifications {
   /** Disable only this app's browser subscription; do not change user-wide preferences. */
   disable(): Promise<void> {
     return this.run(async (target) => {
+      await this.stopForeground();
       await unsubscribeFromWebPush(this.client, target);
       this.publish({ status: "off", detail: null });
     });
@@ -151,7 +163,7 @@ export class KidsNotifications {
   /** Fence new writes and UI callbacks, cancel prompts/activation waits, then join accepted writes. */
   async dispose(): Promise<void> {
     this.lifetime.abort();
-    await this.operation;
+    await Promise.all([this.operation, this.stopForeground()]);
   }
 
   private run(action: (target: WebPushTarget) => Promise<void>): Promise<void> {
@@ -222,7 +234,76 @@ export class KidsNotifications {
       scope: "device",
       preferences,
     });
+    this.lifetime.signal.throwIfAborted();
     this.publish({ status: preferences.enabled ? "enabled" : "off", detail: null });
+    if (preferences.enabled) {
+      if (!this.foregroundEndpoint) {
+        document.addEventListener("visibilitychange", this.refreshForeground);
+        window.addEventListener("focus", this.refreshForeground);
+        window.addEventListener("blur", this.leaveForeground);
+        window.addEventListener("pageshow", this.refreshForeground);
+        window.addEventListener("pagehide", this.leaveForeground);
+      }
+      this.foregroundEndpoint = subscription.endpoint;
+      await this.updateForeground();
+    } else {
+      await this.stopForeground();
+    }
+  }
+
+  /** Coalesce focus changes behind one bounded request; renewed leases never persist preferences. */
+  private updateForeground(
+    active = document.visibilityState === "visible" && document.hasFocus(),
+  ): Promise<void> {
+    if (!this.foregroundEndpoint) {
+      return Promise.resolve();
+    }
+    this.foregroundSession = active && !this.lifetime.signal.aborted ? this.sessionKey : null;
+    this.foregroundRevision += 1;
+    if (this.foregroundSession && this.foregroundTimer === null) {
+      // Gateway ticks arrive every 30s; a 10s renewal keeps abandoned claims below 25s.
+      this.foregroundTimer = setInterval(this.refreshForeground, 10_000);
+    } else if (!this.foregroundSession && this.foregroundTimer !== null) {
+      clearInterval(this.foregroundTimer);
+      this.foregroundTimer = null;
+    }
+    if (this.foregroundOperation) {
+      return this.foregroundOperation;
+    }
+    this.foregroundOperation = (async () => {
+      try {
+        let sent = -1;
+        while (sent !== this.foregroundRevision) {
+          sent = this.foregroundRevision;
+          try {
+            await this.client.request(
+              "push.web.foreground",
+              {
+                endpoint: this.foregroundEndpoint,
+                sessionKey: this.foregroundSession,
+              },
+              { timeoutMs: 5_000 },
+            );
+          } catch {
+            // No persistent mute was written. An unrenewed claim expires on the Gateway.
+          }
+        }
+      } finally {
+        this.foregroundOperation = null;
+      }
+    })();
+    return this.foregroundOperation;
+  }
+
+  /** Remove document listeners synchronously, clear the lease, and join accepted foreground work. */
+  private async stopForeground(): Promise<void> {
+    document.removeEventListener("visibilitychange", this.refreshForeground);
+    window.removeEventListener("focus", this.refreshForeground);
+    window.removeEventListener("blur", this.leaveForeground);
+    window.removeEventListener("pageshow", this.refreshForeground);
+    window.removeEventListener("pagehide", this.leaveForeground);
+    await this.updateForeground(false);
+    this.foregroundEndpoint = null;
   }
 
   private publish(state: KidsNotificationsState): void {

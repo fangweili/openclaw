@@ -29,6 +29,7 @@ import { QUESTIONS_SCOPE } from "./method-scopes.js";
 import { authorizeGatewaySessionCreation } from "./operator-role-policy.js";
 import { ADMIN_SCOPE, READ_SCOPE, SESSION_READ_SCOPE } from "./operator-scopes.js";
 import type { GatewayBroadcastOpts } from "./server-broadcast-types.js";
+import type { GatewayWsClient } from "./server/ws-types.js";
 import { canReceiveSessionEvent } from "./session-sharing.js";
 import {
   listCurrentWebPushTargets,
@@ -37,6 +38,7 @@ import {
   webPushSessionAccess,
   type WebPushAuthority,
 } from "./web-push-authority.js";
+import { isWebPushForeground } from "./web-push-foreground.js";
 
 const EVENT_PUSH_TTL_SECONDS = 5 * 60;
 const MAX_PENDING_COMPLETIONS = 16;
@@ -158,6 +160,8 @@ export function createEventWebPushDelivery(params: {
   getRuntimeConfig: () => OpenClawConfig;
   log?: Pick<SubsystemLogger, "warn">;
   stateDir?: string;
+  /** Current transport-owned clients; never a cached online/profile snapshot. */
+  clients?: Iterable<GatewayWsClient>;
 }) {
   const log = params.log ?? defaultLog;
   const pendingCompletions = new Set<string>();
@@ -268,6 +272,18 @@ export function createEventWebPushDelivery(params: {
             }
             if (cfg.gateway?.roles && sessionKeys.length === 0) {
               // Multi-user events without an authoritative session owner are not broadcast offline.
+              continue;
+            }
+            if (
+              notification.category === "agent-finished" &&
+              params.clients &&
+              isWebPushForeground(
+                params.clients,
+                target.subscription,
+                target.userProfileId,
+                sessionKeys,
+              )
+            ) {
               continue;
             }
             const prefix = preferences.label ? `${preferences.label} · ` : "";

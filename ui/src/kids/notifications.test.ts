@@ -62,9 +62,17 @@ function fixture() {
     return {};
   });
   const onState = vi.fn();
-  const owner = new KidsNotifications(createTestGatewayClient(request), "tutor", onState);
+  const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const owner = new KidsNotifications(
+    createTestGatewayClient(request),
+    "tutor",
+    "agent:tutor:kids:fixture",
+    onState,
+  );
   return {
     owner,
+    hasFocus,
     request,
     onState,
     registration,
@@ -89,6 +97,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("kids notifications", () => {
@@ -144,6 +153,98 @@ describe("kids notifications", () => {
     } finally {
       await f.owner.dispose();
     }
+  });
+
+  it("keeps only the focused visible tutor quiet, renews its lease, and clears on disposal", async () => {
+    const f = fixture();
+    f.existing();
+    await f.owner.initialize();
+    expect(f.request).toHaveBeenCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: "agent:tutor:kids:fixture",
+      },
+      expect.anything(),
+    );
+    f.request.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.request).toHaveBeenCalledWith(
+      "push.web.foreground",
+      expect.objectContaining({
+        sessionKey: "agent:tutor:kids:fixture",
+      }),
+      expect.anything(),
+    );
+    f.hasFocus.mockReturnValue(false);
+    window.dispatchEvent(new Event("blur"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.request).toHaveBeenLastCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: null,
+      },
+      expect.anything(),
+    );
+    f.request.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.request).not.toHaveBeenCalled();
+    f.hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.request).toHaveBeenLastCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: "agent:tutor:kids:fixture",
+      },
+      expect.anything(),
+    );
+    await f.owner.dispose();
+    expect(f.request).toHaveBeenLastCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: null,
+      },
+      expect.anything(),
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("restores alerts for a hidden tab and coalesces a hide during an outstanding claim", async () => {
+    const f = fixture();
+    f.existing();
+    await f.owner.initialize();
+    const claimed = createDeferred();
+    const release = createDeferred();
+    f.request.mockImplementation(async (method) => {
+      if (method === "push.web.foreground") {
+        claimed.resolve();
+        await release.promise;
+      }
+      return {};
+    });
+    window.dispatchEvent(new Event("focus"));
+    await claimed.promise;
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.request).toHaveBeenLastCalledWith(
+      "push.web.foreground",
+      {
+        endpoint: f.subscription.endpoint,
+        sessionKey: null,
+      },
+      expect.anything(),
+    );
+    const before = f.request.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.request).toHaveBeenCalledTimes(before);
+    await f.owner.dispose();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("cancels an outstanding permission prompt before any subscription write", async () => {
@@ -228,7 +329,12 @@ describe("kids notifications", () => {
       value: "Mozilla/5.0 (iPhone)",
       configurable: true,
     });
-    const owner = new KidsNotifications(createTestGatewayClient(f.request), "tutor", vi.fn());
+    const owner = new KidsNotifications(
+      createTestGatewayClient(f.request),
+      "tutor",
+      "agent:tutor:kids:fixture",
+      vi.fn(),
+    );
     await owner.initialize();
     await owner.enable();
     expect(owner.state.status).toBe("install-required");

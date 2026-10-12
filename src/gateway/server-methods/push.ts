@@ -7,6 +7,7 @@ import {
   errorShape,
   validatePushTestParams,
   validateWebPushSubscribeParams,
+  validateWebPushForegroundParams,
   validateWebPushPreferencesGetParams,
   validateWebPushPreferencesSetParams,
   validateWebPushTestParams,
@@ -49,6 +50,7 @@ import { prepareUserProfileCatalog } from "../../state/user-profile-list.js";
 import { resolveUserProfileId } from "../../state/user-profiles.js";
 import { authorizeOperatorScopesForMethod } from "../method-scopes.js";
 import { isRoleAuthorizedForMethod, parseGatewayRole } from "../role-policy.js";
+import { prepareWebPushForeground } from "../web-push-foreground.js";
 import { resolveNodePushTransport } from "./node-push-transport.js";
 import { respondUnavailableOnThrow } from "./response.js";
 import { readGatewayRequestMutationAuthority } from "./session-mutation-guards.js";
@@ -345,6 +347,30 @@ export const pushHandlers = {
         }
         respond(false, undefined, errorShape(ErrorCodes.FORBIDDEN, error.message));
       }
+    });
+  },
+
+  // This is ephemeral presentation state; subscription ownership remains canonical.
+  "push.web.foreground": async (options: PushRequestOptions) => {
+    const { params, client, respond } = options;
+    if (
+      !assertValidParams(params, validateWebPushForegroundParams, "push.web.foreground", respond)
+    ) {
+      return;
+    }
+    if (!client?.connId || !client.connectionSignal || client.connectionSignal.aborted) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "live connection required"));
+      return;
+    }
+    const publish = prepareWebPushForeground(client, params.sessionKey);
+    await respondUnavailableOnThrow(respond, async () => {
+      await withAuthorizedWebPushSubscription(params.endpoint, options, (authorized) => ({
+        start: () => {
+          const profileId = authorized.assertCurrent();
+          publish(authorized.subscription, profileId);
+          respond(true, {}, undefined);
+        },
+      }));
     });
   },
 

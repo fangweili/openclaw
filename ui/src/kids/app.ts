@@ -214,6 +214,7 @@ export class KidsApp {
       this.notifications = new KidsNotifications(
         this.client,
         conversation.agentId,
+        conversation.sessionKey,
         (notifications) => {
           if (!this.disposed && generation === this.generation) {
             this.snapshot.notifications = notifications;

@@ -30,6 +30,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   History receipts can settle it; otherwise an explicit **Try again** makes at
   most one exact replay through Gateway send admission. Repeated transport
   failures keep the same request available; reconnect never passively resends.
+  Accepted inputs remain a separate display collection until their canonical
+  user transcript rows arrive. Custody/consumption receipts retire only the
+  matching local optimistic copy; equal text from distinct sends stays distinct.
   Changing the verified profile, agent, or backing session discards this retry
   capability rather than retargeting it. The conversation reports accepted text
   once to the app, whether proved by a response or a receipt; the app clears only
@@ -65,6 +68,13 @@ the child's messages and finished assistant replies; voice shows spoken captions
   open `/kids/`; payload URLs never select a conversation. There is no offline chat
   cache. Current profile, device, agent access, and session ownership are rechecked
   at delivery by the Gateway.
+  While this chat is visible and focused, the connection renews a short-lived
+  foreground claim for its own push subscription and exact conversation. The
+  Gateway skips that device's completion push while the claim is live; other
+  devices and conversations keep their normal notification behavior. Blur/hide
+  clears the claim, and disconnect or lease expiry restores delivery if browser
+  shutdown prevents cleanup. The worker still displays every received push, as
+  required by Safari's Web Push contract.
 - `extensions/kids-ui` serves only public build assets. It neither handles secrets
   nor proxies privileged calls. The existing Control UI remains a separate app.
 
