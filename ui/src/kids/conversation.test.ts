@@ -98,19 +98,87 @@ function fixture() {
   const client = new TestGateway();
   const states: KidsConversationState[] = [];
   const accepted: string[] = [];
+  const acceptedIds: string[][] = [];
   const owner = new KidsConversation(
     client,
     (state) => states.push(state),
-    (text) => accepted.push(text),
+    (text, ids) => {
+      accepted.push(text);
+      acceptedIds.push([...ids]);
+    },
   );
   owners.push(owner);
-  return { owner, client, states, accepted };
+  return { owner, client, states, accepted, acceptedIds };
 }
 afterEach(async () => {
   await Promise.all(owners.splice(0).map((owner) => owner.dispose()));
 });
 
 describe("kids conversation", () => {
+  it("sends a photo/video-only turn and replays immutable bytes after a lost response", async () => {
+    const { owner, client, acceptedIds } = fixture();
+    await owner.connect(hello);
+    const submission = {
+      ids: ["local-photo", "local-video"],
+      attachments: [
+        { type: "image", mimeType: "image/png", fileName: "diagram.png", content: "aW1hZ2U=" },
+        { type: "file", mimeType: "video/mp4", fileName: "experiment.mp4", content: "dmlkZW8=" },
+      ],
+      content: [
+        {
+          type: "image",
+          url: "blob:photo",
+          fileName: "diagram.png",
+          source: { type: "url", url: "blob:photo" },
+        },
+        {
+          type: "attachment",
+          attachment: {
+            url: "blob:video",
+            kind: "video" as const,
+            label: "experiment.mp4",
+            mimeType: "video/mp4",
+          },
+        },
+      ],
+    };
+    const history = Promise.withResolvers<unknown>();
+    client.override = (method) =>
+      method === "chat.history"
+        ? history.promise
+        : method === "chat.send"
+          ? Promise.reject(new Error("Lost response"))
+          : undefined;
+    const refreshing = owner.refresh();
+    const sending = owner.send("", submission);
+    submission.attachments[0]!.content = "mutated";
+    submission.ids.push("later-file");
+    history.resolve(client.history);
+    await refreshing;
+    await expect(sending).resolves.toBe(false);
+    const original = client.calls.find((call) => call.method === "chat.send")!.params;
+    expect(original.message).toBe("");
+    expect(original.attachments).toEqual([
+      { type: "image", mimeType: "image/png", fileName: "diagram.png", content: "aW1hZ2U=" },
+      { type: "file", mimeType: "video/mp4", fileName: "experiment.mp4", content: "dmlkZW8=" },
+    ]);
+    expect(owner.state.messages.at(-1)?.media.map((media) => media.kind)).toEqual([
+      "image",
+      "video",
+    ]);
+    expect(owner.state.messages.at(-1)?.text).toBe("");
+    expect(acceptedIds).toEqual([]);
+    owner.disconnect();
+    client.connectionGeneration += 1;
+    client.override = undefined;
+    await owner.connect(hello);
+    await expect(owner.retrySend()).resolves.toBe(true);
+    expect(
+      client.calls.filter((call) => call.method === "chat.send").map((call) => call.params),
+    ).toEqual([original, original]);
+    expect(acceptedIds).toEqual([["local-photo", "local-video"]]);
+  });
+
   it("binds verified identity to the sole agent and sends against the displayed branch", async () => {
     const { owner, client } = fixture();
     await owner.connect(hello);
@@ -189,6 +257,10 @@ describe("kids conversation", () => {
         ],
       }),
       textMessage("assistant", "Let me think", "commentary", { phase: "commentary" }),
+      textMessage("assistant", "", "private-image", {
+        phase: "commentary",
+        content: [{ type: "image", url: "https://example.test/private.png" }],
+      }),
       textMessage("toolResult", "Private tool output", "tool"),
       { role: "assistant", content: [{ type: "thinking", thinking: "Private reasoning" }] },
       {
@@ -313,6 +385,7 @@ describe("kids conversation", () => {
       id: "challenge-message",
       role: "assistant",
       text: scheduledChallenge.content[0]!.text,
+      media: [],
     });
     expect(client.calls.some((call) => call.method === "chat.send")).toBe(false);
     await expect(owner.send("I think it is three eighths.")).resolves.toBe(true);
@@ -348,7 +421,12 @@ describe("kids conversation", () => {
     // read proves this does not depend on a chat.final or history polling.
     expect(owner.state).toMatchObject({ status: "ready", busy: false, error: null });
     expect(owner.state.messages.filter((message) => message.id === "challenge-message")).toEqual([
-      { id: "challenge-message", role: "assistant", text: scheduledChallenge.content[0]!.text },
+      {
+        id: "challenge-message",
+        role: "assistant",
+        text: scheduledChallenge.content[0]!.text,
+        media: [],
+      },
     ]);
     expect(client.calls.filter((call) => call.method === "chat.history")).toHaveLength(
       readCount + 1,
@@ -411,6 +489,48 @@ describe("kids conversation", () => {
         expectedLeafEntryId: "challenge-message",
         message: "Three eighths?",
       });
+    },
+  );
+
+  it.each(["session-one", "session-reset"])(
+    "keeps a waiting media send bound to the original backing session when history returns %s",
+    async (backing) => {
+      const { owner, client, acceptedIds } = fixture();
+      await owner.connect(hello);
+      const refreshed = Promise.withResolvers<unknown>();
+      client.override = (method) => (method === "chat.history" ? refreshed.promise : undefined);
+      const refreshing = owner.refresh();
+      const sending = owner.send("", {
+        ids: ["original-photo"],
+        content: [{ type: "image", url: "blob:original-photo", fileName: "diagram.png" }],
+        attachments: [
+          {
+            type: "image",
+            mimeType: "image/png",
+            fileName: "diagram.png",
+            content: "c3ludGhldGlj",
+          },
+        ],
+      });
+      client.history.sessionId = backing;
+      client.history.sessionInfo = { sessionId: backing, activeLeafEntryId: "refreshed-leaf" };
+      refreshed.resolve(client.history);
+      await refreshing;
+      await expect(sending).resolves.toBe(backing === "session-one");
+      const sends = client.calls.filter((call) => call.method === "chat.send");
+      expect(owner.state.sessionId).toBe(backing);
+      if (backing === "session-one") {
+        expect(sends).toHaveLength(1);
+        expect(sends[0]!.params).toMatchObject({
+          sessionId: "session-one",
+          expectedLeafEntryId: "refreshed-leaf",
+          message: "",
+        });
+        expect(acceptedIds).toEqual([["original-photo"]]);
+      } else {
+        expect(sends).toEqual([]);
+        expect(acceptedIds).toEqual([]);
+      }
     },
   );
 

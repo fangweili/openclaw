@@ -12,6 +12,7 @@ function readyState(): KidsViewState {
       childName: "Child",
       agentId: "student",
       sessionKey: "agent:student:kids:child-one",
+      sessionId: "session-one",
       messages: [],
       busy: false,
       canRetrySend: false,
@@ -22,6 +23,20 @@ function readyState(): KidsViewState {
     connectionError: null,
     voiceAllowed: true,
     notifications: null,
+    attachments: {
+      items: [
+        {
+          id: "photo-one",
+          name: "Private diagram.png",
+          kind: "image",
+          status: "ready",
+          previewUrl: "blob:private-photo",
+        },
+      ],
+      reading: false,
+      allowed: true,
+      error: null,
+    },
   };
 }
 
@@ -34,6 +49,8 @@ describe("kids draft privacy", () => {
       const actions: KidsViewActions = {
         draft: vi.fn(),
         send: vi.fn(),
+        attach: vi.fn(),
+        removeAttachment: vi.fn(),
         talk: vi.fn(),
         retry: vi.fn(),
         notifications: vi.fn(),
@@ -43,6 +60,9 @@ describe("kids draft privacy", () => {
         const composer = root.querySelector<HTMLTextAreaElement>("#kids-message")!;
         expect(composer.value).toBe(privateDraft);
         expect(composer.disabled).toBe(false);
+        expect(root.querySelector(".kids-attachment img")?.getAttribute("src")).toBe(
+          "blob:private-photo",
+        );
 
         render(
           renderKidsView(
@@ -61,15 +81,61 @@ describe("kids draft privacy", () => {
         expect(composer.value).toBe("");
         expect(composer.disabled).toBe(true);
         expect(root.textContent).not.toContain(privateDraft);
+        expect(root.querySelector(".kids-attachment")).toBeNull();
+        expect(root.querySelector("openclaw-toast-host")).toBeNull();
+        expect(root.textContent).not.toContain("Private diagram.png");
         expect(state.draft).toBe(privateDraft);
         expect(actions.draft).not.toHaveBeenCalled();
 
         render(renderKidsView(state, actions), root);
         expect(composer.value).toBe(privateDraft);
         expect(composer.disabled).toBe(false);
+        expect(root.querySelector(".kids-attachment img")?.getAttribute("src")).toBe(
+          "blob:private-photo",
+        );
       } finally {
         render(null, root);
       }
     },
   );
+});
+
+describe("kids media composer", () => {
+  it("admits attachment-only send and delegates selection/removal without exposing navigation", () => {
+    const root = document.createElement("div");
+    const state = readyState();
+    state.draft = "";
+    const actions: KidsViewActions = {
+      draft: vi.fn(),
+      send: vi.fn(),
+      attach: vi.fn(),
+      removeAttachment: vi.fn(),
+      talk: vi.fn(),
+      retry: vi.fn(),
+      notifications: vi.fn(),
+    };
+    try {
+      render(renderKidsView(state, actions), root);
+      const send = root.querySelector<HTMLButtonElement>(".kids-send")!;
+      expect(send.disabled).toBe(false);
+      root
+        .querySelector<HTMLFormElement>("form")!
+        .dispatchEvent(new Event("submit", { cancelable: true }));
+      expect(actions.send).toHaveBeenCalledOnce();
+      const input = root.querySelector<HTMLInputElement>("#kids-files")!;
+      expect(input.accept).toBe("image/*,video/*");
+      expect(input.multiple).toBe(true);
+      const file = new File(["synthetic"], "clip.mp4", { type: "video/mp4" });
+      Object.defineProperty(input, "files", { value: [file] });
+      input.dispatchEvent(new Event("change"));
+      expect(actions.attach).toHaveBeenCalledWith([file]);
+      root.querySelector<HTMLButtonElement>(".kids-remove-attachment")!.click();
+      expect(actions.removeAttachment).toHaveBeenCalledWith("photo-one");
+      state.attachments.reading = true;
+      render(renderKidsView(state, actions), root);
+      expect(send.disabled).toBe(true);
+    } finally {
+      render(null, root);
+    }
+  });
 });

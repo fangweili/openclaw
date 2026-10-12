@@ -12,9 +12,11 @@
 import { render } from "lit";
 import { roleScopesAllow } from "../../../src/shared/operator-scope-compat.js";
 import { GatewayBrowserClient, type GatewayHelloOk } from "../api/gateway.ts";
+import { createApplicationConfigCapability } from "../app/config.ts";
 import { CONTROL_UI_BUILD_INFO } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import { KidsAttachments } from "./attachments.ts";
 import { KidsConversation, type KidsConversationState } from "./conversation.ts";
 import { KidsNotifications } from "./notifications.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
@@ -32,10 +34,13 @@ const idleVoice = (): KidsVoiceState => ({
 export class KidsApp {
   private readonly client: GatewayBrowserClient;
   private readonly conversation: KidsConversation;
+  private readonly uploads = createApplicationConfigCapability({ resourceBasePath: "" });
+  private readonly attachments: KidsAttachments;
   private voice: KidsVoice | null = null;
   private notifications: KidsNotifications | null = null;
   private capabilityRetirement: Promise<unknown> = Promise.resolve();
   private generation = 0;
+  private configAbort: AbortController | null = null;
   private started = false;
   private disposed = false;
   private boundSession = "";
@@ -44,6 +49,12 @@ export class KidsApp {
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
+    this.attachments = new KidsAttachments(this.uploads, () => {
+      if (this.snapshot) {
+        this.snapshot.attachments = this.attachments.state;
+        this.paint();
+      }
+    });
     const url = new URL("/", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     this.client = new GatewayBrowserClient({
@@ -57,6 +68,7 @@ export class KidsApp {
         this.retireCapabilities();
         this.snapshot.voice = idleVoice();
         this.conversation.disconnect();
+        this.attachments.disconnect();
         this.snapshot.connectionError = t(error ? "kids.pairingDetail" : "kids.reconnectDetail");
         this.paint();
       },
@@ -65,7 +77,7 @@ export class KidsApp {
     this.conversation = new KidsConversation(
       this.client,
       (conversation) => this.onConversation(conversation),
-      (text) => this.acknowledgedSend(text),
+      (text, ids) => this.acknowledgedSend(text, ids),
     );
     this.snapshot = {
       conversation: this.conversation.state,
@@ -74,6 +86,7 @@ export class KidsApp {
       connectionError: null,
       voiceAllowed: false,
       notifications: null,
+      attachments: this.attachments.state,
     };
   }
 
@@ -95,6 +108,7 @@ export class KidsApp {
     this.disposed = true;
     this.generation += 1;
     this.retireCapabilities();
+    this.attachments.dispose();
     this.closing = Promise.allSettled([
       this.capabilityRetirement,
       this.conversation.dispose(),
@@ -111,6 +125,14 @@ export class KidsApp {
     if (this.disposed || generation !== this.generation) {
       return;
     }
+    this.attachments.connected(hello.policy);
+    this.configAbort = new AbortController();
+    void this.uploads.refresh({ signal: this.configAbort.signal }).then(() => {
+      if (!this.disposed && generation === this.generation) {
+        this.snapshot.attachments = this.attachments.state;
+        this.paint();
+      }
+    });
     this.snapshot.connectionError = null;
     this.snapshot.voice = idleVoice();
     this.snapshot.voiceAllowed = roleScopesAllow({
@@ -123,6 +145,8 @@ export class KidsApp {
   }
 
   private retireCapabilities(): void {
+    this.configAbort?.abort();
+    this.configAbort = null;
     const voice = this.voice;
     this.voice = null;
     if (voice) {
@@ -158,6 +182,7 @@ export class KidsApp {
     this.retireCapabilities();
     this.snapshot.voice = idleVoice();
     this.conversation.disconnect();
+    this.attachments.disconnect();
     await this.capabilityRetirement;
     if (this.disposed || generation !== this.generation) {
       return;
@@ -172,11 +197,15 @@ export class KidsApp {
     if (this.disposed) {
       return;
     }
-    if (conversation.sessionKey && conversation.sessionKey !== this.boundSession) {
-      this.boundSession = conversation.sessionKey;
-      this.snapshot.draft = "";
-    }
     this.snapshot.conversation = conversation;
+    if (conversation.sessionKey && conversation.sessionId) {
+      const binding = `${conversation.sessionKey}\0${conversation.sessionId}`;
+      if (binding !== this.boundSession) {
+        this.boundSession = binding;
+        this.snapshot.draft = "";
+      }
+      this.attachments.bind(conversation.sessionKey, conversation.sessionId);
+    }
     if (conversation.status === "ready" && !this.notifications) {
       const generation = this.generation;
       this.notifications = new KidsNotifications(
@@ -215,20 +244,25 @@ export class KidsApp {
   private async send(): Promise<void> {
     const draft = this.snapshot.draft.trim();
     if (
-      !draft ||
+      this.snapshot.conversation.status !== "ready" ||
       this.snapshot.conversation.busy ||
+      this.snapshot.attachments.reading ||
       this.voice?.state.active ||
       this.snapshot.voice.status === "stopping"
     ) {
       return;
     }
-    if (await this.conversation.send(draft)) {
+    const attachments = this.attachments.prepare();
+    if (attachments && (await this.conversation.send(draft, attachments))) {
       this.paint(true);
     }
   }
 
   /** A current conversation's acknowledgment consumes only its unchanged original draft. */
-  private acknowledgedSend(text: string): void {
+  private acknowledgedSend(text: string, ids: readonly string[]): void {
+    if (!this.disposed) {
+      this.attachments.accepted(ids);
+    }
     if (!this.disposed && this.snapshot.draft.trim() === text) {
       this.snapshot.draft = "";
       this.paint();
@@ -265,6 +299,12 @@ export class KidsApp {
           this.paint();
         },
         send: () => void this.send(),
+        attach: (files) => {
+          if (this.snapshot.conversation.status === "ready" && !this.disposed) {
+            this.attachments.add(files);
+          }
+        },
+        removeAttachment: (id) => this.attachments.remove(id),
         talk: () => void this.talk(),
         retry: () => void this.retry(),
         notifications: () => {

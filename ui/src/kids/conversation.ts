@@ -38,15 +38,23 @@ import { extractText } from "../lib/chat/message-extract.ts";
 import { isVisibleChatHistoryMessage } from "../lib/chat/message-visibility.ts";
 import { generateUUID } from "../lib/uuid.ts";
 import type { ChatHistoryResult } from "../pages/chat/chat-history-snapshot.ts";
+import type { KidsAttachmentSubmission } from "./attachments.ts";
+import { projectKidsMedia, type KidsMedia } from "./media.ts";
 
 registerKidsEnglish();
 
-export type KidsMessage = { id: string; role: "user" | "assistant"; text: string };
+export type KidsMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  media: readonly KidsMedia[];
+};
 
 export type KidsConversationState = {
   childName: string;
   agentId: string;
   sessionKey: string;
+  sessionId: string;
   messages: readonly KidsMessage[];
   status: "disconnected" | "loading" | "ready" | "error";
   busy: boolean;
@@ -82,6 +90,8 @@ type Connection = {
 /** One memory-only retry, retaining the original authority and admission fences. */
 type PendingSend = {
   profileId: string;
+  attachmentIds: readonly string[];
+  attachmentContent: KidsAttachmentSubmission["content"];
   params: Static<typeof ChatSendParamsSchema>;
   accepted: boolean;
 };
@@ -94,6 +104,7 @@ function emptyState(): KidsConversationState {
     childName: "",
     agentId: "",
     sessionKey: "",
+    sessionId: "",
     messages: [],
     status: "disconnected",
     busy: false,
@@ -117,7 +128,8 @@ function visibleMessage(message: unknown): boolean {
         record?.stopReason !== "aborted" &&
         (!Array.isArray(record?.content) ||
           !record.content.some((part) => isToolCallContentType(asOptionalRecord(part)?.type))))) &&
-    Boolean(extractText(message)?.trim())
+    (Boolean(extractText(message)?.trim()) ||
+      (role === "user" && projectKidsMedia(message).length > 0))
   );
 }
 
@@ -133,13 +145,16 @@ export class KidsConversation {
 
   /**
    * Callbacks must not throw. State snapshots are immutable. onAccepted reports
-   * one acknowledged original text per send, only in its current binding; it
+   * acknowledged original text and local attachment IDs, only in their binding; it
    * also covers receipt reconciliation after reconnect, without a replay.
    */
   constructor(
     private readonly client: ConversationClient,
     private readonly onState: (state: KidsConversationState) => void,
-    private readonly onAccepted: (text: string) => void = () => {},
+    private readonly onAccepted: (
+      text: string,
+      attachmentIds: readonly string[],
+    ) => void = () => {},
   ) {
     this.removeListener = client.addEventListener((event) => this.handleEvent(event));
   }
@@ -260,16 +275,23 @@ export class KidsConversation {
   }
 
   /**
-   * Sends one plain-text turn using the displayed session/branch and a unique
+   * Sends text and/or photos/videos using the displayed session/branch and a unique
    * idempotency key. Joins any current history refresh before admission, then
    * rechecks connection ownership and busy state so concurrent callers serialize.
    * Returns true only for an acknowledged or receipt-proven accepted turn.
-   * False retains the caller's draft. Never automatically resends.
+   * Captures the displayed backing session and encoded bytes before awaiting
+   * history. A changed backing session rejects the send; a same-session refresh
+   * supplies the latest branch. False retains the caller's draft unless its owner
+   * has already cleared a replaced binding. Never automatically resends.
    */
-  async send(text: string): Promise<boolean> {
+  async send(text: string, submission?: KidsAttachmentSubmission): Promise<boolean> {
     const connection = this.connection;
+    const sessionId = connection?.sessionId;
     const message = text.trim();
-    if (!connection) {
+    const attachments = submission?.attachments.map((attachment) => ({ ...attachment }));
+    const attachmentIds = [...(submission?.ids ?? [])];
+    const attachmentContent = structuredClone(submission?.content ?? []);
+    if (!connection || !sessionId) {
       return false;
     }
     while (connection.history && this.current(connection)) {
@@ -279,20 +301,23 @@ export class KidsConversation {
       !this.current(connection) ||
       this.snapshot.status !== "ready" ||
       this.snapshot.busy ||
-      !connection.sessionId ||
-      !message
+      connection.sessionId !== sessionId ||
+      (!message && !attachments?.length)
     ) {
       return false;
     }
     return this.transmit(connection, {
       profileId: connection.profileId,
+      attachmentIds,
+      attachmentContent,
       accepted: false,
       params: {
         sessionKey: connection.sessionKey,
         agentId: connection.agentId,
-        sessionId: connection.sessionId,
+        sessionId,
         expectedLeafEntryId: connection.leaf,
         message,
+        ...(attachments?.length ? { attachments } : {}),
         idempotencyKey: generateUUID(),
         deliver: false,
       },
@@ -336,7 +361,11 @@ export class KidsConversation {
     connection.projection = reduceSessionProjection(connection.projection, {
       type: "sendPending",
       idempotencyKey: runId,
-      message: { role: "user", content: [{ type: "text", text: message }], idempotencyKey: runId },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: message }, ...pending.attachmentContent],
+        idempotencyKey: runId,
+      },
     });
     this.render(connection, { busy: true, error: null });
     try {
@@ -399,7 +428,7 @@ export class KidsConversation {
     }
     if (!pending.accepted) {
       pending.accepted = true;
-      this.onAccepted(pending.params.message);
+      this.onAccepted(pending.params.message, pending.attachmentIds);
     }
   }
 
@@ -635,18 +664,21 @@ export class KidsConversation {
       if (!identity || !visibleMessage(entry.message)) {
         continue;
       }
-      const text = extractText(entry.message)?.trim();
-      if (text && (identity.role === "user" || identity.role === "assistant")) {
+      const text = extractText(entry.message)?.trim() ?? "";
+      const media = projectKidsMedia(entry.message);
+      if ((text || media.length) && (identity.role === "user" || identity.role === "assistant")) {
         messages.push({
           id: identity.id ?? identity.idempotencyKey ?? `message-${index}`,
           role: identity.role,
           text,
+          media,
         });
       }
     }
     this.publish({
       ...patch,
       messages,
+      sessionId: connection.sessionId ?? "",
       canRetrySend:
         (patch.status ?? this.snapshot.status) === "ready" &&
         Boolean(connection.uncertainSend) &&

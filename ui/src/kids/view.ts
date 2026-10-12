@@ -11,6 +11,7 @@ import { strokeIcon } from "../components/icons-tools.ts";
 import { toSanitizedMarkdownHtml } from "../components/markdown.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import type { KidsAttachmentState } from "./attachments.ts";
 import type { KidsConversationState } from "./conversation.ts";
 import type { KidsNotificationsState } from "./notifications.ts";
 import type { KidsVoiceState } from "./voice.ts";
@@ -24,11 +25,14 @@ export type KidsViewState = {
   connectionError: string | null;
   voiceAllowed: boolean;
   notifications: KidsNotificationsState | null;
+  attachments: KidsAttachmentState;
 };
 
 export type KidsViewActions = {
   draft: (value: string) => void;
   send: () => void;
+  attach: (files: readonly File[]) => void;
+  removeAttachment: (id: string) => void;
   talk: () => void;
   retry: () => void;
   notifications: () => void;
@@ -37,6 +41,8 @@ export type KidsViewActions = {
 const microphone = strokeIcon(
   svg`<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0014 0v-2M12 19v3m-3 0h6"/>`,
 );
+const plus = strokeIcon(svg`<path d="M12 5v14M5 12h14"/>`);
+const cross = strokeIcon(svg`<path d="m6 6 12 12M6 18 18 6"/>`);
 const arrow = strokeIcon(svg`<path d="M12 19V5m-6 6 6-6 6 6"/>`);
 const stop = strokeIcon(svg`<rect x="6" y="6" width="12" height="12" rx="2"/>`);
 const bell = strokeIcon(svg`<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>`);
@@ -124,7 +130,10 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                 <span class="kids-message-label"
                   >${message.role === "user" ? t("kids.you") : t("kids.name")}</span
                 >
-                <div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>
+                ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
+                <div class="kids-message-media">
+                  ${message.media.map((media) => html`<span class="kids-media-tile"><span>${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span>${media.label}</span>`)}
+                </div>
               </article>
             `,
           )}
@@ -167,38 +176,105 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                 </button>
               `
             : html`
-                <form
-                  class="kids-composer"
-                  @submit=${(event: SubmitEvent) => {
-                    event.preventDefault();
-                    actions.send();
-                  }}
-                >
-                  <label class="kids-sr-only" for="kids-message">${t("kids.message")}</label>
-                  <textarea
-                    id="kids-message"
-                    rows="1"
-                    maxlength="16000"
-                    placeholder=${t("kids.placeholder")}
-                    .value=${ready ? state.draft : ""}
-                    ?disabled=${!ready}
-                    @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
-                    @keydown=${(event: KeyboardEvent) => {
-                      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-                        event.preventDefault();
-                        actions.send();
-                      }
+                <div class="kids-compose-area">
+                  ${
+                    ready && state.attachments.items.length
+                      ? html` <div
+                          class="kids-attachments"
+                          aria-label=${t("kids.attachments.selected")}
+                        >
+                          ${repeat(
+                            state.attachments.items,
+                            (item) => item.id,
+                            (item) => html`
+                              <div class="kids-attachment">
+                                ${
+                                  item.previewUrl
+                                    ? item.kind === "image"
+                                      ? html`<img src=${item.previewUrl} alt=${item.name} />`
+                                      : html`<video
+                                          src=${item.previewUrl}
+                                          controls
+                                          playsinline
+                                          preload="metadata"
+                                          aria-label=${item.name}
+                                        ></video>`
+                                    : html`<span class="kids-attachment-status" role="status"
+                                        >${t(item.status === "error" ? "kids.attachments.failed" : "kids.attachments.reading")}</span
+                                      >`
+                                }
+                                <span class="kids-attachment-name">${item.name}</span>
+                                <button
+                                  class="kids-remove-attachment"
+                                  type="button"
+                                  aria-label=${`${t("kids.attachments.remove")}: ${item.name}`}
+                                  @click=${() => actions.removeAttachment(item.id)}
+                                >
+                                  ${cross}
+                                </button>
+                              </div>
+                            `,
+                          )}
+                        </div>`
+                      : nothing
+                  }
+                  ${ready && state.attachments.error ? html`<p class="kids-attachment-error" role="alert">${state.attachments.error}</p>` : nothing}
+                  <form
+                    class="kids-composer"
+                    @submit=${(event: SubmitEvent) => {
+                      event.preventDefault();
+                      actions.send();
                     }}
-                  ></textarea>
-                  <button
-                    class="kids-send"
-                    type="submit"
-                    aria-label=${t("kids.send")}
-                    ?disabled=${!ready || chat.busy || !state.draft.trim()}
                   >
-                    ${arrow}
-                  </button>
-                </form>
+                    <input
+                      id="kids-files"
+                      type="file"
+                      accept="image/*,video/*"
+                      multiple
+                      hidden
+                      ?disabled=${!ready || !state.attachments.allowed}
+                      @change=${(event: Event) => {
+                        const input = event.currentTarget as HTMLInputElement;
+                        const files = Array.from(input.files ?? []);
+                        input.value = "";
+                        actions.attach(files);
+                      }}
+                    />
+                    <button
+                      class="kids-attach"
+                      type="button"
+                      aria-label=${t("kids.attachments.add")}
+                      ?disabled=${!ready || !state.attachments.allowed}
+                      @click=${(event: Event) => (event.currentTarget as HTMLElement).closest("form")?.querySelector<HTMLInputElement>("#kids-files")?.click()}
+                    >
+                      ${plus}
+                    </button>
+                    <label class="kids-sr-only" for="kids-message">${t("kids.message")}</label>
+                    <textarea
+                      id="kids-message"
+                      rows="1"
+                      maxlength="16000"
+                      placeholder=${t("kids.placeholder")}
+                      .value=${ready ? state.draft : ""}
+                      ?disabled=${!ready}
+                      @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
+                      @keydown=${(event: KeyboardEvent) => {
+                        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+                          event.preventDefault();
+                          actions.send();
+                        }
+                      }}
+                    ></textarea>
+                    <button
+                      class="kids-send"
+                      type="submit"
+                      aria-label=${t("kids.send")}
+                      ?disabled=${!ready || chat.busy || state.attachments.reading || (!state.draft.trim() && !state.attachments.items.some((item) => item.status === "ready"))}
+                    >
+                      ${arrow}
+                    </button>
+                  </form>
+                </div>
                 <button
                   class="kids-talk"
                   ?disabled=${!ready || chat.busy || !state.voiceAllowed}
@@ -209,6 +285,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
               `
         }
       </footer>
+      ${ready ? html`<openclaw-toast-host></openclaw-toast-host>` : nothing}
     </div>
   `;
 }

@@ -43,6 +43,19 @@ const enKids = {
     historyFailed: "The conversation could not refresh. Reconnect to continue.",
     runFailed: "Rocky could not finish that reply. You can try asking again.",
     inputInterrupted: "A message did not finish. You can send it again when you’re ready.",
+    attachments: {
+      add: "Add photos or short videos",
+      selected: "Selected photos and videos",
+      remove: "Remove",
+      file: "Attachment",
+      reading: "Preparing…",
+      failed: "Could not open this file. Remove it and try again.",
+      unsupported: "Choose a photo or a video.",
+    },
+    media: {
+      photo: "Photo",
+      video: "Video",
+    },
     notifications: {
       enable: "Notify me",
       disable: "Turn off notifications",

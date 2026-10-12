@@ -40,8 +40,7 @@ html[data-kids] body {
   opacity: 0.45;
 }
 
-.kids-shell button:focus-visible,
-.kids-shell textarea:focus-visible {
+.kids-shell button:focus-visible {
   outline: 2px solid var(--kids-accent);
   outline-offset: 4px;
 }
@@ -201,9 +200,14 @@ html[data-kids] body {
 
 .kids-footer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
   padding: 16px 32px max(24px, env(safe-area-inset-bottom));
+}
+
+.kids-compose-area {
+  flex: 1;
+  min-width: 0;
 }
 
 .kids-composer {
@@ -227,6 +231,16 @@ html[data-kids] body {
   border: 0;
   resize: none;
   background: transparent;
+}
+
+.kids-composer:focus-within {
+  outline: 2px solid var(--kids-accent);
+  outline-offset: 3px;
+}
+
+.kids-composer textarea:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .kids-composer textarea::placeholder {
@@ -351,7 +365,7 @@ html[data-kids] body {
     padding: 12px 16px max(16px, env(safe-area-inset-bottom));
   }
 
-  .kids-composer {
+  .kids-compose-area {
     flex-basis: 100%;
   }
 
@@ -363,4 +377,115 @@ html[data-kids] body {
   .kids-message {
     max-width: 94%;
   }
+}
+
+/* Draft previews belong to the verified composer; history tiles contain only safe labels. */
+.kids-attachments,
+.kids-message-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kids-attachment {
+  position: relative;
+  width: 132px;
+  padding: 6px;
+  border: 1px solid var(--kids-border);
+  border-radius: 16px;
+  background: var(--kids-paper);
+}
+
+.kids-attachment img,
+.kids-attachment video {
+  width: 100%;
+  height: 94px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.kids-attachment-name {
+  display: block;
+  padding: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--kids-muted);
+}
+
+.kids-attachment-status {
+  display: grid;
+  place-items: center;
+  min-height: 94px;
+  font-size: 12px;
+}
+
+.kids-remove-attachment {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44px;
+  border-radius: 50%;
+  background: var(--kids-paper);
+}
+
+.kids-attach {
+  flex: 0 0 40px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--kids-muted) !important;
+}
+
+.kids-attachment-error {
+  color: var(--kids-danger);
+  font-size: 13px;
+}
+
+.kids-media-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 220px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--kids-tint);
+  overflow-wrap: anywhere;
+  font-size: 13px !important;
+  text-align: left;
+}
+
+.kids-media-tile > span {
+  color: var(--kids-muted);
+  font-size: 11px;
+}
+
+/* The shared admission owner reports rejected files through its existing toast. */
+.kids-shell .app-toast {
+  position: fixed;
+  z-index: 10;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border: 1px solid var(--kids-border);
+  border-radius: 18px;
+  background: var(--kids-paper);
+  color: var(--kids-ink);
+  box-shadow: 0 4px 20px var(--kids-border);
+  font-size: 14px;
+}
+
+.kids-shell .app-toast__dismiss {
+  flex: 0 0 44px;
+  width: 44px;
+  border-radius: 50%;
+  background: transparent;
 }

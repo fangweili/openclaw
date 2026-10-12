@@ -1,7 +1,7 @@
 # Rocky for kids
 
 This separate frontend opens one child's verified tutor conversation. V1 includes
-plain text, live voice, and private notifications. Family messages and groups are
+text, photos, short videos, live voice, and private notifications. Family messages and groups are
 deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
@@ -12,7 +12,7 @@ the child's messages and finished assistant replies; voice shows spoken captions
   lifetime of its conversation, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
   A retained draft stays hidden until that conversation is ready again; binding a
-  different verified session clears it.
+  different verified profile or backing session clears it.
 - `conversation.ts` asks `users.self` and the access-filtered `agents.list`. Only a
   verified non-shared profile with exactly one accessible agent is admitted. It
   derives one stable key from those server facts and asks the Gateway to create or
@@ -22,14 +22,29 @@ the child's messages and finished assistant replies; voice shows spoken captions
   keeps a bounded memory-only projection, retains draft text on failed sends, and
   reconciles uncertain outcomes without blind resends. Reconnect removes old
   transcript data. One uncertain request stays in memory with its original
-  verified profile, agent, backing session, branch, text, and idempotency key.
+  verified profile, agent, backing session, branch, text, encoded attachments, and
+  idempotency key.
   History receipts can settle it; otherwise an explicit **Try again** makes at
   most one exact replay through Gateway send admission. Repeated transport
   failures keep the same request available; reconnect never passively resends.
   Changing the verified profile, agent, or backing session discards this retry
   capability rather than retargeting it. The conversation reports accepted text
   once to the app, whether proved by a response or a receipt; the app clears only
-  an unchanged original draft. Reloading discards memory-only recovery.
+  an unchanged original text and the exact submitted attachment IDs. Files added while
+  a send waits remain in the draft. Reloading discards memory-only recovery.
+- `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
+  Shared chat admission, read/resize, payload, and encoding owners enforce the
+  Gateway's advertised per-file and WebSocket batch limits. The app cancels reads
+  on disconnect; completed files stay hidden until the same authenticated logical
+  and backing session is verified. Rebinding or disposal releases payloads and
+  revokes URLs. A send snapshots encoded bytes and canonical optimistic content
+  before asynchronous admission and captures the displayed backing session. A
+  history refresh can update that session's branch, but a replacement backing
+  session rejects the waiting send before any RPC; the app clears the old draft.
+  Known failures retain the original files; an
+  uncertain outcome retains one exact replay without rereading or re-encoding.
+  Picker/read errors remain visible, and removing a file cancels only that read.
+  There is no durable upload cache or separate upload service.
 - `voice.ts` adapts the existing Talk owner. It owns a single call and bounded
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
@@ -118,8 +133,15 @@ and extend the existing activity collector to recognize those verified child
 turns and challenge commits. Preserve invitation cooldowns and existing parent
 reports. A current-session job can also retain explicit Slack delivery of the
 same final challenge; installing this frontend does not migrate jobs. No family
-inbox, groups, attachment upload,
-offline sends, or browsing old sessions is part of v1.
+inbox, groups, offline sends, or browsing old sessions is part of v1.
+
+Photo/video understanding uses the existing Gateway media pipeline and configured
+providers. File size limits apply to short videos; this app does not transcode
+or claim that every video format can play in every browser. Shared transcript
+projection supplies noninteractive photo/video labels for sent media. Draft files
+are previewable while composing; reopening or playing historical media is outside
+this input scope. Raw paths and remote media URLs never become fetch or navigation
+targets in this frontend. No broader file-reading permission is requested.
 
 Deployment must keep frontend and Gateway changes together because restricted
 push subscriptions require the accompanying Gateway scope fix. Review and test

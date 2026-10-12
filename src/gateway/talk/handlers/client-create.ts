@@ -178,9 +178,11 @@ export const createTalkClient: GatewayRequestHandler = async ({
         `Realtime provider ${resolution.provider.id} does not support browser video frames`,
       );
     }
+    const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
     const providerInstructions = await resolveTalkRealtimeProviderInstructions({
       config: runtimeConfig,
       agentId,
+      sender: transcriptSender,
       configuredInstructions: realtimeConfig.instructions,
       sessionKey: target.canonicalKey,
       warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
@@ -251,7 +253,6 @@ export const createTalkClient: GatewayRequestHandler = async ({
         getVoiceSessionId: () => activeVoiceSessionId,
         initialItems,
       });
-      const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
       const gatewayControlOwner = ownsProvider
         ? createTalkClientGatewayControlOwner({
             voiceSessionId: activeVoiceSessionId!,

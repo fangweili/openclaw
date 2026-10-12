@@ -305,3 +305,133 @@ it("keeps learning links safe and retires a cancelled voice startup", async () =
     await context.close();
   }
 });
+
+it("previews photos and videos, sends without text, and keeps mobile focus on the rounded composer", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  try {
+    await context.addInitScript(notificationPermissionFixture);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const gateway = await installMockGateway(page, {
+      awaitInitialRoster: false,
+      sessionKey,
+      operatorScopes: ["operator.sessions.write", "operator.talk"],
+      deferredMethods: ["chat.send"],
+      methodResponses: {
+        "users.self": { profile },
+        "agents.list": roster,
+        "sessions.create": { key: sessionKey },
+        "chat.history": {
+          sessionId: "student-session",
+          sessionInfo: { sessionId: "student-session", activeLeafEntryId: "leaf-one" },
+          messages: [],
+        },
+      },
+    });
+    await page.goto(baseUrl);
+    const composer = page.getByLabel("Message Rocky", { exact: true });
+    await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
+    await page
+      .locator("#kids-files")
+      .setInputFiles([
+        path.resolve("ui/kids/public/rocky-192.png"),
+        path.resolve("ui/src/e2e/fixtures/video-poster.mp4"),
+      ]);
+    await page.locator(".kids-attachment img").waitFor();
+    await page.locator(".kids-attachment video").waitFor();
+    await composer.tap();
+    expect(await composer.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+      "none",
+    );
+    expect(await composer.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
+    expect(
+      await page
+        .locator(".kids-composer")
+        .evaluate((element) => getComputedStyle(element).borderRadius),
+    ).toBe("24px");
+    expect(
+      await page
+        .locator(".kids-composer")
+        .evaluate((element) => getComputedStyle(element).outlineStyle),
+    ).toBe("solid");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: path.join(proof, "media-mobile-focus.png"), fullPage: true });
+    examples.push({ id: "media-mobile-focus", label: "Photo and video drafts with mobile focus" });
+
+    await page.getByRole("button", { name: "Remove: rocky-192.png", exact: true }).click();
+    expect(await page.locator(".kids-attachment img").count()).toBe(0);
+    await page.getByRole("button", { name: "Send message" }).click();
+    const request = await gateway.waitForRequest("chat.send");
+    const params = request.params as Record<string, unknown>;
+    expect(params.message).toBe("");
+    expect(params.deliver).toBe(false);
+    expect(params.attachments).toEqual([
+      expect.objectContaining({
+        type: "file",
+        mimeType: "video/mp4",
+        fileName: "video-poster.mp4",
+        content: expect.any(String),
+      }),
+    ]);
+    expect(params.suppressCommandInterpretation).toBeUndefined();
+    await page.locator("#kids-files").setInputFiles(path.resolve("ui/kids/public/rocky-192.png"));
+    await page.locator(".kids-attachment img").waitFor();
+    await composer.fill("My next question");
+    await gateway.setHistoryMessages([
+      {
+        __openclaw: { id: "media-turn", idempotencyKey: String(params.idempotencyKey) },
+        role: "user",
+        content: [
+          {
+            type: "attachment",
+            attachment: {
+              url: "media://inbound/synthetic.mp4",
+              kind: "video",
+              label: "video-poster.mp4",
+              mimeType: "video/mp4",
+            },
+          },
+        ],
+      },
+      {
+        __openclaw: { id: "media-reply" },
+        role: "assistant",
+        content: [{ type: "text", text: "Let’s look at your experiment together." }],
+      },
+    ]);
+    await gateway.resolveDeferred("chat.send", { runId: params.idempotencyKey, status: "started" });
+    await page.getByText("Let’s look at your experiment together.").waitFor();
+    expect(await page.locator(".kids-attachment video").count()).toBe(0);
+    expect(await page.locator(".kids-attachment img").count()).toBe(1);
+    expect(await composer.inputValue()).toBe("My next question");
+    expect(await page.locator(".kids-message--user .kids-media-tile").textContent()).toContain(
+      "video-poster.mp4",
+    );
+    expect(await page.locator(".kids-message--user button").count()).toBe(0);
+    await page.screenshot({ path: path.join(proof, "media-sent.png"), fullPage: true });
+    examples.push({ id: "media-sent", label: "Sent video and later photo draft" });
+    await page.getByRole("button", { name: "Add photos or short videos", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    expect(await composer.evaluate((element) => document.activeElement === element)).toBe(true);
+    expect(await composer.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+      "none",
+    );
+    expect(
+      await page
+        .locator(".kids-composer")
+        .evaluate((element) => getComputedStyle(element).outlineStyle),
+    ).toBe("solid");
+    await page.screenshot({ path: path.join(proof, "media-keyboard-focus.png"), fullPage: true });
+    examples.push({ id: "media-keyboard-focus", label: "Accessible rounded keyboard focus" });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});

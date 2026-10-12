@@ -216,3 +216,85 @@ describe("kids app voice completion", () => {
     },
   );
 });
+
+describe("kids app attachment ownership", () => {
+  it("clears only accepted files, preserves later edits, and releases them after a backing-session reset", async () => {
+    const admission = createDeferred<unknown>();
+    let backing = "session-one";
+    let blobId = 0;
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:app-${++blobId}`);
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    class Reader extends EventTarget {
+      result: string | null = null;
+      abort() {}
+      readAsDataURL(file: File) {
+        this.result = `data:${file.type};base64,c3ludGhldGlj`;
+        this.dispatchEvent(new Event("load"));
+      }
+    }
+    vi.stubGlobal("FileReader", Reader);
+    fixture.request.mockImplementation(async (method, input) => {
+      const params = input as Record<string, unknown>;
+      switch (method) {
+        case "users.self":
+          return { profile: { id: "child-one", displayName: "Child" } };
+        case "agents.list":
+          return { agents: [{ id: "student", name: "Rocky" }] };
+        case "sessions.create":
+        case "sessions.messages.subscribe":
+        case "sessions.messages.unsubscribe":
+          return { key: params.key };
+        case "chat.history":
+          return {
+            ...history("leaf"),
+            sessionId: backing,
+            sessionInfo: { sessionId: backing, activeLeafEntryId: "leaf" },
+          };
+        case "chat.send":
+          return admission.promise;
+        default:
+          throw new Error(`Unexpected request: ${method}`);
+      }
+    });
+    const app = new KidsApp(document.createElement("div"));
+    try {
+      app.start();
+      await vi.advanceTimersByTimeAsync(0);
+      fixture.actions!.attach([new File(["synthetic"], "first.png", { type: "image/png" })]);
+      fixture.actions!.send();
+      expect(fixture.request).toHaveBeenCalledWith(
+        "chat.send",
+        expect.objectContaining({
+          message: "",
+          attachments: [expect.objectContaining({ fileName: "first.png" })],
+        }),
+      );
+      fixture.actions!.attach([new File(["synthetic"], "later.mp4", { type: "video/mp4" })]);
+      fixture.actions!.draft("A new caption");
+      admission.resolve({ status: "started" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.state!.attachments.items.map((item) => item.name)).toEqual(["later.mp4"]);
+      expect(fixture.state!.draft).toBe("A new caption");
+      expect(revoke).toHaveBeenCalledWith("blob:app-1");
+      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
+      expect(fixture.state!.conversation.status).toBe("disconnected");
+      expect(fixture.state!.attachments.items).toHaveLength(1);
+      fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.state!.draft).toBe("A new caption");
+      expect(fixture.state!.attachments.items).toHaveLength(1);
+      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
+      backing = "session-reset";
+      fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.state!.draft).toBe("");
+      expect(fixture.state!.attachments.items).toHaveLength(0);
+      expect(revoke).toHaveBeenCalledWith("blob:app-2");
+    } finally {
+      admission.resolve({ status: "started" });
+      await app.dispose();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+});

@@ -281,9 +281,11 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           const capabilities = resolution.capabilities;
           const controlSource =
             capabilities?.handlesAgentConsult === true ? "delegation" : "transcript";
+          const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
           const providerInstructions = await resolveTalkRealtimeProviderInstructions({
             config: runtimeConfig,
             agentId,
+            sender: transcriptSender,
             configuredInstructions: realtimeConfig.instructions,
             sessionKey: target.canonicalKey,
             warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
@@ -321,7 +323,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
               []),
           ];
           const session = createTalkRealtimeRelaySession({
-            transcriptSender: gatewayClientSenderFields(client ?? null).sender,
+            transcriptSender,
             context,
             connId,
             cfg: runtimeConfig,
