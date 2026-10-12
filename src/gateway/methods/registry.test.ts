@@ -222,7 +222,11 @@ describe("gateway method registry", () => {
     expect(registry.requiresAuthenticatedProfile("approval.history")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("board.data.read")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("board.prompt.authorize")).toBe(false);
-    expect(registry.requiresAuthenticatedProfile("talk.client.create")).toBe(false);
+    expect(registry.requiresAuthenticatedProfile("talk.client.create")).toBe(true);
+    expect(registry.requiresAuthenticatedProfile("talk.client.transcript")).toBe(true);
+    expect(registry.requiresAuthenticatedProfile("talk.session.create")).toBe(true);
+    expect(registry.requiresAuthenticatedProfile("talk.client.close")).toBe(false);
+    expect(registry.requiresAuthenticatedProfile("talk.session.close")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("talk.session.steer")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("wake")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("aux.identity.read")).toBe(true);

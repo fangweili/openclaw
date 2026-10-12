@@ -32,6 +32,7 @@ import {
   resolveOpenClientVoiceSessionId,
 } from "../../../talk/client-voice-session.js";
 import { resolveSandboxedSessionCreation } from "../../operator-session-run.js";
+import { gatewayClientSenderFields } from "../../server-methods/gateway-client-identity.js";
 import type { GatewayRequestHandlers } from "../../server-methods/types.js";
 import { defineValidatedGatewayHandler } from "../../server-methods/validation.js";
 import { SessionMutationAuthorizationChangedError } from "../../session-mutation-authorization-error.js";
@@ -189,7 +190,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
   "talk.client.transcript": defineValidatedGatewayHandler(
     "talk.client.transcript",
     validateTalkClientTranscriptParams,
-    async ({ params, respond, context, sessionMutationAuthorization }) => {
+    async ({ params, respond, context, client, sessionMutationAuthorization }) => {
       try {
         const config = context.getRuntimeConfig();
         const target =
@@ -197,6 +198,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           prepareTalkSessionTarget(config, params.sessionKey);
         sessionMutationAuthorization?.assertCurrent();
         await appendClientVoiceTranscript({
+          ...gatewayClientSenderFields(client ?? null),
           agentId: target.agentId,
           sessionKey: target.sessionKey,
           sessionTarget: { sessionKey: target.canonicalKey, storePath: target.storePath },

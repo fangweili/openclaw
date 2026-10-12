@@ -1,4 +1,9 @@
-/** Durable per-agent voice-call records for Talk continuity and mutation evidence. */
+/**
+ * Durable per-agent voice-call records and serialized transcript writes for Talk.
+ * Callers supply authenticated sender facts at ingress; the transcript owner snapshots
+ * them before queue admission and stamps user rows only. Attribution is evidence,
+ * never call/session authority. Close joins accepted writes before releasing state.
+ */
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendTranscriptMessage,
@@ -14,6 +19,8 @@ import {
   onTrustedToolExecutionEvent,
   type TrustedToolExecutionEvent,
 } from "../infra/diagnostic-events.js";
+import { buildPersistedUserTurnMetadata } from "../sessions/user-turn-transcript.metadata.js";
+import type { UserTurnInput } from "../sessions/user-turn-transcript.types.js";
 import { runOpenClawAgentWriteTransaction } from "../state/openclaw-agent-db.js";
 import {
   type ClientVoiceConfirmationUtteranceContext,
@@ -43,7 +50,6 @@ import {
   writeVoiceSessionRecordInTransaction as writeRecordInTransaction,
 } from "./client-voice-session-store.js";
 import {
-  buildPersistedVoiceMessage,
   createVoiceTranscriptOperationRegistry,
   normalizeVoiceTranscriptText,
   VOICE_TRANSCRIPT_MAX_UNRESOLVED,
@@ -440,12 +446,22 @@ function appendVoiceTranscript(params: {
   timestamp?: number;
   config?: OpenClawConfig;
   confirmation?: ClientVoiceConfirmationUtteranceContext | null;
+  /** Trusted ingress caller facts, never frontend input or inferred session ownership. */
+  sender?: UserTurnInput["sender"];
 }): Promise<void> {
   // Normalize before admission so the queued task retains only bounded text.
-  const normalized = { ...params, text: normalizeVoiceTranscriptText(params.text) };
+  const { sender, ...transcript } = params;
+  const normalized = { ...transcript, text: normalizeVoiceTranscriptText(transcript.text) };
   if (!normalized.text) {
     return Promise.resolve();
   }
+  // Talk is external user ingress with its own voice provenance. Snapshot stable
+  // caller attribution only: mutable display labels must not conflict with a
+  // committed transcript when the same caller retries after a lost response.
+  const userMetadata =
+    normalized.role === "user" && sender
+      ? buildPersistedUserTurnMetadata({ sender: { id: sender.id, identity: sender.identity } }, [])
+      : undefined;
   const confirmation =
     normalized.role === "user"
       ? prepareClientVoiceConfirmationTranscript({
@@ -508,12 +524,21 @@ function appendVoiceTranscript(params: {
         {
           ...(normalized.config ? { config: normalized.config } : {}),
           eventId: voiceTranscriptEventId(normalized.voiceSessionId, normalized.entryId),
-          message: buildPersistedVoiceMessage({
+          message: {
             role: normalized.role,
-            text: normalized.text,
+            content: [{ type: "text", text: normalized.text }],
             timestamp,
-            provider: record.provider ?? "realtime",
-          }),
+            provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+            ...(userMetadata ? { __openclaw: userMetadata } : {}),
+            ...(normalized.role === "assistant"
+              ? {
+                  api: "realtime",
+                  provider: record.provider ?? "realtime",
+                  model: "realtime-voice",
+                  stopReason: "stop",
+                }
+              : {}),
+          },
           now: timestamp,
         },
       );
@@ -567,7 +592,7 @@ function appendVoiceTranscript(params: {
   );
 }
 
-/** Append one finalized client-owned transcript item idempotently. */
+/** Append once by event ID; snapshot trusted caller attribution before queued writes. */
 export function appendClientVoiceTranscript(
   params: Omit<Parameters<typeof appendVoiceTranscript>[0], "origin">,
 ): Promise<void> {
@@ -582,7 +607,7 @@ export async function flushClientVoiceSessionWrites(params: {
   await voiceSessionOperations.flush(operationKey(params.agentId, params.voiceSessionId));
 }
 
-/** Append one finalized relay-owned transcript item idempotently. */
+/** Append once by event ID; caller facts come from authenticated relay admission. */
 export function appendRelayVoiceTranscript(
   params: Omit<Parameters<typeof appendVoiceTranscript>[0], "origin">,
 ): Promise<void> {

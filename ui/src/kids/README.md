@@ -25,6 +25,11 @@ the child's messages and finished assistant replies; voice shows spoken captions
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
   work before transport teardown. Provider credentials stay with existing owners.
+  The Gateway captures authenticated caller attribution at transcript/call admission
+  and stamps stable caller IDs on user voice rows through the shared metadata
+  serializer. Mutable display labels stay out of transcript retry identity.
+  Activity collectors can count verified speech without inferring authorship from
+  session ownership; legacy unstamped voice remains unknown.
 - `view.ts` renders supplied state and emits actions. Markdown goes through the
   existing sanitizer; messages cannot introduce controls, remote images, raw HTML,
   or session navigation. Views never make permission or routing decisions.

@@ -4465,6 +4465,13 @@ describe("role-required Talk session creation", () => {
       });
 
       expectRespondOk(respond);
+      if (method === "talk.session.create") {
+        expect(mocks.createTalkRealtimeRelaySession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transcriptSender: { id: profile.id, identity: { type: "profile", id: profile.id } },
+          }),
+        );
+      }
       expect(mocks.ensureClientVoiceAgentSessionEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           agentId: "main",

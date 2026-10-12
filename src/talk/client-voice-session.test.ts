@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { readSessionTranscriptMessageEvents } from "../config/sessions/session-accessor.js";
 import { emitTrustedDiagnosticEvent } from "../infra/diagnostic-events.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
@@ -465,6 +466,12 @@ describe("client voice session", () => {
       return await actualAppend(...args);
     });
 
+    const sender = {
+      id: "original-caller",
+      name: "Mutable display name",
+      username: "mutable-username",
+      identity: { type: "profile" as const, id: "original-caller" },
+    };
     const appends = Array.from({ length: 10_000 }, (_, index) =>
       appendClientVoiceTranscript({
         agentId: "main",
@@ -473,6 +480,7 @@ describe("client voice session", () => {
         voiceSessionId,
         entryId: String(index + 1),
         role: index % 2 === 0 ? "user" : "assistant",
+        sender,
         text: `  ${"x".repeat(9_000)}  `,
       }).then(
         () => ({ ok: true as const }),
@@ -483,6 +491,9 @@ describe("client voice session", () => {
       expect(sessionAccessorMocks.appendTranscriptMessage).toHaveBeenCalledTimes(1),
     );
     expect(clientVoiceSessionTesting.readRecord("main", voiceSessionId)?.status).toBe("open");
+    // A queued final retains the admitted speaker even if its caller object changes.
+    sender.id = "changed-caller";
+    sender.identity.id = "changed-caller";
     firstAppend.resolve();
     const results = await Promise.all(appends);
 
@@ -498,6 +509,18 @@ describe("client voice session", () => {
             result.error.message === "voice transcript persistence queue capacity exceeded"),
       ),
     ).toBe(true);
+    const persisted = readSessionTranscriptMessageEvents({
+      agentId: "main",
+      sessionId: "session-agent-main-main",
+    });
+    expect(persisted[2]?.event.message).toHaveProperty("__openclaw.senderIdentity", {
+      type: "profile",
+      id: "original-caller",
+    });
+    expect(persisted[2]?.event.message).toHaveProperty("__openclaw.senderId", "original-caller");
+    expect(persisted[2]?.event.message).not.toHaveProperty("__openclaw.senderName");
+    expect(persisted[2]?.event.message).not.toHaveProperty("__openclaw.senderUsername");
+    expect(persisted[1]?.event.message).not.toHaveProperty("__openclaw.senderIdentity");
     expect(sessionAccessorMocks.appendTranscriptMessage).toHaveBeenCalledTimes(41);
     expect(
       sessionAccessorMocks.appendTranscriptMessage.mock.calls.map(([, options]) => options.eventId),

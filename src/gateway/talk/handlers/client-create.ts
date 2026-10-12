@@ -31,6 +31,7 @@ import {
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
 import { resolveSandboxedSessionCreation } from "../../operator-session-run.js";
+import { gatewayClientSenderFields } from "../../server-methods/gateway-client-identity.js";
 import type { GatewayRequestHandler } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
 import { resolveOperatorSessionCreation } from "../../session-creation-provenance.js";
@@ -250,6 +251,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
         getVoiceSessionId: () => activeVoiceSessionId,
         initialItems,
       });
+      const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
       const gatewayControlOwner = ownsProvider
         ? createTalkClientGatewayControlOwner({
             voiceSessionId: activeVoiceSessionId!,
@@ -273,6 +275,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
               consultRunner.getToolAuthorityOverlay(undefined, source),
             appendTranscript: ({ entryId, role, text, confirmation }) =>
               appendClientVoiceTranscript({
+                sender: transcriptSender,
                 agentId,
                 sessionKey,
                 sessionTarget,

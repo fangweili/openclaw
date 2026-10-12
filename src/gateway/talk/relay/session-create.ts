@@ -624,6 +624,7 @@ export function createTalkRealtimeRelaySession(
     capabilities: params.capabilities,
     outputOwnership,
     sessionTarget: params.sessionTarget,
+    transcriptSender: params.transcriptSender,
     expiresAtMs,
     cleanupTimer: setTimeout(() => {
       const active = relaySessions.get(relaySessionId);
