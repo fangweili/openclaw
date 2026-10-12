@@ -116,6 +116,10 @@ function createTalkClientAgentRuntime(params: {
       // its final transcript would lose the answer when no spoken replacement arrives.
       return await execution.runEmbeddedAgent({
         ...runParams,
+        // This wrapper admits a live Gateway user's voice request. Preserve its
+        // existing recorder/request ID so authorized prompt hooks can recall prior
+        // conversations just as they do for text; tool authority is unchanged.
+        trigger: "user",
         extraSystemPrompt: [
           runParams.extraSystemPrompt,
           params.sessionContext,
@@ -197,7 +201,9 @@ export function prepareTalkClientControlAuthority(params: {
 }
 
 /**
- * Owns consult runs for one admitted call. Retains the immutable agent/caller context
+ * Owns user-driven consult runs for one admitted Gateway call. Marks their existing
+ * recorded input as a user turn for interactive prompt hooks; generic voice bridges
+ * retain their own trigger policy. Retains the immutable agent/caller context
  * supplied at admission through native, explicit-tool, and confirmation-retry runs;
  * callers must provide the context captured at call admission. Context never alters
  * tool authority or current-run checks. Existing run owners still cancel,

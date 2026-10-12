@@ -94,6 +94,19 @@ These facts provide model context without granting permissions. Personalized
 requests go to the selected full agent, which loads its workspace instructions
 and relevant memory with the same caller context.
 
+User-driven native Gateway consultations are eligible for the same authorized
+Active Memory recall as text turns. They retain the admitted request identity,
+caller tool restrictions, and call cancellation checks. Protected recall remains
+limited to eligible private conversations for the selected agent; system,
+inter-session, and harness exclusions still apply. This does not change the
+trigger policy of other voice bridges.
+
+Automatic protected recall and explicit transcript search are separate settings.
+To let an agent call `memory_search` with `corpus: "sessions"`, enable
+`memory.search.experimental.sessionMemory` and include `"sessions"` in
+`memory.search.sources` (per-agent overrides are supported). This does not grant
+session-management tools or broader Gateway scopes.
+
 Speech finalized while an accepted consult is starting remains visible in history
 and does not prevent the agent from adopting that consult's recorded input.
 Completed agent answers and newly admitted tasks still close the older input;

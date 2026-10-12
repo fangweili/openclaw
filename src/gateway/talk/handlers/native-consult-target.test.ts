@@ -6,6 +6,7 @@ import {
   setActiveEmbeddedRun,
 } from "../../../agents/embedded-agent-runner/runs.js";
 import { testing as embeddedRunTesting } from "../../../agents/embedded-agent-runner/runs.test-support.js";
+import type { EmbeddedAgentRunResult } from "../../../agents/embedded-agent-runner/types.js";
 import { REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS } from "../../../agents/realtime-bootstrap-context.test-support.js";
 import { replyRunRegistry } from "../../../auto-reply/reply/reply-run-registry.js";
 import {
@@ -60,6 +61,7 @@ import {
   resolveTalkVoiceSession,
 } from "../voice-selection.js";
 import { talkClientHandlers } from "./client.js";
+import { expectNativeVoiceMemoryRecall } from "./native-consult-memory.test-support.js";
 import { talkSessionHandlers } from "./session.js";
 
 const mocks = vi.hoisted(() => ({
@@ -70,10 +72,12 @@ const mocks = vi.hoisted(() => ({
     supportsToolCalls: false,
   } satisfies RealtimeVoiceProviderCapabilities,
   resolveProvider: vi.fn(),
-  runEmbeddedAgent: vi.fn(async (_params: RunEmbeddedAgentParams) => ({
-    payloads: [{ text: "Synthetic consult answer" }],
-    meta: { durationMs: 0 },
-  })),
+  runEmbeddedAgent: vi.fn(
+    async (_params: RunEmbeddedAgentParams): Promise<EmbeddedAgentRunResult> => ({
+      payloads: [{ text: "Synthetic consult answer" }],
+      meta: { durationMs: 0 },
+    }),
+  ),
 }));
 
 vi.mock("../../../agents/embedded-agent.js", () => ({ runEmbeddedAgent: mocks.runEmbeddedAgent }));
@@ -769,6 +773,16 @@ it("restores bounded relay history after the original voice provider finishes cl
 });
 
 describe.each(["browser", "relay"] as const)("native %s Talk consultation", (transport) => {
+  it("injects protected memory recall into the admitted user's consult prompt", async () => {
+    client.connect.scopes = ["operator.sessions.write", "operator.talk"];
+    await expectNativeVoiceMemoryRecall({
+      config,
+      transport,
+      dispatch,
+      getConsult: () => callback,
+      runEmbeddedAgent: mocks.runEmbeddedAgent,
+    });
+  });
   it.each(["learner", "parent"] as const)(
     "preserves admitted agent and %s identity through the actual embedded consult boundary",
     async (caller) => {
