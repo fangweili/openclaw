@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { GatewayBrowserClientOptions } from "../api/gateway.ts";
+import { useKidsDraftStoreFixture } from "./app-draft.test-support.ts";
 import type { KidsViewActions, KidsViewState } from "./view.ts";
 
 const fixture = vi.hoisted(() => ({
@@ -80,8 +81,11 @@ vi.mock("../api/gateway.ts", async (original) => {
 
 import { KidsApp } from "./app.ts";
 
+const drafts = useKidsDraftStoreFixture();
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
   fixture.recorders = [];
   fixture.cleanup.mockReset().mockResolvedValue(undefined);
   fixture.request.mockReset().mockImplementation(async (method, input) => {
@@ -115,6 +119,7 @@ it("inserts speech into the current draft without sending, and excludes simultan
   try {
     app.start();
     await vi.advanceTimersByTimeAsync(0);
+    await drafts.settle();
     fixture.actions!.draft("Help with");
     fixture.actions!.dictate();
     await vi.advanceTimersByTimeAsync(0);
@@ -152,6 +157,7 @@ it("joins recording retirement before reconnect and rejects old draft callbacks"
   try {
     app.start();
     await vi.advanceTimersByTimeAsync(0);
+    await drafts.settle();
     fixture.actions!.draft("Keep my draft");
     fixture.actions!.dictate();
     await vi.advanceTimersByTimeAsync(0);
@@ -167,12 +173,14 @@ it("joins recording retirement before reconnect and rejects old draft callbacks"
       1,
     );
     old.commit("Old private speech");
-    expect(fixture.state!.draft).toBe("Keep my draft");
+    expect(fixture.state!.draft).toBe("");
     closing.resolve();
     await vi.advanceTimersByTimeAsync(0);
     expect(fixture.request.mock.calls.filter(([method]) => method === "users.self")).toHaveLength(
       2,
     );
+    await drafts.settle();
+    expect(fixture.state!.draft).toBe("Keep my draft");
     fixture.actions!.draft("New draft");
     old.commit("Old private speech");
     old.publish({ active: true, finishing: false, detail: "Old error" });

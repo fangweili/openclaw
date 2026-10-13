@@ -100,9 +100,19 @@ html[data-kids] body {
   color: var(--kids-muted) !important;
 }
 
-.kids-notifications[aria-pressed="true"] {
+.kids-notifications-on {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   background: var(--kids-tint);
-  color: var(--kids-accent) !important;
+  color: var(--kids-accent);
+}
+
+.kids-notifications-on svg {
+  width: 18px;
+  height: 18px;
 }
 
 .kids-thread {
@@ -379,7 +389,7 @@ html[data-kids] body {
   }
 }
 
-/* Draft previews belong to the verified composer; history tiles contain only safe labels. */
+/* Draft previews and authorized history sources have separate lifecycle owners. */
 .kids-attachments,
 .kids-message-media {
   display: flex;
@@ -461,6 +471,53 @@ html[data-kids] body {
 .kids-media-tile > span {
   color: var(--kids-muted);
   font-size: 11px;
+}
+
+.kids-media-preview {
+  width: 360px;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--kids-tint);
+}
+
+.kids-media-preview img,
+.kids-media-preview video,
+.kids-media-placeholder {
+  /* Reserve the same frame before and after decoding so replies stay in view. */
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  box-sizing: border-box;
+}
+
+.kids-media-preview img,
+.kids-media-preview video {
+  display: block;
+  object-fit: contain;
+}
+
+.kids-media-preview figcaption {
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--kids-muted);
+}
+
+.kids-media-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--kids-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.kids-media-placeholder button {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--kids-paper);
 }
 
 /* The shared admission owner reports rejected files through its existing toast. */

@@ -18,6 +18,8 @@ const enKids = {
       "A tricky question, a little practice, or something you’re curious about. Let’s figure it out together.",
     message: "Message Rocky",
     placeholder: "Ask Rocky anything…",
+    draftNotSaved:
+      "Your draft could not be saved on this device. Keep this page open until you send it.",
     send: "Send message",
     talk: "Talk to Rocky",
     dictation: {
@@ -66,11 +68,12 @@ const enKids = {
     media: {
       photo: "Photo",
       video: "Video",
+      loading: "Loading…",
+      unavailable: "This photo or video is unavailable.",
     },
     notifications: {
       enable: "Notify me",
-      disable: "Turn off notifications",
-      enabled: "Notifications are on",
+      enabled: "Notifications on",
       working: "Setting up notifications…",
       installRequired:
         "On iPhone or iPad, choose Share → Add to Home Screen, then open Rocky from there to turn on notifications.",

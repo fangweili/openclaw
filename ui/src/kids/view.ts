@@ -13,6 +13,8 @@ import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
 import type { KidsAttachmentState } from "./attachments.ts";
 import type { KidsConversationState } from "./conversation.ts";
+import { kidsMediaPreview } from "./history-media-view.ts";
+import type { KidsHistoryMedia } from "./history-media.ts";
 import type { KidsNotificationsState } from "./notifications.ts";
 import type { KidsVoiceState } from "./voice.ts";
 
@@ -23,10 +25,13 @@ export type KidsViewState = {
   voice: KidsVoiceState;
   dictation: { active: boolean; finishing: boolean; detail: string | null };
   draft: string;
+  draftReady: boolean;
+  draftError: string | null;
   connectionError: string | null;
   voiceAllowed: boolean;
   notifications: KidsNotificationsState | null;
   attachments: KidsAttachmentState;
+  media?: KidsHistoryMedia;
 };
 
 export type KidsViewActions = {
@@ -81,6 +86,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const { conversation: chat, voice } = state;
   const calling = voice.active || voice.status === "stopping";
   const ready = chat.status === "ready";
+  const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
   const status = calling
@@ -102,7 +108,23 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
         </div>
         <div class="kids-header-actions">
           ${chat.childName ? html`<span class="kids-child">${chat.childName}</span>` : nothing}
-          ${state.notifications ? html`<button class="kids-notifications" aria-label=${t(state.notifications.status === "enabled" ? "kids.notifications.disable" : "kids.notifications.enable")} aria-pressed=${state.notifications.status === "enabled"} ?disabled=${state.notifications.status === "working"} @click=${actions.notifications}>${bell}</button>` : nothing}
+          ${
+            state.notifications?.status === "enabled"
+              ? html`<span class="kids-notifications-on" title=${t("kids.notifications.enabled")}
+                  ><span aria-hidden="true">${bell}</span
+                  ><span class="kids-sr-only">${t("kids.notifications.enabled")}</span></span
+                >`
+              : state.notifications
+                ? html`<button
+                    class="kids-notifications"
+                    aria-label=${t("kids.notifications.enable")}
+                    ?disabled=${state.notifications.status === "working"}
+                    @click=${actions.notifications}
+                  >
+                    ${bell}
+                  </button>`
+                : nothing
+          }
         </div>
       </header>
       <main class="kids-thread" aria-label=${t("kids.conversation")}>
@@ -135,7 +157,18 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                 >
                 ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
                 <div class="kids-message-media">
-                  ${message.media.map((media) => html`<span class="kids-media-tile"><span>${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span>${media.label}</span>`)}
+                  ${message.media.map((media) =>
+                    media.artifactId && state.media && ready
+                      ? html`<figure class="kids-media-preview">
+                          ${kidsMediaPreview(state.media, media, state.media.generation)}
+                          <figcaption>${media.label}</figcaption>
+                        </figure>`
+                      : html`<span class="kids-media-tile"
+                          ><span
+                            >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
+                          >${media.label}</span
+                        >`,
+                  )}
                 </div>
               </article>
             `,
@@ -180,6 +213,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
               `
             : html`
                 <div class="kids-compose-area">
+                  ${ready && state.draftError ? html`<p class="kids-attachment-error" role="status">${state.draftError}</p>` : nothing}
                   ${
                     ready && state.attachments.items.length
                       ? html` <div
@@ -261,7 +295,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       maxlength="16000"
                       placeholder=${t("kids.placeholder")}
                       .value=${ready ? state.draft : ""}
-                      ?disabled=${!ready}
+                      ?disabled=${!composerReady}
                       ?readonly=${dictating}
                       @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
                       @keydown=${(event: KeyboardEvent) => {
@@ -276,7 +310,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       type="button"
                       aria-label=${t(dictating ? "kids.dictation.stop" : "kids.dictation.start")}
                       aria-pressed=${dictating}
-                      ?disabled=${!ready || !state.voiceAllowed || state.dictation.finishing}
+                      ?disabled=${!composerReady || !state.voiceAllowed || state.dictation.finishing}
                       @click=${actions.dictate}
                     >
                       ${dictating ? stop : microphone}
@@ -285,7 +319,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       class="kids-send"
                       type="submit"
                       aria-label=${t("kids.send")}
-                      ?disabled=${!ready || dictating || chat.busy || state.attachments.reading || (!state.draft.trim() && !state.attachments.items.some((item) => item.status === "ready"))}
+                      ?disabled=${!composerReady || dictating || chat.busy || state.attachments.reading || (!state.draft.trim() && !state.attachments.items.some((item) => item.status === "ready"))}
                     >
                       ${arrow}
                     </button>

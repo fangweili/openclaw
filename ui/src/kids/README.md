@@ -8,11 +8,11 @@ the child's messages and finished assistant replies; voice shows spoken captions
 
 ## Ownership and trust
 
-- `app.ts` owns the document, same-origin Gateway client, in-memory draft, and the
-  lifetime of its conversation, voice, and notification owners. Reconnect fences
+- `app.ts` owns the document, same-origin Gateway client, and the
+  lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
   A retained draft stays hidden until that conversation is ready again; binding a
-  different verified profile or backing session clears it.
+  different verified profile or backing session binds a separate draft.
   It identifies as the canonical WebChat UI, requiring an approved signed browser
   device even when Tailscale authenticates the person. The Control UI's Tailscale
   pairing bypass cannot establish the durable device authority used by Web Push.
@@ -38,6 +38,15 @@ the child's messages and finished assistant replies; voice shows spoken captions
   once to the app, whether proved by a response or a receipt; the app clears only
   an unchanged original text and the exact submitted attachment IDs. Files added while
   a send waits remain in the draft. Reloading discards memory-only recovery.
+- `draft.ts` persists unsent text through the existing browser composer store,
+  scoped to the verified profile-qualified session key, physical session ID, and
+  Gateway origin. Restoration finishes before editing is enabled and never sends
+  a message. One serialized worker coalesces edits; acknowledgments clear only
+  unchanged text, including receipts recovered after reconnect. Disconnect hides
+  text; disposal joins admitted saves. Storage failure or a conflicting tab keeps
+  local text editable with a save warning, without overwriting the other tab.
+  The shared store owns its seven-day expiry. Files and uncertain-send replay
+  credentials remain memory-only; draft recovery does not promise offline sends.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
   Shared chat admission, read/resize, payload, and encoding owners enforce the
   Gateway's advertised per-file and WebSocket batch limits. The app cancels reads
@@ -51,6 +60,14 @@ the child's messages and finished assistant replies; voice shows spoken captions
   uncertain outcome retains one exact replay without rereading or re-encoding.
   Picker/read errors remain visible, and removing a file cancels only that read.
   There is no durable upload cache or separate upload service.
+- `history-media.ts` owns mounted image/video reads for the verified conversation.
+  The shared projector supplies opaque artifact IDs; the existing artifact API
+  checks session access and serves its referenced media. No raw path or remote
+  URL becomes a browser source. Viewport leases admit at most two reads, release
+  offscreen image URLs, and cancel on disconnect or rebinding. Videos use native
+  controls, no autoplay, and short-lived HTTP grants with range playback. Expired
+  grants or unreadable media show an explicit retry; unsupported references retain
+  their labels. Disposal joins reads before the Gateway client stops.
 - `voice.ts` adapts the existing Talk owner. It owns a single call and bounded
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
@@ -84,6 +101,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   clears the claim, and disconnect or lease expiry restores delivery if browser
   shutdown prevents cleanup. The worker still displays every received push, as
   required by Safari's Web Push contract.
+  Once enabled, the header shows a noninteractive status. The kids app only
+  offers notification setup; turning notifications off remains in device/browser
+  settings, so tapping the status cannot unsubscribe accidentally.
 - `extensions/kids-ui` serves public build assets and owns bounded, authenticated
   dictation requests. Its service joins provider work and deletes private temporary
   recordings; provider selection and credentials stay with the existing runtime.
@@ -161,11 +181,21 @@ inbox, groups, offline sends, or browsing old sessions is part of v1.
 
 Photo/video understanding uses the existing Gateway media pipeline and configured
 providers. File size limits apply to short videos; this app does not transcode
-or claim that every video format can play in every browser. Shared transcript
-projection supplies noninteractive photo/video labels for sent media. Draft files
-are previewable while composing; reopening or playing historical media is outside
-this input scope. Raw paths and remote media URLs never become fetch or navigation
-targets in this frontend. No broader file-reading permission is requested.
+or claim that every video format can play in every browser. Canonical history
+references reopen uploaded photos/videos and generated images through the existing
+artifact route. Session access is the authority; there is no separate file
+permission system or broader file-reading permission. Unsupported media keeps its label.
+Uploaded media requires reachable Gateway HTTP artifact routes; unlike inline
+transcript images, it has no WebSocket byte-transfer fallback. The bundled app
+uses the same origin that serves those routes.
+
+Browser diagnostics retain only the latest `rocky.send.accepted` and
+`rocky.send.finished` Performance measures: socket submission to acknowledgment
+and to the matching final event. They contain no text or identities, do not leave
+the device, and reset with the document. Failed/interrupted runs are not successful
+completion samples; reconnect starts a new measurement. These timings include
+Gateway/model work but exclude file preparation and the final history read/render.
+They add no controls or status counters to the kids app.
 
 Deployment must keep frontend and Gateway changes together because restricted
 push subscriptions require the accompanying Gateway scope fix. Review and test

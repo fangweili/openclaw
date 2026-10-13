@@ -11,7 +11,8 @@
  * initialize() never prompts. enable() must run directly in a user gesture.
  * dispose() fences new writes immediately and joins accepted operations before
  * the app replaces its connection. Browser subscriptions intentionally survive
- * closing the app; disable() is the explicit unsubscribe operation.
+ * closing the app. This child-facing surface only enables notifications;
+ * subscription removal remains in browser/device settings.
  */
 import { raceWithTimeout } from "@openclaw/retry";
 import type { WebPushDevicePreferences } from "../../../packages/gateway-protocol/src/schema/push.ts";
@@ -20,7 +21,6 @@ import {
   getExistingSubscription,
   reconcileWebPushSubscription,
   subscribeToWebPush,
-  unsubscribeFromWebPush,
   type WebPushPreferencesResult,
   type WebPushTarget,
 } from "../app/web-push.runtime.ts";
@@ -149,15 +149,6 @@ export class KidsNotifications {
         throw new Error(t("kids.notifications.connectionMismatch"));
       }
       await this.savePrivatePreferences(target, true);
-    });
-  }
-
-  /** Disable only this app's browser subscription; do not change user-wide preferences. */
-  disable(): Promise<void> {
-    return this.run(async (target) => {
-      await this.stopForeground();
-      await unsubscribeFromWebPush(this.client, target);
-      this.publish({ status: "off", detail: null });
     });
   }
 

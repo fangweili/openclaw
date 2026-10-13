@@ -115,6 +115,42 @@ afterEach(async () => {
 });
 
 describe("kids conversation", () => {
+  it("shows a generated image-only final while keeping commentary and tool media hidden", async () => {
+    const { owner, client } = fixture();
+    const image = {
+      type: "image",
+      artifactId: "artifact_managed_image_diagram",
+      fileName: "A diagram.png",
+    };
+    client.history.messages = [
+      { role: "assistant", content: [image], phase: "commentary", __openclaw: { id: "progress" } },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tool", name: "draw", arguments: {} }, image],
+        __openclaw: { id: "activity" },
+      },
+      { role: "assistant", content: [image], stopReason: "error", __openclaw: { id: "failed" } },
+      {
+        role: "assistant",
+        content: [image],
+        phase: "final_answer",
+        stopReason: "stop",
+        __openclaw: { id: "answer" },
+      },
+    ];
+    await owner.connect(hello);
+    expect(owner.state.messages).toEqual([
+      {
+        id: "answer",
+        role: "assistant",
+        text: "",
+        media: [
+          { id: "image-0", kind: "image", label: "A diagram.png", artifactId: image.artifactId },
+        ],
+      },
+    ]);
+  });
+
   it("shows each send once through accepted custody, durable input, and final reply", async () => {
     const { owner, client } = fixture();
     const transcript: unknown[] = [];

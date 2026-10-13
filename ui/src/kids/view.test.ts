@@ -21,6 +21,8 @@ function readyState(): KidsViewState {
     voice: { status: "idle", active: false, detail: null, entries: [] },
     dictation: { active: false, finishing: false, detail: null },
     draft: privateDraft,
+    draftReady: true,
+    draftError: null,
     connectionError: null,
     voiceAllowed: true,
     notifications: null,
@@ -137,6 +139,38 @@ describe("kids media composer", () => {
       state.attachments.reading = true;
       render(renderKidsView(state, actions), root);
       expect(send.disabled).toBe(true);
+    } finally {
+      render(null, root);
+    }
+  });
+});
+
+describe("kids notification control", () => {
+  it("offers setup when off and shows a noninteractive status once enabled", () => {
+    const root = document.createElement("div");
+    const state = readyState();
+    const actions: KidsViewActions = {
+      draft: vi.fn(),
+      send: vi.fn(),
+      attach: vi.fn(),
+      removeAttachment: vi.fn(),
+      talk: vi.fn(),
+      dictate: vi.fn(),
+      retry: vi.fn(),
+      notifications: vi.fn(),
+    };
+    try {
+      state.notifications = { status: "off", detail: null };
+      render(renderKidsView(state, actions), root);
+      root.querySelector<HTMLButtonElement>(".kids-notifications")!.click();
+      expect(actions.notifications).toHaveBeenCalledOnce();
+      state.notifications = { status: "enabled", detail: null };
+      render(renderKidsView(state, actions), root);
+      expect(root.querySelector("button.kids-notifications")).toBeNull();
+      const status = root.querySelector<HTMLElement>(".kids-notifications-on")!;
+      expect(status.textContent).toContain("Notifications on");
+      status.click();
+      expect(actions.notifications).toHaveBeenCalledOnce();
     } finally {
       render(null, root);
     }

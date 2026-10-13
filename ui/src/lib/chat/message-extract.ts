@@ -128,6 +128,7 @@ export function readTranscriptMediaEntries(message: unknown): Array<{
   path: string;
   mediaType: string | undefined;
   fileName: string | undefined;
+  artifactId?: string;
   origin?: "paste" | "file";
   sizeBytes?: number;
   durationMs?: number;
@@ -137,8 +138,14 @@ export function readTranscriptMediaEntries(message: unknown): Array<{
   if (!message || typeof message !== "object") {
     return [];
   }
+  // Artifact identities belong to the Gateway's display projection, not the
+  // persisted/runtime media fact model. Preserve their original fact position.
+  const projected = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"])?.media;
   return (readPersistedMediaFacts(message) ?? []).flatMap((fact, factIndex) => {
     const path = fact.path ?? fact.url;
+    const artifactId = Array.isArray(projected)
+      ? asOptionalRecord(projected[factIndex])?.artifactId
+      : undefined;
     return path
       ? [
           {
@@ -146,6 +153,7 @@ export function readTranscriptMediaEntries(message: unknown): Array<{
             path,
             mediaType: fact.contentType ?? fact.kind,
             fileName: fact.fileName,
+            ...(typeof artifactId === "string" && artifactId ? { artifactId } : {}),
             ...(fact.origin ? { origin: fact.origin } : {}),
             ...(fact.sizeBytes !== undefined ? { sizeBytes: fact.sizeBytes } : {}),
             ...(fact.durationMs !== undefined ? { durationMs: fact.durationMs } : {}),

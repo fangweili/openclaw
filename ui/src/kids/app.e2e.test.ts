@@ -221,6 +221,17 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
     ]);
     await gateway.emitChatFinal({ runId: String(params.idempotencyKey), sessionKey, text: answer });
     await page.getByText(answer).waitFor();
+    const timings = await page.evaluate(() =>
+      ["rocky.send.accepted", "rocky.send.finished"].map((name) => {
+        const entries = performance.getEntriesByName(name, "measure");
+        return { count: entries.length, duration: entries[0]?.duration };
+      }),
+    );
+    expect(timings).toEqual([
+      { count: 1, duration: expect.any(Number) },
+      { count: 1, duration: expect.any(Number) },
+    ]);
+    expect(timings[1].duration).toBeGreaterThanOrEqual(timings[0].duration!);
     expect(await page.getByText(answer).count()).toBe(1);
     expect(await page.getByText("Can we try a fraction puzzle?", { exact: true }).count()).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -562,6 +573,193 @@ it("records dictation into an editable draft and sends only on request", async (
       deliver: false,
     });
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+it("reopens media and unsent text without changing tutor or notification settings", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    await context.addInitScript(() => {
+      Object.defineProperty(Notification, "permission", { get: () => "granted" });
+      const subscription = {
+        endpoint: "https://push.example.test/kids",
+        options: { applicationServerKey: Uint8Array.from([4, 1, 2, 3]).buffer },
+        toJSON: () => ({
+          endpoint: "https://push.example.test/kids",
+          keys: { p256dh: "fixture-key", auth: "fixture-auth" },
+        }),
+      };
+      Object.defineProperty(navigator, "serviceWorker", {
+        value: {
+          register: async () => ({
+            active: { state: "activated" },
+            pushManager: { getSubscription: async () => subscription },
+          }),
+        },
+      });
+    });
+    const page = await context.newPage();
+    const media = [
+      {
+        id: "artifact_transcript_media_photo",
+        kind: "image",
+        mime: "image/png",
+        name: "My photo",
+        path: "ui/kids/public/rocky-192.png",
+      },
+      {
+        id: "artifact_transcript_media_video",
+        kind: "video",
+        mime: "video/mp4",
+        name: "My experiment",
+        path: "ui/src/e2e/fixtures/video-poster.mp4",
+      },
+      {
+        id: "artifact_transcript_image_answer",
+        kind: "image",
+        mime: "image/png",
+        name: "Rocky's diagram",
+        path: "ui/kids/public/rocky-192.png",
+      },
+    ];
+    for (const item of media) {
+      await page.route(`**/api/artifacts/download/fixture/${item.id}`, (route) =>
+        route.fulfill({
+          path: path.resolve(item.path),
+          contentType: item.mime,
+          headers: { "content-disposition": "attachment" },
+        }),
+      );
+    }
+    const messages = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "Here is my experiment." }],
+        __openclaw: {
+          id: "upload-one",
+          media: media.slice(0, 2).map((item) => ({
+            kind: item.kind,
+            contentType: item.mime,
+            fileName: item.name,
+            url: `media://inbound/${item.id}`,
+            artifactId: item.id,
+          })),
+        },
+      },
+      {
+        role: "assistant",
+        channel: "final",
+        __openclaw: { id: "answer-one" },
+        content: [
+          {
+            type: "image",
+            artifactId: media[2].id,
+            mimeType: "image/png",
+            fileName: media[2].name,
+          },
+        ],
+      },
+    ];
+    const gateway = await installMockGateway(page, {
+      awaitInitialRoster: false,
+      sessionKey,
+      operatorScopes: ["operator.sessions.write", "operator.talk"],
+      historyMessages: messages,
+      methodResponses: {
+        "users.self": { profile },
+        "agents.list": roster,
+        "sessions.create": { key: sessionKey },
+        "chat.history": {
+          sessionId: "student-session",
+          sessionInfo: { sessionId: "student-session", activeLeafEntryId: "answer-one" },
+          messages,
+        },
+        "artifacts.download": {
+          cases: media.map((item) => ({
+            match: { artifactId: item.id, sessionKey, agentId: "student" },
+            response: {
+              artifact: { id: item.id, type: item.kind, mimeType: item.mime },
+              url: `/api/artifacts/download/fixture/${item.id}`,
+            },
+          })),
+        },
+        "push.web.vapidPublicKey": { vapidPublicKey: "BAECAw" },
+        "push.web.preferences.get": { device: { enabled: true, label: "Rocky" } },
+      },
+    });
+    await page.goto(baseUrl);
+    const diagram = page.getByRole("img", { name: "Rocky's diagram", exact: true });
+    await diagram.waitFor();
+    await diagram.evaluate((element: HTMLImageElement) => element.decode());
+    expect(
+      await page
+        .locator(".kids-thread")
+        .evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop),
+    ).toBeLessThan(4);
+    // Browse older media after checking the latest reply stays visible as it loads.
+    await page.locator(".kids-message--user .kids-media-preview").first().scrollIntoViewIfNeeded();
+    const image = page.getByRole("img", { name: "My photo", exact: true });
+    await image.waitFor();
+    await image.evaluate((element: HTMLImageElement) => element.decode());
+    const video = page.locator(".kids-media-preview video");
+    await video.waitFor();
+    expect(await video.getAttribute("preload")).toBe("none");
+    expect(await video.getAttribute("autoplay")).toBeNull();
+    await video.evaluate(async (element: HTMLVideoElement) => {
+      element.muted = true;
+      await element.play();
+      element.pause();
+      if (!element.videoWidth) {
+        throw new Error("The saved video did not decode");
+      }
+    });
+    const status = page.locator(".kids-notifications-on");
+    await status.waitFor();
+    await status.click();
+    expect(await page.getByRole("button", { name: /notifications/i }).count()).toBe(0);
+    expect(await gateway.getRequests("push.web.unsubscribe")).toHaveLength(0);
+    const composer = page.getByLabel("Message Rocky", { exact: true });
+    await composer.fill("Can we try a different experiment tomorrow?");
+    // Read after the input task's microtasks have admitted the write. IndexedDB
+    // orders this read behind it; no sleep or draft implementation test hook.
+    const saved = await page.evaluate(async () => {
+      const opening = indexedDB.open("openclaw-control-ui");
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        opening.addEventListener("success", () => resolve(opening.result));
+        opening.addEventListener("error", () =>
+          reject(opening.error ?? new Error("Cannot open the draft database")),
+        );
+      });
+      try {
+        const read = db.transaction("composerDrafts").objectStore("composerDrafts").getAll();
+        return await new Promise<string[]>((resolve, reject) => {
+          read.addEventListener("success", () => resolve(read.result.map((draft) => draft.text)));
+          read.addEventListener("error", () =>
+            reject(read.error ?? new Error("Cannot read saved drafts")),
+          );
+        });
+      } finally {
+        db.close();
+      }
+    });
+    expect(saved).toContain("Can we try a different experiment tomorrow?");
+    await page.reload();
+    await composer.waitFor();
+    await page.waitForFunction(
+      () =>
+        document.querySelector<HTMLTextAreaElement>("#kids-message")?.value ===
+        "Can we try a different experiment tomorrow?",
+    );
+    await page.getByRole("img", { name: "Rocky's diagram", exact: true }).waitFor();
+    expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+    expect(await gateway.getRequests("push.web.unsubscribe")).toHaveLength(0);
+    await page.screenshot({ path: path.join(proof, "media-history-draft.png"), fullPage: true });
+    examples.push({
+      id: "media-history-draft",
+      label: "Saved media, restored draft, notifications on",
+    });
   } finally {
     await context.close();
   }

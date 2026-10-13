@@ -35,6 +35,7 @@ import type { Static } from "typebox";
 import type { ChatPendingInputsPage } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { GATEWAY_OWNER_PROFILE_ID } from "../../../packages/gateway-protocol/src/schema/user-profile-constants.js";
 import { isToolCallContentType } from "../../../src/chat/tool-content.js";
+import { resolveAssistantMessagePhase } from "../../../src/shared/chat-message-content.js";
 import type { GatewayBrowserClient, GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
@@ -91,6 +92,8 @@ type Connection = {
   eventRevision: number;
   replying: boolean;
   runError: string | null;
+  /** One in-flight send's browser timing, retired with this connection. No message content. */
+  timing?: { runId: string; startedAt: number };
 };
 
 /** One memory-only retry, retaining the original authority and admission fences. */
@@ -104,6 +107,16 @@ type PendingSend = {
 
 const HISTORY_LIMIT = 80;
 const HISTORY_MAX_BYTES = 256 * 1024;
+
+/** Keep only the latest timing per phase in this document's browser diagnostics. */
+function measureSend(phase: "accepted" | "finished", startedAt: number): void {
+  if (typeof performance.measure !== "function") {
+    return;
+  }
+  const name = `rocky.send.${phase}`;
+  performance.clearMeasures(name);
+  performance.measure(name, { start: startedAt, end: performance.now() });
+}
 
 function emptyState(): KidsConversationState {
   return {
@@ -139,7 +152,8 @@ function visibleMessage(message: unknown): boolean {
         (!Array.isArray(record?.content) ||
           !record.content.some((part) => isToolCallContentType(asOptionalRecord(part)?.type))))) &&
     (Boolean(extractText(message)?.trim()) ||
-      (role === "user" && projectKidsMedia(message).length > 0))
+      (resolveAssistantMessagePhase(message) !== "commentary" &&
+        projectKidsMedia(message).length > 0))
   );
 }
 
@@ -384,11 +398,15 @@ export class KidsConversation {
         onSent: () => {
           if (this.current(connection)) {
             this.uncertain = pending;
+            connection.timing = { runId, startedAt: performance.now() };
           }
         },
       });
       if (!this.current(connection)) {
         return false;
+      }
+      if (connection.timing?.runId === runId) {
+        measureSend("accepted", connection.timing.startedAt);
       }
       if (connection.sessionId === pending.params.sessionId) {
         this.acknowledge(pending);
@@ -563,12 +581,13 @@ export class KidsConversation {
             .filter((runId) => typeof runId === "string"),
         );
         connection.projection = retirePendingUserEntries(connection.projection, acceptedRunIds);
+        let accepted: PendingSend | undefined;
         if (
           connection.uncertainSend &&
           history.inputReceipts?.some((receipt) => receipt.runId === connection.uncertainSend)
         ) {
           if (this.uncertain?.params.idempotencyKey === connection.uncertainSend) {
-            this.acknowledge(this.uncertain);
+            accepted = this.uncertain;
           }
           connection.uncertainSend = undefined;
         }
@@ -593,6 +612,11 @@ export class KidsConversation {
                 ? t("kids.inputInterrupted")
                 : null)),
         });
+        // Publish the verified physical session before its acknowledgment. The
+        // app can then retire a persisted draft even during reconnect restore.
+        if (accepted) {
+          this.acknowledge(accepted);
+        }
       } catch {
         if (this.current(connection)) {
           this.render(connection, {
@@ -653,6 +677,12 @@ export class KidsConversation {
     }
     connection.eventRevision += 1;
     connection.replying = false;
+    if (connection.timing && connection.timing.runId === payload.runId) {
+      if (payload.state === "final") {
+        measureSend("finished", connection.timing.startedAt);
+      }
+      connection.timing = undefined;
+    }
     // Only durable rows provide reply text. A final event is a refresh trigger,
     // never a second provisional transcript entry that needs content deduping.
     if (payload.state === "error" || payload.state === "aborted") {
