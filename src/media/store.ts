@@ -705,6 +705,15 @@ export async function resolveMediaBufferPath(id: string, subdir = "inbound"): Pr
   return opened.realPath;
 }
 
+/**
+ * Open a managed entry through its store's containment and byte-limit owner.
+ * The caller owns the returned descriptor: dispose it or transfer its handle to
+ * a stream that closes it. No path supplied by a caller is opened directly.
+ */
+export async function openMediaFile(id: string, subdir = "inbound", maxBytes = MEDIA_MAX_BYTES) {
+  return openMediaStore(maxBytes).open(resolveMediaRelativePath(id, subdir, "openMediaFile"));
+}
+
 /** Read result for callers that need media bytes plus the resolved file path. */
 type ReadMediaBufferResult = {
   id: string;

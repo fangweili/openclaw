@@ -23,6 +23,7 @@ import { tryResolveSessionCompatibilityOwnerAgentId } from "../session-request-a
 import { getSessionRowProjection } from "../session-row-projection-access.js";
 import { readSessionArtifacts } from "../session-transcript-readers.js";
 import { parseTranscriptImageArtifactId } from "../transcript-image-artifacts.js";
+import { parseTranscriptMediaArtifactId } from "../transcript-media-artifacts.js";
 import {
   type ArtifactLookup,
   type ArtifactRecord,
@@ -39,6 +40,7 @@ import {
   prepareArtifactSessionResolution,
 } from "./artifacts-session-resolution.js";
 import { findTranscriptImageArtifact } from "./artifacts-transcript-images.js";
+import { downloadTranscriptMediaArtifact } from "./artifacts-transcript-media.js";
 import { readGatewayRequestMutationAuthority } from "./session-mutation-guards.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
@@ -383,6 +385,19 @@ export const artifactsHandlers: GatewayRequestHandlers = {
       return;
     }
     const query = { ...params };
+    if (parseTranscriptMediaArtifactId(query.artifactId)) {
+      const found = await runArtifactSessionOperation(respond, () =>
+        downloadTranscriptMediaArtifact(query, access),
+      );
+      if (found.ok) {
+        if (found.value) {
+          respond(true, found.value);
+        } else {
+          respondArtifactNotFound(respond, query.artifactId);
+        }
+      }
+      return;
+    }
     if (
       query.sessionKey &&
       !query.runId &&

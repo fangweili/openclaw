@@ -76,6 +76,16 @@ export function resolveSessionMethodScope(
   method: string,
   params?: unknown,
 ): SessionOperatorScope | undefined {
+  // Artifact reads reuse the selected session's visibility owner. Run-only
+  // discovery deliberately retains its broader operator.read requirement.
+  if (
+    method === "artifacts.download" &&
+    isRecord(params) &&
+    typeof params.sessionKey === "string" &&
+    params.sessionKey.trim()
+  ) {
+    return "operator.sessions.read";
+  }
   if (SESSION_READ_METHODS.has(method)) {
     return "operator.sessions.read";
   }

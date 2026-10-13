@@ -6,11 +6,15 @@ import { isAnimatedWebpBuffer, isStillPngBuffer } from "../media/image-ops.js";
 import {
   assertArtifactDownloadGrantCurrent,
   getArtifactDownloadGrant,
+  type ArtifactDownloadReadResult,
 } from "./artifact-download-grants.js";
-import type { ArtifactDownloadResponse } from "./artifact-download-projection.js";
 import { buildAssistantMediaContentDisposition } from "./assistant-media-content-disposition.js";
 import { respondNotFound } from "./control-ui-http-utils.js";
-import { resolveByteResponse, writeByteHeaders } from "./http-byte-range.js";
+import {
+  createGatewayByteStream,
+  resolveByteResponse,
+  writeByteHeaders,
+} from "./http-byte-range.js";
 import { sendMethodNotAllowed } from "./http-common.js";
 import {
   encodeImageThumbnail,
@@ -48,7 +52,7 @@ export async function handleArtifactDownloadHttpRequest(
   }
   const assertCurrent = () =>
     assertArtifactDownloadGrantCurrent(opts.clients, client, ticket, grant);
-  let prepared: ArtifactDownloadResponse | undefined;
+  let prepared: ArtifactDownloadReadResult | undefined;
   const thumbnail = grant.image && url.searchParams.get("variant") === "thumbnail";
   try {
     assertCurrent();
@@ -103,6 +107,7 @@ export async function handleArtifactDownloadHttpRequest(
       assertCurrent();
     }
   } catch {
+    await prepared?.file?.close().catch(() => undefined);
     respondNotFound(res);
     return true;
   }
@@ -124,6 +129,22 @@ export async function handleArtifactDownloadHttpRequest(
   res.setHeader("referrer-policy", "no-referrer");
   res.setHeader("cache-control", "private, no-store");
   writeByteHeaders(res, response);
-  res.end(body);
+  if (prepared.file) {
+    const stream = createGatewayByteStream(res, prepared.file, () => respondNotFound(res));
+    const abort = () => {
+      void stream.close();
+      res.destroy();
+    };
+    client.connectionSignal?.addEventListener("abort", abort, { once: true });
+    res.once("close", () => client.connectionSignal?.removeEventListener("abort", abort));
+    try {
+      await stream.pipe(response, req.method, assertCurrent);
+    } catch {
+      await stream.close();
+      respondNotFound(res);
+    }
+  } else {
+    res.end(body);
+  }
   return true;
 }
