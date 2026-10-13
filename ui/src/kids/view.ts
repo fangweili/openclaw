@@ -92,11 +92,13 @@ function historyEdge(
   actions: KidsViewActions,
   edge: "older" | "newer",
 ) {
+  const statusClass =
+    edge === "newer" ? "kids-history-status kids-history-status--newer" : "kids-history-status";
   if (state.history.loading === edge) {
-    return html`<p class="kids-history-status" role="status">${t(`kids.history.${edge}`)}</p>`;
+    return html`<p class=${statusClass} role="status">${t(`kids.history.${edge}`)}</p>`;
   }
   if (state.history.error === edge) {
-    return html`<div class="kids-history-status" role="status">
+    return html`<div class=${statusClass} role="status">
       <span>${t("kids.history.failed")}</span>
       <button type="button" @click=${edge === "older" ? actions.older : actions.newer}>
         ${t("kids.retry")}
@@ -104,7 +106,7 @@ function historyEdge(
     </div>`;
   }
   return (edge === "older" ? state.history.hasOlder : state.history.hasNewer)
-    ? html`<div class="kids-history-status">
+    ? html`<div class=${statusClass}>
         <button
           type="button"
           ?disabled=${state.history.loading !== null}

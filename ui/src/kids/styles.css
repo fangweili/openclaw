@@ -186,6 +186,11 @@ html[data-kids] body,
   background: var(--kids-tint);
 }
 
+/* Keep forward paging and retry controls above the floating Latest button. */
+.kids-history-status--newer {
+  margin-bottom: 48px;
+}
+
 .kids-welcome {
   max-width: 370px;
   margin: clamp(36px, 12vh, 140px) auto 48px;

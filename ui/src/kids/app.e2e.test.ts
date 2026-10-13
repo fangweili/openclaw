@@ -906,6 +906,34 @@ it("pages a long conversation without moving the reader and returns to the lates
     expect(await composer.inputValue()).toBe(draft);
     expect(await page.locator('[data-message-id="history-600"]').count()).toBe(0);
 
+    // Programmatic positioning does not admit another page. At the historical
+    // bottom, Latest must leave the forward paging button visible and tappable.
+    await thread.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const newer = page.getByRole("button", { name: "Newer messages", exact: true });
+    await newer.waitFor();
+    const edgeBounds = await newer.boundingBox();
+    const latestBounds = await latest.boundingBox();
+    expect(edgeBounds).not.toBeNull();
+    expect(latestBounds).not.toBeNull();
+    expect(edgeBounds!.y + edgeBounds!.height).toBeLessThanOrEqual(latestBounds!.y);
+    expect(
+      await newer.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        return button.contains(
+          document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2),
+        );
+      }),
+    ).toBe(true);
+    await thread.evaluate(
+      (element) =>
+        new Promise<void>((resolve) => {
+          element.addEventListener("scroll", () => resolve(), { once: true });
+          element.scrollTop = element.scrollHeight - element.clientHeight - 200;
+        }),
+    );
+
     // Reverse direction after eviction: fetch the adjacent newer page, not the
     // live tail, and retain the exact visible row while the opposite edge trims.
     const newerAfter = await gateway.deferNext("chat.history");
