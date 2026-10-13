@@ -474,7 +474,7 @@ it("previews photos and videos, sends without text, and keeps mobile focus on th
     expect(await page.locator(".kids-attachment img").count()).toBe(1);
     expect(await composer.inputValue()).toBe("My next question");
     expect(await page.locator(".kids-message--user .kids-media-tile").textContent()).toContain(
-      "video-poster.mp4",
+      "Video",
     );
     expect(await page.locator(".kids-message--user button").count()).toBe(0);
     await page.screenshot({ path: path.join(proof, "media-sent.png"), fullPage: true });

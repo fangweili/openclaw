@@ -25,6 +25,7 @@ import { KidsDictation } from "./dictation.ts";
 import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
 import { KidsNotifications } from "./notifications.ts";
+import { KidsTouchGestures } from "./touch-gestures.ts";
 import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
@@ -48,6 +49,7 @@ export class KidsApp {
   private readonly draft: KidsDraft;
   private readonly media: KidsHistoryMedia;
   private readonly transcript: KidsTranscriptScroll;
+  private readonly touchGestures: KidsTouchGestures;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -60,12 +62,10 @@ export class KidsApp {
   private boundSession = "";
   private closing: Promise<void> | null = null;
   private snapshot: KidsViewState;
-  // Safari's continuous zoom is separate from CSS double-tap handling. Cancel
-  // only its gesture events; ordinary touches retain scrolling and selection.
-  private readonly preventPageZoom = (event: Event) => event.preventDefault();
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
+    this.touchGestures = new KidsTouchGestures(root);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -140,12 +140,7 @@ export class KidsApp {
       return;
     }
     this.started = true;
-    this.root.ownerDocument.addEventListener("gesturestart", this.preventPageZoom, {
-      passive: false,
-    });
-    this.root.ownerDocument.addEventListener("gesturechange", this.preventPageZoom, {
-      passive: false,
-    });
+    this.touchGestures.start();
     this.paint();
     this.client.start();
   }
@@ -156,8 +151,7 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
-    this.root.ownerDocument.removeEventListener("gesturestart", this.preventPageZoom);
-    this.root.ownerDocument.removeEventListener("gesturechange", this.preventPageZoom);
+    this.touchGestures.dispose();
     this.transcript.dispose();
     this.generation += 1;
     this.retireCapabilities();

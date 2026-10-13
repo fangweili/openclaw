@@ -195,21 +195,19 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                     class=${`kids-message kids-message--${message.role}`}
                     data-message-id=${message.id}
                   >
-                    <span class="kids-message-label"
-                      >${message.role === "user" ? t("kids.you") : t("kids.name")}</span
-                    >
+                    <span class="kids-sr-only"
+                      >${message.role === "user" ? t("kids.you") : t("kids.name")}:
+                    </span>
                     ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
                     <div class="kids-message-media">
                       ${message.media.map((media) =>
                         media.artifactId && state.media && ready
                           ? html`<figure class="kids-media-preview">
                               ${kidsMediaPreview(state.media, media, state.media.generation)}
-                              <figcaption>${media.label}</figcaption>
                             </figure>`
                           : html`<span class="kids-media-tile"
-                              ><span
-                                >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
-                              >${media.label}</span
+                              ><span class="kids-sr-only">${media.label}: </span
+                              >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
                             >`,
                       )}
                     </div>
@@ -230,12 +228,12 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                         voice.entries,
                         (entry) => entry.id,
                         (entry) =>
-                          html`<p>
-                            <strong
-                              >${entry.role === "user" ? t("kids.you") : t("kids.name")}</strong
-                            >
-                            ${entry.text}
-                          </p>`,
+                          html`<div class=${`kids-message kids-message--${entry.role}`}>
+                            <span class="kids-sr-only"
+                              >${entry.role === "user" ? t("kids.you") : t("kids.name")}:
+                            </span>
+                            <div class="kids-message-content">${entry.text}</div>
+                          </div>`,
                       )}
                     </div>
                   </section>`
@@ -300,7 +298,6 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                                         >${t(item.status === "error" ? "kids.attachments.failed" : "kids.attachments.reading")}</span
                                       >`
                                 }
-                                <span class="kids-attachment-name">${item.name}</span>
                                 <button
                                   class="kids-remove-attachment"
                                   type="button"

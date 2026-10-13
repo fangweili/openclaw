@@ -26,8 +26,8 @@ html[data-kids] body,
   touch-action: pan-x pan-y;
 }
 
-/* Safari resets touch action at scrolling elements and allows double-tap with
-   pan-x pan-y. Use its manipulation keyword there; app.ts cancels pinch gestures. */
+/* Safari resets touch action at scroll boundaries. Older releases also ignore
+   manipulation for double-tap; touch-gestures.ts owns that fallback and pinch. */
 @supports (-webkit-touch-callout: none) {
   html[data-kids],
   html[data-kids] body,
@@ -229,17 +229,6 @@ html[data-kids] body,
   margin-left: auto;
 }
 
-.kids-message-label {
-  display: block;
-  margin: 0 0 7px 1px;
-  color: var(--kids-muted);
-  font-size: 12px;
-}
-
-.kids-message--user .kids-message-label {
-  text-align: right;
-}
-
 .kids-message-content {
   padding: 1px 0;
   line-height: 1.65;
@@ -407,11 +396,6 @@ html[data-kids] body,
   line-height: 1.65;
 }
 
-.kids-captions strong {
-  font-size: 13px;
-  color: var(--kids-muted);
-}
-
 .kids-voice-notice {
   color: var(--kids-muted);
   font-size: 14px;
@@ -482,16 +466,6 @@ html[data-kids] body,
   border-radius: 10px;
 }
 
-.kids-attachment-name {
-  display: block;
-  padding: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--kids-muted);
-}
-
 .kids-attachment-status {
   display: grid;
   place-items: center;
@@ -522,10 +496,7 @@ html[data-kids] body,
 }
 
 .kids-media-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  display: block;
   max-width: 220px;
   padding: 12px 16px;
   border-radius: 16px;
@@ -533,11 +504,6 @@ html[data-kids] body,
   overflow-wrap: anywhere;
   font-size: 13px !important;
   text-align: left;
-}
-
-.kids-media-tile > span {
-  color: var(--kids-muted);
-  font-size: 11px;
 }
 
 .kids-media-preview {
@@ -562,13 +528,6 @@ html[data-kids] body,
 .kids-media-preview video {
   display: block;
   object-fit: contain;
-}
-
-.kids-media-preview figcaption {
-  padding: 8px 12px;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  color: var(--kids-muted);
 }
 
 .kids-media-placeholder {
