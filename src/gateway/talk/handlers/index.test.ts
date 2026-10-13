@@ -93,6 +93,7 @@ const mocks = vi.hoisted(() => ({
   resolveInternalRealtimeVoiceGatewayRelayLaunchError: vi.fn(),
   cancelInternalRealtimeVoiceBrowserSession: vi.fn(async () => undefined),
   createTalkRealtimeRelaySession: vi.fn(),
+  assertTalkRealtimeRelayClientToolCallAllowed: vi.fn(),
   sendTalkRealtimeRelayAudio: vi.fn(),
   acknowledgeTalkRealtimeRelayMark: vi.fn(),
   cancelTalkRealtimeRelayTurn: vi.fn(),
@@ -251,6 +252,8 @@ vi.mock("../relay/index.js", async (importOriginal) => {
     acknowledgeTalkRealtimeRelayMark: mocks.acknowledgeTalkRealtimeRelayMark,
     cancelTalkRealtimeRelayTurn: mocks.cancelTalkRealtimeRelayTurn,
     createTalkRealtimeRelaySession: mocks.createTalkRealtimeRelaySession,
+    assertTalkRealtimeRelayClientToolCallAllowed:
+      mocks.assertTalkRealtimeRelayClientToolCallAllowed,
     ensureTalkRealtimeRelayVoiceSession: mocks.ensureTalkRealtimeRelayVoiceSession,
     flushTalkRealtimeRelayVoiceWrites: mocks.flushTalkRealtimeRelayVoiceWrites,
     registerTalkRealtimeRelayAgentRun: mocks.registerTalkRealtimeRelayAgentRun,

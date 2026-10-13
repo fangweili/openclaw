@@ -215,6 +215,8 @@ export function createTalkClientAgentConsultRunner(params: {
   sessionTarget: PreparedTalkSessionTarget;
   ownerConnId?: string;
   authority?: TalkAgentConsultAuthority;
+  /** Optional call admission lease, rechecked before every new native or tool consult. */
+  assertCurrent?: () => void;
   sessionContext: string;
   getVoiceSessionId: () => string | undefined;
   initialItems: Array<{ role: "user" | "assistant"; text: string }>;
@@ -279,9 +281,16 @@ export function createTalkClientAgentConsultRunner(params: {
     signal?: AbortSignal,
     owner?: PromptOwner,
     ready?: () => Promise<void>,
-    assertCurrent?: () => void,
+    assertRunCurrent?: () => void,
     source: TalkAgentConsultSource = "tool-call",
   ) => {
+    const assertCurrent = params.assertCurrent
+      ? () => {
+          params.assertCurrent?.();
+          assertRunCurrent?.();
+        }
+      : assertRunCurrent;
+    assertCurrent?.();
     const parsedArgs = parseRealtimeVoiceAgentConsultArgs(args);
     const voiceSessionId = params.getVoiceSessionId();
     if (!voiceSessionId) {
@@ -529,12 +538,14 @@ export function createTalkClientAgentConsultRunner(params: {
     }
   };
   const steer = async ({ prompt, signal }: { prompt: string; signal?: AbortSignal }) => {
+    params.assertCurrent?.();
     signal?.throwIfAborted();
     const owner = promptOwner;
     if (!owner) {
       throw new Error("No active Talk consult is available to steer");
     }
     await owner.registered;
+    params.assertCurrent?.();
     signal?.throwIfAborted();
     const identity = owner.identity;
     const ownerSignal = owner.signal;
@@ -553,9 +564,13 @@ export function createTalkClientAgentConsultRunner(params: {
       runTarget: {
         runId: identity.runId,
         signal: ownerSignal,
-        isCurrent: (sessionId) => isOwnerCurrent(owner, sessionId),
+        isCurrent: (sessionId) => {
+          params.assertCurrent?.();
+          return isOwnerCurrent(owner, sessionId);
+        },
       },
       getToolAuthorityOverlay: () => {
+        params.assertCurrent?.();
         if (!isOwnerCurrent(owner, identity.sessionId)) {
           throw new Error("The active Talk consult is no longer current");
         }

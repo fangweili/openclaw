@@ -70,3 +70,39 @@ an equivalent storage alias is not a replacement. A `talk.client.toolCall` ackno
 returns `agentId`, `agentSessionKey`, and `runId`; use that exact target for chat
 cancellation, history, and completion events, including when the canonical key is `global`. Transcription-only sessions
 without a key remain sessionless and do not select a default chat.
+
+## Adult-selected participant on a shared device
+
+An administrator may start a realtime Gateway-relay call for one explicitly
+selected child using `talk.session.create` with `participantProfileId`,
+`mode: "realtime"`, `transport: "gateway-relay"`, and `brain: "agent-consult"`.
+The authenticated controller continues to own the connection and call cleanup;
+the participant owns the conversation identity. This is an adult's selection,
+not automatic speaker recognition or a new login for the child.
+
+The selected profile must be canonical, non-owner, and governed by a restricted
+operator role allowing `operator.sessions.write` and `operator.talk`, with exactly
+one permitted agent, no administrator scope, and `sessions.others: "none"`.
+The request must name that agent's existing kids key:
+`agent:<agent-id>:kids:<lowercased-URI-encoded-profile-id>`. Missing, merged,
+unrestricted, ambiguous, or mismatched selections are rejected before provider
+startup. Existing session access and creation policy apply under the child.
+
+The response confirms `participant: { profileId, agentId, sessionKey }`. Clients
+must check that binding before opening the microphone. Old Gateways reject the
+new field; clients must not retry without it. Omit the field for ordinary Talk
+calls, which retain their existing authenticated-caller behavior.
+
+Transcripts identify the selected child. Provider context explains that an adult
+selected this participant. Consultations receive the child's narrow Talk/session
+scopes and read-only tool ceiling, without the controller's admin or approval
+capabilities. Current controller, profile, role, and session authority is checked
+again at input and consultation boundaries. A stale selection rejects further
+work; the connection owner can still close the call to release resources.
+Accepted agent work retains its normal lifetime after the audio call closes.
+
+Selection lasts for one call. To switch children, close the call and create
+another with an explicit selection. Selected-participant calls do not support
+voice replacement, the `voice-selection` capability, or client-forwarded
+`talk.client.toolCall` requests. Agent consultations stay on the Gateway. No new profile store,
+credential type, or device-specific identity service is required.

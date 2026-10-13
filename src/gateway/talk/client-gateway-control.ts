@@ -49,6 +49,8 @@ const owners = new Map<string, GatewayControlOwner>();
 const pendingOwners = new Set<GatewayControlOwner>();
 
 export type TalkAgentConsultAuthority = {
+  /** Explicit server-admitted participant; never inferred from the session target. */
+  senderId?: string;
   senderIsOwner: boolean;
   toolsAllow?: string[];
   replyCaller?: ReturnType<typeof resolveChatSendCallerContext>;

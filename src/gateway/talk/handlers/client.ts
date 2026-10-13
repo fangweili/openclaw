@@ -44,6 +44,7 @@ import {
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
 import {
+  assertTalkRealtimeRelayClientToolCallAllowed,
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
 } from "../relay/index.js";
@@ -99,6 +100,9 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       let confirmationGrant: ClientVoiceConfirmationGrant | undefined;
       let voiceSessionId: string;
       try {
+        if (relaySessionId && connId) {
+          assertTalkRealtimeRelayClientToolCallAllowed({ relaySessionId, connId });
+        }
         // Shipped clients may consult without ever creating a voice session (old app,
         // restarted gateway, ambiguous open records). Implicitly create one instead of
         // erroring so confirmation and mutation evidence stay always-on.
