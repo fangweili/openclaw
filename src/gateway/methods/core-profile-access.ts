@@ -8,12 +8,24 @@ const PROFILE_DEPENDENT_CORE_METHODS = new Set([
   // cache a shared-only catalog before their personal accounts are available.
   "models.list",
   "presence.query",
+  // Subscription ownership must use hydrated identity, never a temporary
+  // profile-less connection during post-hello authentication.
+  "push.web.subscribe",
+  "push.web.unsubscribe",
+  "push.web.preferences.get",
+  "push.web.preferences.set",
+  "push.web.foreground",
   "webSearch.status",
   "webSearch.test",
   // talk.config projects the caller's profile accent; without this gate a
   // client asking during the post-hello GitHub identity sync window would get
   // the gateway-wide accent instead. Profile-less clients pass through.
   "talk.config",
+  // Transcript-producing admission captures trusted caller attribution. Identified
+  // clients wait for enrichment; truly profile-less callers remain supported.
+  "talk.client.create",
+  "talk.client.transcript",
+  "talk.session.create",
   // Voice catalogs authorize participation in the call's chat.
   "talk.voice.get",
   "ui.command",

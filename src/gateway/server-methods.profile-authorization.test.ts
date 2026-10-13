@@ -65,6 +65,53 @@ async function dispatchPendingProfileMethod(params: {
 }
 
 describe("Gateway pending-profile authorization", () => {
+  it("waits for verified identity before binding session-scoped push subscriptions", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const profile = ensureProfileForEmail("push-reader@example.test");
+      const client = createPendingProfileClient();
+      client.connect.scopes = ["operator.sessions.write"];
+      const entered = createDeferredCore();
+      const release = createDeferredCore();
+      const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
+      client.authenticatedGitHubIdentitySync = vi.fn(async () => {
+        entered.resolve();
+        await release.promise;
+        client.authenticatedUserProfile = {
+          profileId: profile.id,
+          displayName: null,
+          hasAvatar: false,
+          updatedAt: profile.updatedAt,
+        };
+        return { profileId: profile.id, updatedAt: profile.updatedAt };
+      });
+      const pending = dispatchPendingProfileMethod({
+        client,
+        method: "push.web.subscribe",
+        handler,
+      });
+      await Promise.race([entered.promise, pending]);
+      expect(handler).not.toHaveBeenCalled();
+      release.resolve();
+      const response = await pending;
+      expect(response).toHaveBeenCalledExactlyOnceWith(true, { ok: true });
+
+      const anonymous = createPendingProfileClient();
+      anonymous.connect.scopes = ["operator.sessions.write"];
+      handler.mockClear();
+      const denied = await dispatchPendingProfileMethod({
+        client: anonymous,
+        method: "push.web.subscribe",
+        handler,
+      });
+      expect(handler).not.toHaveBeenCalled();
+      expect(denied).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN" }),
+      );
+    });
+  });
+
   it.each([
     ["agents.list", SESSION_READ_SCOPE, SESSION_READ_SCOPE],
     ["models.list", SESSION_READ_SCOPE, SESSION_READ_SCOPE],
@@ -436,6 +483,60 @@ describe("Gateway pending-profile authorization", () => {
           expectedProfileId: target.id,
         });
         expect(current).toHaveBeenCalledWith(true, { ok: true });
+      });
+    },
+  );
+
+  it.each(["talk.client.create", "talk.client.transcript", "talk.session.create"])(
+    "hydrates identified %s callers before capturing transcript attribution",
+    async (method) => {
+      await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        const profile = ensureProfileForEmail("voice-caller@example.test");
+        const client = createPendingProfileClient();
+        client.connect.scopes = ["operator.talk"];
+        const entered = createDeferredCore();
+        const release = createDeferredCore();
+        const handler = vi.fn<GatewayRequestHandler>(({ client: admitted, respond }) => {
+          expect(admitted?.authenticatedUserProfile?.profileId).toBe(profile.id);
+          respond(true, { ok: true });
+        });
+        client.authenticatedGitHubIdentitySync = vi.fn(async () => {
+          entered.resolve();
+          await release.promise;
+          client.authenticatedUserProfile = {
+            profileId: profile.id,
+            displayName: null,
+            hasAvatar: false,
+            updatedAt: profile.updatedAt,
+          };
+          return { profileId: profile.id, updatedAt: profile.updatedAt };
+        });
+        const requestParams = { sessionKey: "agent:main:voice-attribution" };
+        const pending = dispatchPendingProfileMethod({ client, method, handler, requestParams });
+        try {
+          await Promise.race([entered.promise, pending]);
+          expect(handler).not.toHaveBeenCalled();
+        } finally {
+          release.resolve();
+        }
+        expect(await pending).toHaveBeenCalledWith(true, { ok: true });
+        expect(handler).toHaveBeenCalledOnce();
+        expect(client.authenticatedGitHubIdentitySync).toHaveBeenCalledOnce();
+
+        const profileless = createPendingProfileClient();
+        delete profileless.authenticatedUserId;
+        const legacyHandler = vi.fn<GatewayRequestHandler>(({ respond }) =>
+          respond(true, { ok: true }),
+        );
+        expect(
+          await dispatchPendingProfileMethod({
+            client: profileless,
+            method,
+            handler: legacyHandler,
+            requestParams,
+          }),
+        ).toHaveBeenCalledWith(true, { ok: true });
+        expect(legacyHandler).toHaveBeenCalledOnce();
       });
     },
   );

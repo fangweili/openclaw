@@ -24,6 +24,7 @@ import type {
   ChatQueueItem,
   ChatSelectionSource,
 } from "../../lib/chat/chat-types.ts";
+import { selectChatInputDisplay } from "../../lib/chat/input-custody.ts";
 import {
   KEYBOARD_SHORTCUT_COMBOS,
   matchesShortcutCombo,
@@ -46,12 +47,12 @@ import {
 import { chatStartupStatusLabel, type ChatRunStartupStatus } from "./chat-run-startup.ts";
 import { forwardChatWheelToTranscript } from "./chat-scroll-input.ts";
 import type { ChatState } from "./chat-state-contract.ts";
+import "./components/chat-comment-controller.ts";
 import {
   type ChatPlacementStartupNoticeProps,
   renderChatComposerNotices,
   renderChatTopbarNotices,
 } from "./chat-view-notices.ts";
-import "./components/chat-comment-controller.ts";
 import { createAsyncQuestionPresentation } from "./components/chat-async-question.ts";
 import {
   createChatAttachmentDropHandlers,
@@ -85,7 +86,6 @@ import {
 } from "./components/chat-thread-interactions.ts";
 import { renderChatThread } from "./components/chat-thread.ts";
 import type { ChatTranscriptController } from "./components/chat-transcript-controller.ts";
-import { selectChatInputDisplay } from "./history-merge.ts";
 import type { ProviderPolicyNotice } from "./tool-stream-contract.ts";
 import type { WorkspaceResultConflict } from "./workspace-conflict.ts";
 import "../../components/resizable-divider.ts";

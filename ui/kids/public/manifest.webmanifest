@@ -1,0 +1,13 @@
+{
+  "name": "Rocky",
+  "short_name": "Rocky",
+  "start_url": "/kids/",
+  "scope": "/kids/",
+  "display": "standalone",
+  "background_color": "#f7f8f5",
+  "theme_color": "#f7f8f5",
+  "icons": [
+    { "src": "rocky-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "rocky-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

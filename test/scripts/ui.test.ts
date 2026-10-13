@@ -56,6 +56,7 @@ function copyUiFixture(root: string): void {
     "scripts/run-node-package-bin.mts",
     "scripts/windows-cmd-helpers.mjs",
     "scripts/lib/build-identity.mts",
+    "scripts/lib/ui-build-environment.mts",
     "scripts/lib/output-root-guard.mjs",
     "scripts/lib/record-shared.mjs",
     "src/infra/process-env.ts",

@@ -1,4 +1,4 @@
-import { raceWithTimeout } from "@openclaw/retry";
+import { racePromiseWithAbortSignal, raceWithTimeout } from "@openclaw/retry";
 import type {
   WebPushDevicePreferences,
   WebPushNotificationPreferences,
@@ -17,6 +17,13 @@ type WebPushReconcileResult =
   | { state: "missing" }
   | { state: "registered" }
   | { state: "vapid-mismatch"; error: string };
+
+/** An explicit worker keeps a separate app's subscription outside the admin scope. */
+export type WebPushTarget = {
+  registration?: ServiceWorkerRegistration | Promise<ServiceWorkerRegistration>;
+  /** Fence new writes after connection disposal; already accepted writes settle normally. */
+  signal?: AbortSignal;
+};
 
 export type WebPushSubscriptionState = WebPushReconcileResult["state"] | "unknown";
 
@@ -70,12 +77,16 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
-export async function getExistingSubscription(): Promise<PushSubscription | null> {
+export async function getExistingSubscription(
+  target: WebPushTarget = {},
+): Promise<PushSubscription | null> {
   if (!("serviceWorker" in navigator)) {
     return null;
   }
   // Passive reads must settle even when no worker is installed or activation is blocked.
-  const registration = await navigator.serviceWorker.getRegistration();
+  target.signal?.throwIfAborted();
+  const registration = await (target.registration ?? navigator.serviceWorker.getRegistration());
+  target.signal?.throwIfAborted();
   return (await pushManagerFor(registration)?.getSubscription()) ?? null;
 }
 
@@ -120,7 +131,9 @@ async function registerPushSubscription(
   client: GatewayBrowserClient,
   subscription: PushSubscription,
   vapidPublicKey: Uint8Array,
+  signal?: AbortSignal,
 ): Promise<WebPushReconcileResult> {
+  signal?.throwIfAborted();
   if (!subscriptionUsesVapidKey(subscription, vapidPublicKey)) {
     // Keep the browser subscription for its owning Gateway until the operator
     // explicitly resets it; only this Gateway's unusable row is removed here.
@@ -144,18 +157,28 @@ async function resolveWebPushCapabilityPatch(
   };
 }
 
-async function reconcileWebPushCapability(
+/** Re-register an existing subscription without requesting browser permission. */
+export async function reconcileWebPushSubscription(
   client: GatewayBrowserClient,
-): Promise<WebPushCapabilityPatch> {
-  const subscription = await getExistingSubscription();
+  target: WebPushTarget = {},
+): Promise<WebPushReconcileResult> {
+  const subscription = await getExistingSubscription(target);
+  target.signal?.throwIfAborted();
   const result = subscription
     ? await registerPushSubscription(
         client,
         subscription,
         await resolveGatewayVapidPublicKey(client),
+        target.signal,
       )
     : ({ state: "missing" } as const);
-  return await resolveWebPushCapabilityPatch(client, result);
+  return result;
+}
+
+async function reconcileWebPushCapability(
+  client: GatewayBrowserClient,
+): Promise<WebPushCapabilityPatch> {
+  return await resolveWebPushCapabilityPatch(client, await reconcileWebPushSubscription(client));
 }
 
 export function startWebPushReconciliation(params: {
@@ -278,24 +301,40 @@ export function createWebPushCapabilityRuntime(params: {
 
 export async function subscribeToWebPush(
   client: GatewayBrowserClient,
+  target: WebPushTarget = {},
 ): Promise<WebPushReconcileResult> {
-  const permission = await Notification.requestPermission();
+  target.signal?.throwIfAborted();
+  // Invoke synchronously in the caller's user gesture, before worker readiness.
+  const permission = await racePromiseWithAbortSignal(
+    () => Notification.requestPermission(),
+    target.signal,
+  );
+  target.signal?.throwIfAborted();
   if (permission !== "granted") {
     throw new Error(`Notification permission ${permission}`);
   }
 
   const registration = await raceWithTimeout(
-    () => navigator.serviceWorker.ready,
+    () => Promise.resolve(target.registration ?? navigator.serviceWorker.ready),
     SW_READY_TIMEOUT,
     () => {
       throw new Error("Service worker not ready (timed out)");
     },
+    { signal: target.signal },
   );
+  target.signal?.throwIfAborted();
   const pushManager = requirePushManager(registration);
   const vapidPublicKey = await resolveGatewayVapidPublicKey(client);
+  target.signal?.throwIfAborted();
   const existingSubscription = await pushManager.getSubscription();
+  target.signal?.throwIfAborted();
   if (existingSubscription) {
-    return await registerPushSubscription(client, existingSubscription, vapidPublicKey);
+    return await registerPushSubscription(
+      client,
+      existingSubscription,
+      vapidPublicKey,
+      target.signal,
+    );
   }
   const pushSubscription = await pushManager.subscribe({
     userVisibleOnly: true,
@@ -303,7 +342,7 @@ export async function subscribeToWebPush(
   });
 
   try {
-    return await registerPushSubscription(client, pushSubscription, vapidPublicKey);
+    return await registerPushSubscription(client, pushSubscription, vapidPublicKey, target.signal);
   } catch (error) {
     try {
       await pushSubscription.unsubscribe();
@@ -314,8 +353,12 @@ export async function subscribeToWebPush(
   }
 }
 
-export async function unsubscribeFromWebPush(client: GatewayBrowserClient): Promise<void> {
-  const subscription = await getExistingSubscription();
+export async function unsubscribeFromWebPush(
+  client: GatewayBrowserClient,
+  target: WebPushTarget = {},
+): Promise<void> {
+  const subscription = await getExistingSubscription(target);
+  target.signal?.throwIfAborted();
   if (!subscription) {
     return;
   }

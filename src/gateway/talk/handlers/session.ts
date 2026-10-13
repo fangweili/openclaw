@@ -21,6 +21,7 @@ import { projectInternalRealtimeVoicePublicConfig } from "../../../talk/provider
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
 import { ADMIN_SCOPE, hasGatewayAdminScope } from "../../operator-scopes.js";
 import { resolveSandboxedSessionCreation } from "../../operator-session-run.js";
+import { gatewayClientSenderFields } from "../../server-methods/gateway-client-identity.js";
 import type { GatewayRequestHandlers, RespondFn } from "../../server-methods/types.js";
 import { defineValidatedGatewayHandler } from "../../server-methods/validation.js";
 import { resolveOperatorSessionCreation } from "../../session-creation-provenance.js";
@@ -50,6 +51,7 @@ import {
   resolveTalkRealtimeProviderInstructions,
   resolveTalkRealtimeGatewayRelayLaunch,
 } from "../session-config.js";
+import { buildTalkSessionContext } from "../session-context.js";
 import {
   buildTalkRealtimeHistoryInstructions,
   readTalkRealtimeInitialItems,
@@ -280,9 +282,16 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           const capabilities = resolution.capabilities;
           const controlSource =
             capabilities?.handlesAgentConsult === true ? "delegation" : "transcript";
+          const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
+          const sessionContext = buildTalkSessionContext({
+            config: runtimeConfig,
+            agentId,
+            sender: transcriptSender,
+          });
           const providerInstructions = await resolveTalkRealtimeProviderInstructions({
             config: runtimeConfig,
             agentId,
+            sessionContext,
             configuredInstructions: realtimeConfig.instructions,
             sessionKey: target.canonicalKey,
             warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
@@ -320,6 +329,8 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
               []),
           ];
           const session = createTalkRealtimeRelaySession({
+            sessionContext,
+            transcriptSender,
             context,
             connId,
             cfg: runtimeConfig,

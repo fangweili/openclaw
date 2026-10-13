@@ -67,6 +67,7 @@ export function enqueueRelayVoiceTranscript(
         }
         try {
           await appendRelayVoiceTranscript({
+            sender: session.transcriptSender,
             agentId,
             sessionKey,
             sessionTarget: { sessionKey: canonicalKey, storePath },

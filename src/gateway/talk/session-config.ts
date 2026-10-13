@@ -1,3 +1,9 @@
+/**
+ * Projects admitted Talk configuration into provider launch options and instructions.
+ * Holds no session state: admission owns the selected target and caller, and rechecks
+ * their authority after awaited bootstrap loading before creating either transport.
+ * Full workspace policy and personal memory stay with the selected agent's consult.
+ */
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import {
@@ -54,14 +60,27 @@ export function normalizeTalkSessionBrain(params: { mode: TalkMode; brain?: stri
   );
 }
 
+/**
+ * Adds optional shared profile context and provider-only delegation guidance to the
+ * immutable context captured at admission. Full-agent consults receive the same
+ * session context separately, without instructions to delegate back to themselves.
+ * Bootstrap failures retain the loader's warning/fallback behavior. Callers must
+ * recheck admission after this await before launching either transport.
+ */
 export async function resolveTalkRealtimeProviderInstructions(params: {
   config: OpenClawConfig;
   agentId: string;
+  sessionContext: string;
   configuredInstructions?: string;
   sessionKey: string;
   warn: (message: string) => void;
 }): Promise<string> {
-  return [params.configuredInstructions, await resolveRealtimeVoiceAgentContextInstructions(params)]
+  return [
+    params.configuredInstructions,
+    await resolveRealtimeVoiceAgentContextInstructions(params),
+    params.sessionContext,
+    "Delegate requests that depend on personal profile, preferences, learning level, progress, or workspace rules to the selected OpenClaw agent before giving a personalized answer or starting a lesson. That agent loads its full workspace instructions and relevant memory; use its result instead of guessing from shared profile files.",
+  ]
     .filter((entry): entry is string => Boolean(entry?.trim()))
     .join("\n\n");
 }

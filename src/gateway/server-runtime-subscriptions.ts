@@ -50,6 +50,7 @@ import {
   removeChatAbortControllerEntry,
   type RestartRecoveryCandidate,
 } from "./chat-abort.js";
+import type { createEventWebPushDelivery } from "./event-web-push.js";
 import { bumpGatewayAccessRevision } from "./gateway-access-revision.js";
 import type { GatewayBroadcastFn, GatewayBroadcastToConnIdsFn } from "./server-broadcast-types.js";
 import type {
@@ -96,6 +97,9 @@ function dispatchEventHandler<TEvent>(params: {
 export function startGatewayEventSubscriptions(params: {
   scheduler: GatewayScheduler;
   signal: AbortSignal;
+  deliverAutomationCompletion?: ReturnType<
+    typeof createEventWebPushDelivery
+  >["deliverAutomationCompletion"];
   log: SubsystemLogger;
   broadcast: GatewayBroadcastFn;
   broadcastToConnIds: GatewayBroadcastToConnIdsFn;
@@ -611,6 +615,14 @@ export function startGatewayEventSubscriptions(params: {
 
   const transcriptUnsub = onInternalSessionTranscriptUpdate((evt) => {
     sessionActivitySummaries.handleTranscript(evt);
+    // This owner retains push independently of targeted broadcasts, including
+    // when every browser is offline. Teardown stops new admissions through the
+    // connection-work signal; retained root work joins already-started sends.
+    if (params.deliverAutomationCompletion && !params.signal.aborted) {
+      void runWithRetainedGatewayRootWork(() =>
+        params.deliverAutomationCompletion!(evt, params.signal),
+      );
+    }
     void dispatchEventHandler({
       loadHandler: getTranscriptUpdateHandler,
       event: evt,

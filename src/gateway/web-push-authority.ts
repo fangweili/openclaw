@@ -47,6 +47,7 @@ function resolveCurrentWebPushTarget(params: {
   device: PairedDevice | undefined;
   cfg: OpenClawConfig;
   requiredScopes: readonly string[];
+  fallbackScopes?: readonly string[];
   visibilityScopes?: readonly string[];
   profile: GatewayClient["preparedSessionProfile"];
   preferences: Map<string, unknown>;
@@ -98,7 +99,12 @@ function resolveCurrentWebPushTarget(params: {
         requestedScopes,
         allowedScopes: rolePolicy.scopes,
       }));
-  if (!scopesAllowed(params.requiredScopes)) {
+  const requiredScopes = scopesAllowed(params.requiredScopes)
+    ? params.requiredScopes
+    : params.fallbackScopes && scopesAllowed(params.fallbackScopes)
+      ? params.fallbackScopes
+      : undefined;
+  if (!requiredScopes) {
     return null;
   }
   // Only targeted callers request extra visibility. Both current authorities must
@@ -108,7 +114,7 @@ function resolveCurrentWebPushTarget(params: {
     : [];
   return {
     subscription,
-    scopes: [...new Set([...params.requiredScopes, ...visibilityScopes])],
+    scopes: [...new Set([...requiredScopes, ...visibilityScopes])],
     userProfileId,
     profile: params.profile,
     preferences: resolveEffectiveWebPushPreferences({
@@ -118,10 +124,15 @@ function resolveCurrentWebPushTarget(params: {
   };
 }
 
-/** Resolve current recipients from the pairing owner's prepared authority facts. */
+/**
+ * Resolve current recipients from prepared pairing and role facts. An explicit
+ * fallback grants only its own scopes when the primary requirement is denied;
+ * callers must then enforce the resource boundary promised by that fallback.
+ */
 export function listCurrentWebPushTargets(
   params: WebPushAuthority & {
     requiredScopes: readonly string[];
+    fallbackScopes?: readonly string[];
     visibilityScopes?: readonly string[];
   },
 ): CurrentWebPushTarget[] {
@@ -132,6 +143,7 @@ export function listCurrentWebPushTargets(
       device: pairedByDeviceId.get(subscription.deviceId),
       cfg: params.cfg,
       requiredScopes: params.requiredScopes,
+      fallbackScopes: params.fallbackScopes,
       visibilityScopes: params.visibilityScopes,
       profile: subscription.userProfileId
         ? params.profile?.readCurrentIdentity(subscription.userProfileId)

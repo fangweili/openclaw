@@ -109,6 +109,12 @@ export const WebPushUnsubscribeParamsSchema = closedObject({
   endpoint: Type.String({ minLength: 1, maxLength: 2048, pattern: "^https://" }),
 });
 
+/** Connection-local foreground lease for one owned subscription; null restores alerts. */
+export const WebPushForegroundParamsSchema = closedObject({
+  endpoint: Type.String({ minLength: 1, maxLength: 2048, pattern: "^https://" }),
+  sessionKey: Type.Union([Type.String({ minLength: 1, maxLength: 1024 }), Type.Null()]),
+});
+
 /** Request payload for sending a test Web Push notification to current subscriptions. */
 export const WebPushTestParamsSchema = closedObject({
   title: Type.Optional(Type.String()),
@@ -157,3 +163,5 @@ export type WebPushPreferencesSetParams = Static<typeof WebPushPreferencesSetPar
 // pull in the ProtocolSchemas registry.
 export type PushTestParams = Static<typeof PushTestParamsSchema>;
 export type PushTestResult = Static<typeof PushTestResultSchema>;
+
+export type WebPushForegroundParams = Static<typeof WebPushForegroundParamsSchema>;

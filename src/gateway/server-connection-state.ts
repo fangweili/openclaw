@@ -61,7 +61,7 @@ export function createGatewayConnectionState(params: {
     isConnectionActive,
     forgetConnectionAncestors,
   );
-  const eventWebPush = createEventWebPushDelivery({ getRuntimeConfig: loadRuntimeConfig });
+  const eventWebPush = createEventWebPushDelivery({ getRuntimeConfig: loadRuntimeConfig, clients });
   const gatewayBroadcaster = createGatewayBroadcaster({
     clients,
     preparePresenceProjection: (presence) =>
@@ -229,6 +229,7 @@ export function createGatewayConnectionState(params: {
     clients,
     forgetConnectionAncestors,
     connectionWork: new GatewayConnectionWork(),
+    deliverAutomationCompletion: eventWebPush.deliverAutomationCompletion,
     mentionInbox,
     isConnectionActive,
     ...gatewayBroadcaster,

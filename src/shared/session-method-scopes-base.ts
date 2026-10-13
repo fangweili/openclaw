@@ -11,6 +11,7 @@ const SESSION_READ_METHODS: ReadonlySet<string> = new Set([
   "models.list",
   "progressCard.get",
   "projects.list",
+  "push.web.preferences.get",
   "session.suggestions.list",
   "session.reactions.list",
   "sessions.groups.list",
@@ -44,6 +45,13 @@ const SESSION_READ_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 const SESSION_WRITE_METHODS: ReadonlySet<string> = new Set([
+  // These handlers bind each subscription to the caller's verified profile and
+  // paired device. The global broadcast test deliberately has no alternative.
+  "push.web.vapidPublicKey",
+  "push.web.subscribe",
+  "push.web.unsubscribe",
+  "push.web.preferences.set",
+  "push.web.foreground",
   "question.request",
   "question.waitAnswer",
   "question.resolve",

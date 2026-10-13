@@ -1,3 +1,15 @@
+/* Standalone kids surface owns a quiet, accessible palette, separate from admin themes. */
+:root[data-kids] {
+  --kids-background: #f7f8f5;
+  --kids-paper: #ffffff;
+  --kids-ink: #26372b;
+  --kids-muted: #616d64;
+  --kids-accent: #426348;
+  --kids-tint: #e4eee1;
+  --kids-border: #dbe1d7;
+  --kids-danger: #933f36;
+}
+
 :root {
   /* Background - Deep, rich dark with layered depth */
   --bg: #0e1015;

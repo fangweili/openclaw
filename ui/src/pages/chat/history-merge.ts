@@ -20,8 +20,8 @@ import {
   type RetainedChatSubmission,
   retireInitialChatSubmission,
 } from "../../app/chat-submissions.ts";
-import type { ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import { findChatSubmissionMessage } from "../../lib/chat/history-message-identity.ts";
+import { retirePendingUserEntries } from "../../lib/chat/input-custody.ts";
 import { chatOutboxDeliveryKey, type ChatComposerScope } from "../../lib/chat/outbox-store.ts";
 import {
   resolveUiSelectedSessionAgentId,
@@ -392,54 +392,6 @@ export function publishChatSessionProjectionMessages(
   return projection;
 }
 
-// History arrays are replaced, never mutated; index each once, not per scroll render.
-const userIdentities = new WeakMap<
-  readonly unknown[],
-  { userIds: Set<string>; sendKeys: Set<string> }
->();
-
-/** Custody is its own display collection; only canonical user IDs can replace it. */
-export function selectChatInputDisplay(
-  messages: readonly unknown[],
-  queue: readonly ChatQueueItem[],
-  inputs: ChatPendingInputsPage["items"],
-) {
-  let identities = userIdentities.get(messages);
-  if (!identities) {
-    identities = { userIds: new Set(), sendKeys: new Set() };
-    for (const message of messages) {
-      const identity = readSessionMessageIdentity(message);
-      if (identity?.role === "user") {
-        if (identity.id) {
-          identities.userIds.add(identity.id);
-        }
-        if (identity.idempotencyKey) {
-          identities.sendKeys.add(identity.idempotencyKey);
-        }
-      }
-    }
-    userIdentities.set(messages, identities);
-  }
-  const { userIds, sendKeys } = identities;
-  const accepted = new Set(inputs.map((input) => input.runId));
-  return {
-    queue: queue.filter(
-      (item) =>
-        !item.sendRunId ||
-        (!accepted.has(item.sendRunId) &&
-          !sendKeys.has(item.sendRunId) &&
-          !sendKeys.has(`${item.sendRunId}:user`)),
-    ),
-    pendingInputs: inputs.filter(
-      (input) =>
-        !userIds.has(input.id) &&
-        !input.queued &&
-        asNullableRecord(input.message)?.display !== false,
-    ),
-    queuedInputs: inputs.filter((input) => !userIds.has(input.id) && input.queued),
-  };
-}
-
 /** A custody or consumption receipt retires only an uncommitted local user source. */
 export function reconcileChatInputCustody(
   owner: ChatSessionProjectionOwner,
@@ -475,25 +427,6 @@ export function retireChatSubmissionDisplay(
       publishChatSessionProjection(owner, retired);
     }
   }
-}
-
-function retirePendingUserEntries(
-  projection: SessionProjectionState,
-  acceptedRunIds: ReadonlySet<string>,
-): SessionProjectionState {
-  const entries = projection.entries.filter(
-    (entry) =>
-      !(
-        entry.pending &&
-        entry.identity?.role === "user" &&
-        entry.identity.id === null &&
-        entry.identity.sequence === null &&
-        acceptedRunIds.has(entry.pendingRunId ?? "")
-      ),
-  );
-  return entries.length === projection.entries.length
-    ? projection
-    : { ...projection, entries, messages: entries.map((entry) => entry.message) };
 }
 
 export function shouldDisplayChatSubmission(

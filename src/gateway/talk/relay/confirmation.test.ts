@@ -62,6 +62,7 @@ describe("native relay confirmation transcript admission", () => {
     const cfg = { agents: { entries: { main: {} } } };
     let request: RealtimeVoiceBridgeCreateRequest | undefined;
     const session = createTalkRealtimeRelaySession({
+      sessionContext: "Synthetic admitted Talk context",
       cfg,
       context: controlContext(),
       connId,

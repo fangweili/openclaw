@@ -167,6 +167,7 @@ export function createTalkRealtimeRelaySession(
     sessionTarget: params.sessionTarget,
     ownerConnId: params.connId,
     authority: params.consultAuthority,
+    sessionContext: params.sessionContext,
     getVoiceSessionId: () => relaySessionId,
     initialItems: params.initialItems ?? [],
     runIdPrefix: "talk-realtime-relay-consult",
@@ -624,6 +625,7 @@ export function createTalkRealtimeRelaySession(
     capabilities: params.capabilities,
     outputOwnership,
     sessionTarget: params.sessionTarget,
+    transcriptSender: params.transcriptSender,
     expiresAtMs,
     cleanupTimer: setTimeout(() => {
       const active = relaySessions.get(relaySessionId);

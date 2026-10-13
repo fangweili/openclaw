@@ -207,6 +207,7 @@ describe("native Talk spoken confirmation handoff", () => {
     });
     const context = controlContext();
     const runner = createTalkClientAgentConsultRunner({
+      sessionContext: "Synthetic admitted Talk context",
       config: {},
       context,
       sessionTarget,

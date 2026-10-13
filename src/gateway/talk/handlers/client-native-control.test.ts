@@ -89,7 +89,7 @@ describe("native Talk through the public OpenAI plugin registration", () => {
   });
 
   it("negotiates Gateway control and persists native sideband speech without client control", async () => {
-    await withNativePlugin(async ({ create, offer, invoke, broadcast }) => {
+    await withNativePlugin(async ({ create, offer, invoke, broadcast, profileId }) => {
       const { result, socket } = await connectNativeSession({ create, offer });
       expect(talkEventTypes(broadcast).filter((type) => type === "session.ready")).toHaveLength(1);
       expect(
@@ -120,6 +120,12 @@ describe("native Talk through the public OpenAI plugin registration", () => {
           },
         },
       ]);
+      expect(messages[0]?.event.message).toHaveProperty("__openclaw.senderIdentity", {
+        type: "profile",
+        id: profileId,
+      });
+      expect(messages[0]?.event.message).toHaveProperty("__openclaw.senderId", profileId);
+      expect(messages[1]?.event.message).not.toHaveProperty("__openclaw");
       expect(talkEventTypes(broadcast)).not.toContain("turn.ended");
       await invoke("talk.client.close", {});
       expect(socket.readyState).toBe(upstream.NativeSocket.CLOSED);

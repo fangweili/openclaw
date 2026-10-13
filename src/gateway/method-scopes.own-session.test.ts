@@ -7,6 +7,32 @@ import {
 } from "./method-scopes.js";
 
 describe("session-scoped method admission", () => {
+  it("admits own-device push setup without granting global notification authority", () => {
+    for (const method of [
+      "push.web.vapidPublicKey",
+      "push.web.subscribe",
+      "push.web.unsubscribe",
+      "push.web.preferences.set",
+      "push.web.foreground",
+    ]) {
+      expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.write"])).toEqual({
+        allowed: true,
+        sessionScope: "operator.sessions.write",
+      });
+      expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.read"])).toEqual({
+        allowed: false,
+        missingScope: "operator.write",
+      });
+    }
+    expect(
+      authorizeOperatorScopesForMethod("push.web.preferences.get", ["operator.sessions.read"]),
+    ).toEqual({ allowed: true, sessionScope: "operator.sessions.read" });
+    expect(authorizeOperatorScopesForMethod("push.web.test", ["operator.sessions.write"])).toEqual({
+      allowed: false,
+      missingScope: "operator.write",
+    });
+  });
+
   it.each([
     ["agent.identity.get", { agentId: "main" }, true],
     ["agents.list", {}, true],

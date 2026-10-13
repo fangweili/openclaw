@@ -1,0 +1,18 @@
+{
+  "name": "@openclaw/kids-ui",
+  "version": "2026.10.1",
+  "private": true,
+  "description": "A minimal browser interface for a child's assigned tutor",
+  "type": "module",
+  "files": ["index.ts", "src", "assets", "openclaw.plugin.json", "README.md"],
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.10.1",
+      "minGatewayVersion": "2026.10.1"
+    }
+  }
+}

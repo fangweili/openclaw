@@ -31,6 +31,7 @@ import {
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
 import { resolveSandboxedSessionCreation } from "../../operator-session-run.js";
+import { gatewayClientSenderFields } from "../../server-methods/gateway-client-identity.js";
 import type { GatewayRequestHandler } from "../../server-methods/types.js";
 import { assertValidParams } from "../../server-methods/validation.js";
 import { resolveOperatorSessionCreation } from "../../session-creation-provenance.js";
@@ -48,6 +49,7 @@ import {
   isUnsupportedBrowserWebRtcSession,
   resolveTalkRealtimeProviderInstructions,
 } from "../session-config.js";
+import { buildTalkSessionContext } from "../session-context.js";
 import { readTalkRealtimeInitialItems } from "../session-history.js";
 import { requirePreparedTalkSessionTarget } from "../session-target.js";
 import {
@@ -177,9 +179,16 @@ export const createTalkClient: GatewayRequestHandler = async ({
         `Realtime provider ${resolution.provider.id} does not support browser video frames`,
       );
     }
+    const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
+    const sessionContext = buildTalkSessionContext({
+      config: runtimeConfig,
+      agentId,
+      sender: transcriptSender,
+    });
     const providerInstructions = await resolveTalkRealtimeProviderInstructions({
       config: runtimeConfig,
       agentId,
+      sessionContext,
       configuredInstructions: realtimeConfig.instructions,
       sessionKey: target.canonicalKey,
       warn: (message) => context.logGateway.warn(`talk realtime context: ${message}`),
@@ -242,6 +251,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
         }
       };
       const consultRunner = createTalkClientAgentConsultRunner({
+        sessionContext,
         config: runtimeConfig,
         context,
         sessionTarget: target,
@@ -273,6 +283,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
               consultRunner.getToolAuthorityOverlay(undefined, source),
             appendTranscript: ({ entryId, role, text, confirmation }) =>
               appendClientVoiceTranscript({
+                sender: transcriptSender,
                 agentId,
                 sessionKey,
                 sessionTarget,

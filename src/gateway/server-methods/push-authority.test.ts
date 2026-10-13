@@ -15,8 +15,9 @@ import {
   setCanonicalUserPreferences,
 } from "../../state/user-preferences.js";
 import { resolveUserProfileId } from "../../state/user-profiles.js";
+import type { GatewayWsClient } from "../server/ws-types.js";
+import { isWebPushForeground } from "../web-push-foreground.js";
 import { pushHandlers } from "./push.js";
-import type { GatewayClient } from "./types.js";
 
 const { findBoundWebPushSubscriptionByEndpoint, snapshotScope } = vi.hoisted(() => ({
   findBoundWebPushSubscriptionByEndpoint:
@@ -81,7 +82,8 @@ type WriteMethod =
   | "push.web.subscribe"
   | "push.web.preferences.get"
   | "push.web.preferences.set"
-  | "push.web.unsubscribe";
+  | "push.web.unsubscribe"
+  | "push.web.foreground";
 
 function subscription(userProfileId: string | null = "profile-owner"): BoundWebPushSubscription {
   return {
@@ -99,7 +101,18 @@ function subscription(userProfileId: string | null = "profile-owner"): BoundWebP
 function createInvocation(method: WriteMethod, scope: "user" | "device" = "device") {
   const transport = new AbortController();
   const request = new AbortController();
-  const client: GatewayClient = {
+  const client: GatewayWsClient = {
+    usesSharedGatewayAuth: false,
+    socket: {
+      readyState: 1,
+      bufferedAmount: 0,
+      send: vi.fn(),
+      close: vi.fn(),
+      terminate: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      once: vi.fn(),
+    },
     connId: "original-connection",
     connect: {
       minProtocol: PROTOCOL_VERSION,
@@ -117,6 +130,7 @@ function createInvocation(method: WriteMethod, scope: "user" | "device" = "devic
     },
     authenticatedUserProfile: {
       profileId: "profile-owner",
+      avatarRevision: "",
       displayName: null,
       hasAvatar: false,
       updatedAt: 1,
@@ -131,6 +145,7 @@ function createInvocation(method: WriteMethod, scope: "user" | "device" = "devic
     req: { type: "req", id: "authority-request", method },
     params: {
       endpoint,
+      ...(method === "push.web.foreground" ? { sessionKey: "agent:tutor:kids:fixture" } : {}),
       ...(method === "push.web.subscribe" ? { keys } : {}),
       ...(method === "push.web.preferences.set"
         ? {
@@ -166,6 +181,7 @@ function createInvocation(method: WriteMethod, scope: "user" | "device" = "devic
     sessionMutationCommitGuard,
   };
   return {
+    options,
     client,
     request,
     respond,
@@ -200,6 +216,74 @@ beforeEach(() => {
 });
 
 describe("Web Push request authority across asynchronous storage", () => {
+  it.each([
+    "push.web.subscribe",
+    "push.web.preferences.get",
+    "push.web.preferences.set",
+    "push.web.unsubscribe",
+    "push.web.foreground",
+  ] as const)("keeps %s bound to the caller under narrow session scopes", async (method) => {
+    const invocation = createInvocation(method);
+    invocation.client.connect.scopes = ["operator.sessions.write"];
+    await invocation.invoke();
+    expect(invocation.respond.mock.calls[0]?.[0]).toBe(true);
+    if (method === "push.web.subscribe") {
+      expect(registerWebPushSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          binding: { deviceId: "browser-device", userProfileId: "profile-owner" },
+        }),
+      );
+      return;
+    }
+    invocation.respond.mockClear();
+    vi.mocked(findBoundWebPushSubscriptionByEndpoint).mockResolvedValueOnce(
+      subscription("another-profile"),
+    );
+    await invocation.invoke();
+    expect(invocation.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "FORBIDDEN" }),
+    );
+    invocation.respond.mockClear();
+    vi.mocked(findBoundWebPushSubscriptionByEndpoint).mockResolvedValueOnce({
+      ...subscription(),
+      deviceId: "another-device",
+    });
+    await invocation.invoke();
+    expect(invocation.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "FORBIDDEN" }),
+    );
+  });
+
+  it.each(["background", "disconnect", "revoked"] as const)(
+    "does not revive a foreground claim after a later %s while lookup is pending",
+    async (change) => {
+      const invocation = createInvocation("push.web.foreground");
+      const lookup = createDeferred<BoundWebPushSubscription | null>();
+      vi.mocked(findBoundWebPushSubscriptionByEndpoint).mockReturnValueOnce(lookup.promise);
+      const pending = invocation.invoke();
+      if (change === "background") {
+        invocation.options.params = { endpoint, sessionKey: null };
+        await invocation.invoke();
+      } else if (change === "disconnect") {
+        invocation.reconnect();
+      } else {
+        invocation.client.invalidated = true;
+      }
+      lookup.resolve(subscription());
+      await pending;
+      expect(
+        isWebPushForeground([invocation.client], subscription(), "profile-owner", [
+          "agent:tutor:kids:fixture",
+        ]),
+      ).toBe(false);
+      expect(setWebPushSubscriptionPreferences).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["unchanged", "profile changed", "request revoked", "rejected"] as const)(
     "waits for preference reads and checks authority: %s",
     async (change) => {

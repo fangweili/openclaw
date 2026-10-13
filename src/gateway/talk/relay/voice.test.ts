@@ -53,6 +53,20 @@ describe("realtime relay voice transcript persistence", () => {
     voiceSessionMocks.createOrResumeClientVoiceSession.mockReset();
   });
 
+  it("carries authenticated admission facts into relay transcript persistence", async () => {
+    const { session } = createRelaySession();
+    session.transcriptSender = {
+      id: "voice-caller",
+      identity: { type: "profile", id: "voice-caller" },
+    };
+    expect(enqueueRelayVoiceTranscript(session, "user", "A spoken answer")).toBe(true);
+    await session.voiceTranscriptQueue.flush();
+    expect(voiceSessionMocks.appendRelayVoiceTranscript).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ role: "user", sender: session.transcriptSender }),
+    );
+    await closeRelayVoiceSession(session);
+  });
+
   it("bounds stalled finals, drains the accepted prefix, and closes once", async () => {
     const firstAppend = createDeferred();
     voiceSessionMocks.appendRelayVoiceTranscript.mockImplementation(
