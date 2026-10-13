@@ -1,21 +1,18 @@
 // @vitest-environment node
-import type { GatewayProtocolRequestOptions } from "@openclaw/gateway-client/browser";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   GatewayProtocolRequestError,
   retainGatewayResponsePayload,
 } from "../../../packages/gateway-client/src/protocol-request.js";
-import type { GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
-import { KidsConversation, type KidsConversationState } from "./conversation.ts";
+import {
+  createConversationTestHarness,
+  hello,
+  sessionKey,
+  textMessage,
+} from "./conversation.test-support.ts";
 
-const hello: GatewayHelloOk = { type: "hello-ok", protocol: 4 };
-const sessionKey = "agent:student:kids:child-one";
-const textMessage = (role: string, text: string, id: string, extra: object = {}) => ({
-  role,
-  content: [{ type: "text", text }],
-  __openclaw: { id },
-  ...extra,
-});
+const { fixture, dispose } = createConversationTestHarness();
+afterEach(dispose);
 
 // Matches commitBackgroundResultToSession's durable completion, not the
 // transcript-only delivery mirror or a foreground model's chat.final event.
@@ -35,86 +32,43 @@ const savedChallenge = {
   __openclaw: { id: "challenge-message", seq: 3 },
 };
 
-/** Deterministic RPC boundary; deferred replies can deliberately ignore abort. */
-class TestGateway {
-  connected = true;
-  connectionGeneration = 1;
-  calls: Array<{
-    method: string;
-    params: Record<string, unknown>;
-    options?: GatewayProtocolRequestOptions;
-  }> = [];
-  listeners = new Set<(event: GatewayEventFrame) => void>();
-  profileId = "child-one";
-  agents = [{ id: "student", name: "Rocky" }];
-  history: Record<string, unknown> = {
-    sessionId: "session-one",
-    sessionInfo: { sessionId: "session-one", activeLeafEntryId: "leaf-one" },
-    messages: [textMessage("user", "Hi", "u1"), textMessage("assistant", "Hello!", "a1")],
-  };
-  override?: (method: string, params: Record<string, unknown>) => Promise<unknown> | undefined;
-
-  addEventListener(listener: (event: GatewayEventFrame) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  async request<T>(
-    method: string,
-    input?: unknown,
-    options?: GatewayProtocolRequestOptions,
-  ): Promise<T> {
-    const params = input as Record<string, unknown>;
-    this.calls.push({ method, params, options });
-    options?.onSent?.("request");
-    const override = this.override?.(method, params);
-    if (override) {
-      return (await override) as T;
-    }
-    const responses: Record<string, unknown> = {
-      "users.self": { profile: { id: this.profileId, displayName: "Child" } },
-      "agents.list": { agents: this.agents },
-      "sessions.create": { key: params.key },
-      "sessions.messages.subscribe": { key: params.key },
-      "sessions.messages.unsubscribe": { key: params.key },
-      "chat.history": this.history,
-      "chat.send": { runId: params.idempotencyKey, status: "started" },
-    };
-    if (!(method in responses)) {
-      throw new Error(`Unexpected request: ${method}`);
-    }
-    return responses[method] as T;
-  }
-
-  emit(event: string, payload: Record<string, unknown>): void {
-    for (const listener of this.listeners) {
-      listener({ type: "event", event, payload });
-    }
-  }
-}
-
-const owners: KidsConversation[] = [];
-function fixture() {
-  const client = new TestGateway();
-  const states: KidsConversationState[] = [];
-  const accepted: string[] = [];
-  const acceptedIds: string[][] = [];
-  const owner = new KidsConversation(
-    client,
-    (state) => states.push(state),
-    (text, ids) => {
-      accepted.push(text);
-      acceptedIds.push([...ids]);
-    },
-  );
-  owners.push(owner);
-  return { owner, client, states, accepted, acceptedIds };
-}
-afterEach(async () => {
-  await Promise.all(owners.splice(0).map((owner) => owner.dispose()));
-});
-
 describe("kids conversation", () => {
+  it("shows a generated image-only final while keeping commentary and tool media hidden", async () => {
+    const { owner, client } = fixture();
+    const image = {
+      type: "image",
+      artifactId: "artifact_managed_image_diagram",
+      fileName: "A diagram.png",
+    };
+    client.history.messages = [
+      { role: "assistant", content: [image], phase: "commentary", __openclaw: { id: "progress" } },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tool", name: "draw", arguments: {} }, image],
+        __openclaw: { id: "activity" },
+      },
+      { role: "assistant", content: [image], stopReason: "error", __openclaw: { id: "failed" } },
+      {
+        role: "assistant",
+        content: [image],
+        phase: "final_answer",
+        stopReason: "stop",
+        __openclaw: { id: "answer" },
+      },
+    ];
+    await owner.connect(hello);
+    expect(owner.state.messages).toEqual([
+      {
+        id: "answer",
+        role: "assistant",
+        text: "",
+        media: [
+          { id: "image-0", kind: "image", label: "A diagram.png", artifactId: image.artifactId },
+        ],
+      },
+    ]);
+  });
+
   it("shows each send once through accepted custody, durable input, and final reply", async () => {
     const { owner, client } = fixture();
     const transcript: unknown[] = [];
@@ -555,7 +509,14 @@ describe("kids conversation", () => {
     ).toMatchObject({ key: sessionKey, agentId: "student" });
     const readCount = client.calls.filter((call) => call.method === "chat.history").length;
     const refreshed = Promise.withResolvers<unknown>();
-    client.override = (method) => (method === "chat.history" ? refreshed.promise : undefined);
+    const refreshStarted = Promise.withResolvers<void>();
+    client.override = (method) => {
+      if (method === "chat.history") {
+        refreshStarted.resolve();
+        return refreshed.promise;
+      }
+      return undefined;
+    };
     const envelope = {
       key: sessionKey,
       agentId: "student",
@@ -568,26 +529,30 @@ describe("kids conversation", () => {
     client.emit("session.message", envelope);
     client.emit("session.message", envelope);
 
-    // The subscription itself must present the completed challenge; the held
-    // read proves this does not depend on a chat.final or history polling.
-    expect(owner.state).toMatchObject({ status: "ready", busy: false, error: null });
-    expect(owner.state.messages.filter((message) => message.id === "challenge-message")).toEqual([
-      {
-        id: "challenge-message",
-        role: "assistant",
-        text: scheduledChallenge.content[0]!.text,
-        media: [],
-      },
-    ]);
-    expect(client.calls.filter((call) => call.method === "chat.history")).toHaveLength(
-      readCount + 1,
-    );
-    client.history.messages = [...(client.history.messages as unknown[]), savedChallenge];
-    client.history.sessionInfo = {
-      sessionId: "session-one",
-      activeLeafEntryId: "challenge-message",
-    };
-    refreshed.resolve(client.history);
+    try {
+      // Subscription delivery presents the challenge synchronously. The read
+      // then waits for paging admission and stays held until these checks pass.
+      expect(owner.state).toMatchObject({ status: "ready", busy: false, error: null });
+      expect(owner.state.messages.filter((message) => message.id === "challenge-message")).toEqual([
+        {
+          id: "challenge-message",
+          role: "assistant",
+          text: scheduledChallenge.content[0]!.text,
+          media: [],
+        },
+      ]);
+      await refreshStarted.promise;
+      expect(client.calls.filter((call) => call.method === "chat.history")).toHaveLength(
+        readCount + 1,
+      );
+      client.history.messages = [...(client.history.messages as unknown[]), savedChallenge];
+      client.history.sessionInfo = {
+        sessionId: "session-one",
+        activeLeafEntryId: "challenge-message",
+      };
+    } finally {
+      refreshed.resolve(client.history);
+    }
     await owner.refresh();
 
     expect(owner.state.busy).toBe(false);

@@ -31,17 +31,35 @@ function imageReference(message: Record<string, unknown>, contentIndex: number) 
   return { source: position.source, rawSeq: position.rawSeq, messageId, messageSeq, contentIndex };
 }
 
-function encodeReference(reference: TranscriptImageReference): string {
-  return PREFIX + Buffer.from(JSON.stringify(reference)).toString("base64url");
+function encodeReference(reference: TranscriptImageReference, prefix = PREFIX): string {
+  return prefix + Buffer.from(JSON.stringify(reference)).toString("base64url");
+}
+
+/** Positional references identify content; the download owner still authorizes its session. */
+export function createTranscriptArtifactId(
+  message: Record<string, unknown>,
+  index: number,
+  prefix: string,
+): string | undefined {
+  const reference = imageReference(message, index);
+  return reference ? encodeReference(reference, prefix) : undefined;
 }
 
 export function parseTranscriptImageArtifactId(id: string): TranscriptImageReference | undefined {
-  if (!id.startsWith(PREFIX) || id.length > 8192) {
+  return parseTranscriptArtifactId(id, PREFIX);
+}
+
+/** Shared exact-position decoding for bitmap blocks and persisted media facts. */
+export function parseTranscriptArtifactId(
+  id: string,
+  prefix: string,
+): TranscriptImageReference | undefined {
+  if (!id.startsWith(prefix) || id.length > 8192) {
     return undefined;
   }
   try {
     const value = asOptionalRecord(
-      JSON.parse(Buffer.from(id.slice(PREFIX.length), "base64url").toString("utf8")),
+      JSON.parse(Buffer.from(id.slice(prefix.length), "base64url").toString("utf8")),
     );
     if (
       !value ||
@@ -71,7 +89,7 @@ export function parseTranscriptImageArtifactId(id: string): TranscriptImageRefer
       messageSeq: value.messageSeq,
       contentIndex: value.contentIndex,
     };
-    return encodeReference(reference) === id ? reference : undefined;
+    return encodeReference(reference, prefix) === id ? reference : undefined;
   } catch {
     return undefined;
   }

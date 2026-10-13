@@ -64,6 +64,9 @@ describe("session-scoped method admission", () => {
     ["artifacts.list", undefined, false],
     ["artifacts.get", undefined, false],
     ["artifacts.download", undefined, false],
+    ["artifacts.download", { sessionKey: "agent:main:own", artifactId: "image" }, true],
+    ["artifacts.download", { sessionKey: "", artifactId: "image" }, false],
+    ["artifacts.download", { runId: "private-run", artifactId: "image" }, false],
   ] as const)(
     "restricts the narrow read alternative to session and bootstrap methods: %s",
     (method, params, narrow) => {

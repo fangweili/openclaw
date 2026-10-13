@@ -626,7 +626,22 @@ export function projectMessageMedia(
     width,
     height,
     factIndex,
+    artifactId,
   } of readTranscriptMediaEntries(message)) {
+    // A persisted fact may already have an inline presentation. Keep its
+    // authorized download identity when deduplication retains that presentation.
+    if (artifactId) {
+      for (const image of images) {
+        if (validLayout ? image.factIndex === factIndex : image.url === mediaPath) {
+          image.artifactId = artifactId;
+        }
+      }
+      for (const item of attachments) {
+        if (item.type === "attachment" && item.attachment.url === mediaPath) {
+          item.attachment.artifactId = artifactId;
+        }
+      }
+    }
     // Without slot identity, a persisted fact mirrors the already-positioned media.
     // Valid layouts still distinguish separate uploads of the same source.
     if (!validLayout && positionedSources.has(mediaPath)) {
@@ -643,6 +658,7 @@ export function projectMessageMedia(
         url: mediaPath,
         fileName,
         sizeBytes,
+        ...(artifactId ? { artifactId } : {}),
         ...(validLayout && factIndexes.has(factIndex) ? { factIndex } : {}),
       };
       if (appendImageBlock(images, projected) && !positionedSources.has(mediaPath)) {
@@ -662,6 +678,7 @@ export function projectMessageMedia(
                   ? "video"
                   : "document",
           label: fileName?.trim() || labelForMediaPath(mediaPath),
+          ...(artifactId ? { artifactId } : {}),
           ...(origin ? { origin } : {}),
           ...(typeof mediaType === "string" ? { mimeType: mediaType } : {}),
           ...(sizeBytes !== undefined ? { sizeBytes } : {}),

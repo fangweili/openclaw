@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { projectKidsMedia } from "./media.ts";
 
 describe("kids transcript media", () => {
-  it("shows uploaded photo and video labels from canonical persisted facts without exposing references", () => {
+  it("retains authorized upload identities without exposing their persisted paths", () => {
     const media = projectKidsMedia({
       role: "user",
       content: "Help with this experiment",
@@ -13,6 +13,7 @@ describe("kids transcript media", () => {
             contentType: "image/png",
             kind: "image",
             fileName: "worksheet.png",
+            artifactId: "artifact_transcript_media_photo",
           },
           {
             url: "media://inbound/private-video",
@@ -20,13 +21,24 @@ describe("kids transcript media", () => {
             kind: "video",
             fileName: "experiment.mp4",
             hydrationSuppressed: true,
+            artifactId: "artifact_transcript_media_video",
           },
         ],
       },
     });
     expect(media).toEqual([
-      { id: "image-0", kind: "image", label: "worksheet.png" },
-      { id: "video-0", kind: "video", label: "experiment.mp4" },
+      {
+        id: "image-0",
+        kind: "image",
+        label: "worksheet.png",
+        artifactId: "artifact_transcript_media_photo",
+      },
+      {
+        id: "video-0",
+        kind: "video",
+        label: "experiment.mp4",
+        artifactId: "artifact_transcript_media_video",
+      },
     ]);
   });
 
@@ -52,7 +64,7 @@ describe("kids transcript media", () => {
     ]);
   });
 
-  it("does not turn inline bytes, remote images, artifacts, or unrelated attachments into read capabilities", () => {
+  it("retains opaque generated artifact IDs but never inline bytes, remote URLs, or unrelated attachments", () => {
     expect(
       projectKidsMedia({
         role: "assistant",
@@ -72,8 +84,33 @@ describe("kids transcript media", () => {
         ],
       }),
     ).toEqual([
-      { id: "image-0", kind: "image", label: "answer.png" },
+      { id: "image-0", kind: "image", label: "answer.png", artifactId: "private-artifact" },
       { id: "image-1", kind: "image", label: "A diagram" },
+    ]);
+  });
+
+  it("preserves the canonical fact artifact when a hydrated inline image occupies its position", () => {
+    const media = projectKidsMedia({
+      role: "user",
+      content: [{ type: "image", url: "media://inbound/photo", fileName: "page.png" }],
+      __openclaw: {
+        media: [
+          {
+            url: "media://inbound/photo",
+            kind: "image",
+            contentType: "image/png",
+            artifactId: "artifact_transcript_media_page",
+          },
+        ],
+      },
+    });
+    expect(media).toEqual([
+      {
+        id: "image-0",
+        kind: "image",
+        label: "page.png",
+        artifactId: "artifact_transcript_media_page",
+      },
     ]);
   });
 });

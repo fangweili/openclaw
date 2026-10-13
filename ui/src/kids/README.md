@@ -5,14 +5,18 @@ text, photos, short videos, voice dictation, live voice, and private notificatio
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
+Bubble alignment identifies the speaker without repeated visible names. Photo and
+video previews omit filenames; accessible speaker and media labels remain available
+to screen readers.
 
 ## Ownership and trust
 
-- `app.ts` owns the document, same-origin Gateway client, in-memory draft, and the
-  lifetime of its conversation, voice, and notification owners. Reconnect fences
+- `app.ts` owns the document, same-origin Gateway client, and the
+  lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
+  It starts and disposes the document's touch-gesture owner with the app.
   A retained draft stays hidden until that conversation is ready again; binding a
-  different verified profile or backing session clears it.
+  different verified profile or backing session binds a separate draft.
   It identifies as the canonical WebChat UI, requiring an approved signed browser
   device even when Tailscale authenticates the person. The Control UI's Tailscale
   pairing bypass cannot establish the durable device authority used by Web Push.
@@ -20,6 +24,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   verified non-shared profile with exactly one accessible agent is admitted. It
   derives one stable key from those server facts and asks the Gateway to create or
   reopen it. Neither URLs nor browser storage choose a tutor or session.
+- `messages.ts` selects child-visible messages and projects text/media in the
+  supplied order. It is pure presentation; the conversation retains transcript,
+  custody, identity and send-admission authority.
 - The Gateway owns authentication, agent permissions, session ownership, transcript
   persistence, branch validation, and idempotent send admission. The conversation
   keeps a bounded memory-only projection, retains draft text on failed sends, and
@@ -38,6 +45,40 @@ the child's messages and finished assistant replies; voice shows spoken captions
   once to the app, whether proved by a response or a receipt; the app clears only
   an unchanged original text and the exact submitted attachment IDs. Files added while
   a send waits remain in the draft. Reloading discards memory-only recovery.
+- `draft.ts` persists unsent text through the existing browser composer store,
+  scoped to the verified profile-qualified session key, physical session ID, and
+  Gateway origin. Restoration finishes before editing is enabled and never sends
+  a message. One serialized worker coalesces edits; acknowledgments clear only
+  unchanged text, including receipts recovered after reconnect. Disconnect hides
+  text; disposal joins admitted saves. Storage failure or a conflicting tab keeps
+  local text editable with a save warning, without overwriting the other tab.
+  The shared store owns its seven-day expiry. Files and uncertain-send replay
+  credentials remain memory-only; draft recovery does not promise offline sends.
+- `history-window.ts` owns older/newer browsing through the existing `chat.history`
+  offset API. It retains at most four pages, 320 projected rows and 1 MiB; moving
+  through history evicts the opposite edge, which can be fetched again. The live
+  conversation keeps its separate 80-message tail and remains the authority for
+  sending. Tail refreshes and page reads serialize; historical pages never replace
+  live branch or pending-input state. Latest discards browsing immediately. A failed
+  page keeps the current view and offers retry; disconnect retires all page results.
+  Edge buttons keep pages traversable when filtered rows leave too little visible
+  content to scroll.
+- `transcript-scroll.ts` owns viewport position and one resize observer. It follows
+  the latest messages until the child scrolls away, then preserves a visible
+  message across page changes and media resizing. Paging requires reader scroll
+  intent at an edge. A floating Latest button returns to the live tail without
+  altering the draft. Disposal removes listeners and the observer.
+- `touch-gestures.ts` owns Safari pinch cancellation and the narrow double-tap
+  fallback, with listeners installed on start and removed on disposal. CSS keeps
+  native panning at each scrolling boundary. Safari releases before
+  [WebKit's manipulation fix](https://github.com/WebKit/WebKit/commit/504edb5c563f9ad8d0436f60b5a608f0ec384f42)
+  can still zoom on a double tap. On noninteractive app surfaces, the fallback
+  cancels only the second nearby stationary tap; it has no timers or synthetic
+  clicks. Scrolling, long presses, existing selections, editable fields, buttons,
+  links, and native media controls stay native. Double-tap word selection in plain
+  transcript text may also be suppressed; composer word selection is untouched.
+  Native iPad gesture recognition needs physical-device verification; synthetic
+  touch tests verify cancellation and lifecycle, not Safari's zoom recognizer.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
   Shared chat admission, read/resize, payload, and encoding owners enforce the
   Gateway's advertised per-file and WebSocket batch limits. The app cancels reads
@@ -51,6 +92,14 @@ the child's messages and finished assistant replies; voice shows spoken captions
   uncertain outcome retains one exact replay without rereading or re-encoding.
   Picker/read errors remain visible, and removing a file cancels only that read.
   There is no durable upload cache or separate upload service.
+- `history-media.ts` owns mounted image/video reads for the verified conversation.
+  The shared projector supplies opaque artifact IDs; the existing artifact API
+  checks session access and serves its referenced media. No raw path or remote
+  URL becomes a browser source. Viewport leases admit at most two reads, release
+  offscreen image URLs, and cancel on disconnect or rebinding. Videos use native
+  controls, no autoplay, and short-lived HTTP grants with range playback. Expired
+  grants or unreadable media show an explicit retry; unsupported references show
+  their media type. Disposal joins reads before the Gateway client stops.
 - `voice.ts` adapts the existing Talk owner. It owns a single call and bounded
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
@@ -84,6 +133,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   clears the claim, and disconnect or lease expiry restores delivery if browser
   shutdown prevents cleanup. The worker still displays every received push, as
   required by Safari's Web Push contract.
+  Once enabled, the header shows a noninteractive status. The kids app only
+  offers notification setup; turning notifications off remains in device/browser
+  settings, so tapping the status cannot unsubscribe accidentally.
 - `extensions/kids-ui` serves public build assets and owns bounded, authenticated
   dictation requests. Its service joins provider work and deletes private temporary
   recordings; provider selection and credentials stay with the existing runtime.
@@ -161,11 +213,21 @@ inbox, groups, offline sends, or browsing old sessions is part of v1.
 
 Photo/video understanding uses the existing Gateway media pipeline and configured
 providers. File size limits apply to short videos; this app does not transcode
-or claim that every video format can play in every browser. Shared transcript
-projection supplies noninteractive photo/video labels for sent media. Draft files
-are previewable while composing; reopening or playing historical media is outside
-this input scope. Raw paths and remote media URLs never become fetch or navigation
-targets in this frontend. No broader file-reading permission is requested.
+or claim that every video format can play in every browser. Canonical history
+references reopen uploaded photos/videos and generated images through the existing
+artifact route. Session access is the authority; there is no separate file
+permission system or broader file-reading permission. Unsupported media shows its type.
+Uploaded media requires reachable Gateway HTTP artifact routes; unlike inline
+transcript images, it has no WebSocket byte-transfer fallback. The bundled app
+uses the same origin that serves those routes.
+
+Browser diagnostics retain only the latest `rocky.send.accepted` and
+`rocky.send.finished` Performance measures: socket submission to acknowledgment
+and to the matching final event. They contain no text or identities, do not leave
+the device, and reset with the document. Failed/interrupted runs are not successful
+completion samples; reconnect starts a new measurement. These timings include
+Gateway/model work but exclude file preparation and the final history read/render.
+They add no controls or status counters to the kids app.
 
 Deployment must keep frontend and Gateway changes together because restricted
 push subscriptions require the accompanying Gateway scope fix. Review and test

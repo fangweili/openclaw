@@ -5,8 +5,9 @@
  * local session selection, or model preference can redirect this surface.
  *
  * Start once; dispose fences callbacks, stops the microphone immediately, joins
- * voice/subscription cleanup, then stops the connection. Drafts stay in memory
- * only and are cleared when the verified profile changes. Completed calls keep
+ * voice/subscription/media cleanup and draft saves, then stops the connection.
+ * Text drafts restore only for a verified profile and physical session; upload
+ * previews remain memory-only. Completed calls keep
  * text and new calls blocked until saved history supplies the current branch.
  */
 import { GATEWAY_CLIENT_NAMES } from "@openclaw/gateway-client/browser";
@@ -21,7 +22,11 @@ import { insertComposerDictation } from "../pages/chat/composer-dictation.ts";
 import { KidsAttachments } from "./attachments.ts";
 import { KidsConversation, type KidsConversationState } from "./conversation.ts";
 import { KidsDictation } from "./dictation.ts";
+import { KidsDraft } from "./draft.ts";
+import { KidsHistoryMedia } from "./history-media.ts";
 import { KidsNotifications } from "./notifications.ts";
+import { KidsTouchGestures } from "./touch-gestures.ts";
+import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
 
@@ -41,6 +46,11 @@ export class KidsApp {
   private readonly conversation: KidsConversation;
   private readonly uploads = createApplicationConfigCapability({ resourceBasePath: "" });
   private readonly attachments: KidsAttachments;
+  private readonly draft: KidsDraft;
+  private readonly media: KidsHistoryMedia;
+  private readonly transcript: KidsTranscriptScroll;
+  private readonly touchGestures: KidsTouchGestures;
+  private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
   private notifications: KidsNotifications | null = null;
@@ -55,6 +65,7 @@ export class KidsApp {
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
+    this.touchGestures = new KidsTouchGestures(root);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -63,6 +74,13 @@ export class KidsApp {
     });
     const url = new URL("/", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    this.gatewayUrl = url.href;
+    this.draft = new KidsDraft((draft) => {
+      this.snapshot.draft = draft.text;
+      this.snapshot.draftReady = draft.ready;
+      this.snapshot.draftError = draft.saveError ? t("kids.draftNotSaved") : null;
+      this.paint();
+    });
     this.client = new GatewayBrowserClient({
       url: url.href,
       // A private chat client needs canonical device pairing for offline push authority.
@@ -77,25 +95,42 @@ export class KidsApp {
         this.snapshot.voice = idleVoice();
         this.conversation.disconnect();
         this.attachments.disconnect();
+        this.draft.disconnect();
+        this.media.disconnect();
         this.snapshot.connectionError = t(error ? "kids.pairingDetail" : "kids.reconnectDetail");
         this.paint();
       },
       onGap: () => void this.conversation.refresh(),
     });
+    this.media = new KidsHistoryMedia(this.client);
     this.conversation = new KidsConversation(
       this.client,
       (conversation) => this.onConversation(conversation),
       (text, ids) => this.acknowledgedSend(text, ids),
+    );
+    this.transcript = new KidsTranscriptScroll(
+      (away) => {
+        if (!this.disposed && this.snapshot.awayFromLatest !== away) {
+          this.snapshot.awayFromLatest = away;
+          this.paint();
+        }
+      },
+      () => void this.conversation.loadOlder(),
+      () => void this.conversation.loadNewer(),
     );
     this.snapshot = {
       conversation: this.conversation.state,
       voice: idleVoice(),
       dictation: idleDictation(),
       draft: "",
+      draftReady: false,
+      draftError: null,
+      media: this.media,
       connectionError: null,
       voiceAllowed: false,
       notifications: null,
       attachments: this.attachments.state,
+      awayFromLatest: false,
     };
   }
 
@@ -105,6 +140,7 @@ export class KidsApp {
       return;
     }
     this.started = true;
+    this.touchGestures.start();
     this.paint();
     this.client.start();
   }
@@ -115,12 +151,16 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
+    this.touchGestures.dispose();
+    this.transcript.dispose();
     this.generation += 1;
     this.retireCapabilities();
     this.attachments.dispose();
     this.closing = Promise.allSettled([
       this.capabilityRetirement,
       this.conversation.dispose(),
+      this.draft.dispose(),
+      this.media.dispose(),
     ]).then(() => {
       this.client.stop();
     });
@@ -181,6 +221,7 @@ export class KidsApp {
       if (this.disposed || generation !== this.generation || !sent) {
         return;
       }
+      this.conversation.returnToLatest();
       this.paint(true);
       return;
     }
@@ -193,6 +234,8 @@ export class KidsApp {
     this.snapshot.voice = idleVoice();
     this.conversation.disconnect();
     this.attachments.disconnect();
+    this.draft.disconnect();
+    this.media.disconnect();
     await this.capabilityRetirement;
     if (this.disposed || generation !== this.generation) {
       return;
@@ -213,9 +256,24 @@ export class KidsApp {
       if (binding !== this.boundSession) {
         this.retireDictation();
         this.boundSession = binding;
-        this.snapshot.draft = "";
+      }
+      if (conversation.status === "ready") {
+        this.media.bind({
+          agentId: conversation.agentId,
+          sessionKey: conversation.sessionKey,
+          sessionId: conversation.sessionId,
+        });
       }
       this.attachments.bind(conversation.sessionKey, conversation.sessionId);
+      if (conversation.status === "ready") {
+        // Binding the draft may publish synchronously; media must already belong
+        // to this same verified conversation before that render starts reads.
+        void this.draft.bind({
+          gatewayUrl: this.gatewayUrl,
+          sessionKey: conversation.sessionKey,
+          sessionId: conversation.sessionId,
+        });
+      }
     }
     if (conversation.status === "ready" && !this.notifications) {
       const generation = this.generation;
@@ -257,6 +315,7 @@ export class KidsApp {
     const draft = this.snapshot.draft.trim();
     if (
       this.snapshot.conversation.status !== "ready" ||
+      !this.draft.state.ready ||
       this.snapshot.conversation.busy ||
       this.snapshot.attachments.reading ||
       this.snapshot.dictation.active ||
@@ -267,6 +326,7 @@ export class KidsApp {
       return;
     }
     const attachments = this.attachments.prepare();
+    this.conversation.returnToLatest();
     if (attachments && (await this.conversation.send(draft, attachments))) {
       this.paint(true);
     }
@@ -274,13 +334,13 @@ export class KidsApp {
 
   /** A current conversation's acknowledgment consumes only its unchanged original draft. */
   private acknowledgedSend(text: string, ids: readonly string[]): void {
-    if (!this.disposed) {
-      this.attachments.accepted(ids);
+    if (this.disposed) {
+      return;
     }
-    if (!this.disposed && this.snapshot.draft.trim() === text) {
-      this.snapshot.draft = "";
-      this.paint();
-    }
+    this.attachments.accepted(ids);
+    // Conversation publishes its verified binding before acknowledging. The
+    // draft owner retains this clear even if storage finishes after disconnect.
+    this.draft.accepted(text);
   }
 
   private async talk(): Promise<void> {
@@ -316,6 +376,7 @@ export class KidsApp {
     }
     if (
       this.snapshot.conversation.status !== "ready" ||
+      !this.draft.state.ready ||
       !this.snapshot.voiceAllowed ||
       this.voice?.state.active ||
       this.snapshot.voice.status === "stopping"
@@ -348,13 +409,14 @@ export class KidsApp {
         // Preserve an edit made while transcription was pending; never replay
         // the captured draft over newer text.
         const unchanged = this.snapshot.draft === target.value;
-        this.snapshot.draft = insertComposerDictation(
-          this.snapshot.draft,
-          transcript,
-          unchanged ? target.start : this.snapshot.draft.length,
-          unchanged ? target.end : this.snapshot.draft.length,
-        ).value;
-        this.paint();
+        this.draft.update(
+          insertComposerDictation(
+            this.snapshot.draft,
+            transcript,
+            unchanged ? target.start : this.snapshot.draft.length,
+            unchanged ? target.end : this.snapshot.draft.length,
+          ).value,
+        );
       },
     );
     this.dictation = owner;
@@ -375,14 +437,13 @@ export class KidsApp {
     if (this.disposed) {
       return;
     }
-    const thread = this.root.querySelector<HTMLElement>(".kids-thread");
-    const nearBottom =
-      !thread || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 100;
+    const chat = this.snapshot.conversation;
+    this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+    this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
       renderKidsView(this.snapshot, {
         draft: (value) => {
-          this.snapshot.draft = value;
-          this.paint();
+          this.draft.update(value);
         },
         send: () => void this.send(),
         attach: (files) => {
@@ -394,18 +455,28 @@ export class KidsApp {
         talk: () => void this.talk(),
         dictate: () => void this.dictate(),
         retry: () => void this.retry(),
+        older: () => void this.conversation.loadOlder(),
+        newer: () => void this.conversation.loadNewer(),
+        latest: () => {
+          this.conversation.returnToLatest();
+          this.paint(true);
+        },
         notifications: () => {
           const owner = this.notifications;
           if (owner) {
-            void (owner.state.status === "enabled" ? owner.disable() : owner.enable());
+            void owner.enable();
           }
         },
       }),
       this.root,
     );
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
-    if (current && (forceScroll || nearBottom)) {
-      current.scrollTop = current.scrollHeight;
+    const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
+    if (current && content) {
+      this.transcript.afterRender(current, content);
+      if (forceScroll) {
+        this.transcript.jumpToLatest();
+      }
     }
   }
 }

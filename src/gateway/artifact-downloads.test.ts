@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { ServerResponse } from "node:http";
 import { crc32 } from "node:zlib";
 import { expect, it, vi } from "vitest";
@@ -269,4 +270,49 @@ it("releases retained sharing facts on unused expiry, eviction, and disconnect",
       }
     }
   });
+});
+
+it("closes a late file result when the owning connection has ended", async () => {
+  const controller = new AbortController();
+  const client = createClient(controller.signal);
+  const entered = createDeferredCore();
+  const settled = createDeferredCore();
+  const file = await fs.open(new URL(import.meta.url), "r");
+  const artifact: ArtifactRecord = {
+    id: "artifact_video_fixture",
+    type: "video",
+    title: "clip.mp4",
+    mimeType: "video/mp4",
+    download: { mode: "url" },
+  };
+  const grant = createArtifactDownload({
+    client,
+    prepared: { artifact, digest: "fixture" },
+    release() {},
+    assertCurrent() {},
+    async read() {
+      entered.resolve();
+      await settled.promise;
+      return { artifact, response: { kind: "full", statusCode: 200, contentLength: 1 }, file };
+    },
+  });
+  const response = createResponse();
+  const pending = handleArtifactDownloadHttpRequest(
+    createRequest({ path: grant.url }),
+    response.res,
+    { clients: new Set([client]), basePath: "" },
+  );
+  try {
+    await entered.promise;
+    controller.abort();
+    settled.resolve();
+    await pending;
+    expect(file.fd).toBe(-1);
+    expect(response.res.statusCode).toBe(404);
+    expect(response.end).toHaveBeenCalledExactlyOnceWith("Not Found");
+  } finally {
+    settled.resolve();
+    await pending;
+    await file.close();
+  }
 });

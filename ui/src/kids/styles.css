@@ -16,6 +16,29 @@ html[data-kids] body {
   -webkit-text-size-adjust: 100%;
 }
 
+html[data-kids],
+html[data-kids] body,
+.kids-thread,
+.kids-composer textarea,
+.kids-message-content pre,
+.kids-message-content table {
+  /* Repeat at native scroll boundaries, where inherited touch actions reset. */
+  touch-action: pan-x pan-y;
+}
+
+/* Safari resets touch action at scroll boundaries. Older releases also ignore
+   manipulation for double-tap; touch-gestures.ts owns that fallback and pinch. */
+@supports (-webkit-touch-callout: none) {
+  html[data-kids],
+  html[data-kids] body,
+  .kids-thread,
+  .kids-composer textarea,
+  .kids-message-content pre,
+  .kids-message-content table {
+    touch-action: manipulation;
+  }
+}
+
 .kids-shell {
   display: flex;
   flex-direction: column;
@@ -100,18 +123,72 @@ html[data-kids] body {
   color: var(--kids-muted) !important;
 }
 
-.kids-notifications[aria-pressed="true"] {
+.kids-notifications-on {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   background: var(--kids-tint);
-  color: var(--kids-accent) !important;
+  color: var(--kids-accent);
+}
+
+.kids-notifications-on svg {
+  width: 18px;
+  height: 18px;
+}
+
+.kids-thread-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .kids-thread {
   flex: 1;
-  min-height: 0;
+  min-width: 0;
   overflow: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   padding: 32px;
   scrollbar-width: thin;
+}
+
+.kids-latest {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border: 1px solid var(--kids-border) !important;
+  border-radius: 24px;
+  background: var(--kids-paper);
+  color: var(--kids-accent) !important;
+  box-shadow: 0 4px 16px var(--kids-border);
+}
+
+.kids-history-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--kids-muted);
+  font-size: 14px;
+}
+
+.kids-history-status button {
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: var(--kids-tint);
+}
+
+/* Keep forward paging and retry controls above the floating Latest button. */
+.kids-history-status--newer {
+  margin-bottom: 48px;
 }
 
 .kids-welcome {
@@ -150,17 +227,6 @@ html[data-kids] body {
 
 .kids-message--user {
   margin-left: auto;
-}
-
-.kids-message-label {
-  display: block;
-  margin: 0 0 7px 1px;
-  color: var(--kids-muted);
-  font-size: 12px;
-}
-
-.kids-message--user .kids-message-label {
-  text-align: right;
 }
 
 .kids-message-content {
@@ -330,11 +396,6 @@ html[data-kids] body {
   line-height: 1.65;
 }
 
-.kids-captions strong {
-  font-size: 13px;
-  color: var(--kids-muted);
-}
-
 .kids-voice-notice {
   color: var(--kids-muted);
   font-size: 14px;
@@ -379,7 +440,7 @@ html[data-kids] body {
   }
 }
 
-/* Draft previews belong to the verified composer; history tiles contain only safe labels. */
+/* Draft previews and authorized history sources have separate lifecycle owners. */
 .kids-attachments,
 .kids-message-media {
   display: flex;
@@ -403,16 +464,6 @@ html[data-kids] body {
   height: 94px;
   object-fit: contain;
   border-radius: 10px;
-}
-
-.kids-attachment-name {
-  display: block;
-  padding: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--kids-muted);
 }
 
 .kids-attachment-status {
@@ -445,10 +496,7 @@ html[data-kids] body {
 }
 
 .kids-media-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  display: block;
   max-width: 220px;
   padding: 12px 16px;
   border-radius: 16px;
@@ -458,9 +506,44 @@ html[data-kids] body {
   text-align: left;
 }
 
-.kids-media-tile > span {
+.kids-media-preview {
+  width: 360px;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--kids-tint);
+}
+
+.kids-media-preview img,
+.kids-media-preview video,
+.kids-media-placeholder {
+  /* Reserve the same frame before and after decoding so replies stay in view. */
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  box-sizing: border-box;
+}
+
+.kids-media-preview img,
+.kids-media-preview video {
+  display: block;
+  object-fit: contain;
+}
+
+.kids-media-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 16px;
   color: var(--kids-muted);
-  font-size: 11px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.kids-media-placeholder button {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--kids-paper);
 }
 
 /* The shared admission owner reports rejected files through its existing toast. */

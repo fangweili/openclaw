@@ -16,11 +16,15 @@ function readyState(): KidsViewState {
       messages: [],
       busy: false,
       canRetrySend: false,
+      history: { hasOlder: false, hasNewer: false, loading: null, error: null },
       error: null,
     },
     voice: { status: "idle", active: false, detail: null, entries: [] },
     dictation: { active: false, finishing: false, detail: null },
+    awayFromLatest: false,
     draft: privateDraft,
+    draftReady: true,
+    draftError: null,
     connectionError: null,
     voiceAllowed: true,
     notifications: null,
@@ -56,6 +60,9 @@ describe("kids draft privacy", () => {
         dictate: vi.fn(),
         retry: vi.fn(),
         notifications: vi.fn(),
+        older: vi.fn(),
+        newer: vi.fn(),
+        latest: vi.fn(),
       };
       try {
         render(renderKidsView(state, actions), root);
@@ -116,6 +123,9 @@ describe("kids media composer", () => {
       dictate: vi.fn(),
       retry: vi.fn(),
       notifications: vi.fn(),
+      older: vi.fn(),
+      newer: vi.fn(),
+      latest: vi.fn(),
     };
     try {
       render(renderKidsView(state, actions), root);
@@ -141,4 +151,82 @@ describe("kids media composer", () => {
       render(null, root);
     }
   });
+});
+
+describe("kids notification control", () => {
+  it("offers setup when off and shows a noninteractive status once enabled", () => {
+    const root = document.createElement("div");
+    const state = readyState();
+    const actions: KidsViewActions = {
+      draft: vi.fn(),
+      send: vi.fn(),
+      attach: vi.fn(),
+      removeAttachment: vi.fn(),
+      talk: vi.fn(),
+      dictate: vi.fn(),
+      retry: vi.fn(),
+      notifications: vi.fn(),
+      older: vi.fn(),
+      newer: vi.fn(),
+      latest: vi.fn(),
+    };
+    try {
+      state.notifications = { status: "off", detail: null };
+      render(renderKidsView(state, actions), root);
+      root.querySelector<HTMLButtonElement>(".kids-notifications")!.click();
+      expect(actions.notifications).toHaveBeenCalledOnce();
+      state.notifications = { status: "enabled", detail: null };
+      render(renderKidsView(state, actions), root);
+      expect(root.querySelector("button.kids-notifications")).toBeNull();
+      const status = root.querySelector<HTMLElement>(".kids-notifications-on")!;
+      expect(status.textContent).toContain("Notifications on");
+      status.click();
+      expect(actions.notifications).toHaveBeenCalledOnce();
+    } finally {
+      render(null, root);
+    }
+  });
+});
+
+it("keeps filtered empty history traversable and offers Latest without changing the draft", () => {
+  const root = document.createElement("div");
+  const state = readyState();
+  state.conversation.history = { hasOlder: true, hasNewer: true, loading: null, error: null };
+  state.awayFromLatest = true;
+  const actions: KidsViewActions = {
+    draft: vi.fn(),
+    send: vi.fn(),
+    attach: vi.fn(),
+    removeAttachment: vi.fn(),
+    talk: vi.fn(),
+    dictate: vi.fn(),
+    retry: vi.fn(),
+    notifications: vi.fn(),
+    older: vi.fn(),
+    newer: vi.fn(),
+    latest: vi.fn(),
+  };
+  try {
+    render(renderKidsView(state, actions), root);
+    const edges = root.querySelectorAll<HTMLButtonElement>(".kids-history-status button");
+    expect([...edges].map((button) => button.textContent?.trim())).toEqual([
+      "Earlier messages",
+      "Newer messages",
+    ]);
+    edges[0].click();
+    edges[1].click();
+    root.querySelector<HTMLButtonElement>(".kids-latest")!.click();
+    expect(actions.older).toHaveBeenCalledOnce();
+    expect(actions.newer).toHaveBeenCalledOnce();
+    expect(actions.latest).toHaveBeenCalledOnce();
+    expect(actions.draft).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(privateDraft);
+    state.conversation.history.loading = "older";
+    render(renderKidsView(state, actions), root);
+    expect(root.querySelector<HTMLButtonElement>(".kids-history-status button")!.disabled).toBe(
+      true,
+    );
+  } finally {
+    render(null, root);
+  }
 });

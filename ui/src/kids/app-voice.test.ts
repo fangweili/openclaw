@@ -7,6 +7,7 @@ import {
   createRealtimeTalkEventEmitter,
   type RealtimeTalkTransportContext,
 } from "../pages/chat/talk/shared.ts";
+import { useKidsDraftStoreFixture } from "./app-draft.test-support.ts";
 import type { KidsViewActions, KidsViewState } from "./view.ts";
 
 const fixture = vi.hoisted(() => ({
@@ -83,8 +84,11 @@ const history = (leaf: string) => ({
 });
 
 useRealtimeTalkMicrophoneFixture();
+const drafts = useKidsDraftStoreFixture();
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
   fixture.options = null;
   fixture.state = null;
   fixture.actions = null;
@@ -144,6 +148,7 @@ describe("kids app voice completion", () => {
         app.start();
         await vi.advanceTimersByTimeAsync(0);
         expect(fixture.state?.conversation.status).toBe("ready");
+        await drafts.settle();
         fixture.actions!.draft("What should we practice next?");
         fixture.actions!.talk();
         await vi.advanceTimersByTimeAsync(0);
@@ -260,6 +265,7 @@ describe("kids app attachment ownership", () => {
     try {
       app.start();
       await vi.advanceTimersByTimeAsync(0);
+      await drafts.settle();
       fixture.actions!.attach([new File(["synthetic"], "first.png", { type: "image/png" })]);
       fixture.actions!.send();
       expect(fixture.request).toHaveBeenCalledWith(
@@ -281,12 +287,14 @@ describe("kids app attachment ownership", () => {
       expect(fixture.state!.attachments.items).toHaveLength(1);
       fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
       await vi.advanceTimersByTimeAsync(0);
+      await drafts.settle();
       expect(fixture.state!.draft).toBe("A new caption");
       expect(fixture.state!.attachments.items).toHaveLength(1);
       fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
       backing = "session-reset";
       fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
       await vi.advanceTimersByTimeAsync(0);
+      await drafts.settle();
       expect(fixture.state!.draft).toBe("");
       expect(fixture.state!.attachments.items).toHaveLength(0);
       expect(revoke).toHaveBeenCalledWith("blob:app-2");

@@ -61,7 +61,7 @@ export async function downloadArtifact(
     const result = await client.request<ArtifactDownloadResult | null>(
       "artifacts.download",
       { ...params, ...(http ? { transport: "http" } : {}) },
-      { timeoutMs: 30_000 },
+      { timeoutMs: 30_000, ...(signal ? { signal } : {}) },
     );
     return isCurrent() ? result : null;
   };

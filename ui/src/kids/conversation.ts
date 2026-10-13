@@ -15,6 +15,8 @@
  * Accepted custody stays outside the transcript projection: row run IDs retire
  * optimistic inputs, and canonical user IDs replace custody. The rendered tail
  * includes pending and queued inputs in Gateway order, bounded to 80 messages.
+ * A separate bounded history window serves older/newer browsing. Tail and page
+ * reads serialize; browsing never changes live branch or send-admission state.
  */
 import {
   createSessionProjection,
@@ -34,26 +36,17 @@ import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Static } from "typebox";
 import type { ChatPendingInputsPage } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { GATEWAY_OWNER_PROFILE_ID } from "../../../packages/gateway-protocol/src/schema/user-profile-constants.js";
-import { isToolCallContentType } from "../../../src/chat/tool-content.js";
 import type { GatewayBrowserClient, GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
 import { retirePendingUserEntries, selectChatInputDisplay } from "../lib/chat/input-custody.ts";
-import { extractText } from "../lib/chat/message-extract.ts";
-import { isVisibleChatHistoryMessage } from "../lib/chat/message-visibility.ts";
 import { generateUUID } from "../lib/uuid.ts";
 import type { ChatHistoryResult } from "../pages/chat/chat-history-snapshot.ts";
 import type { KidsAttachmentSubmission } from "./attachments.ts";
-import { projectKidsMedia, type KidsMedia } from "./media.ts";
+import { KidsHistoryWindow } from "./history-window.ts";
+import { projectKidsMessages, visibleMessage, type KidsMessage } from "./messages.ts";
 
 registerKidsEnglish();
-
-export type KidsMessage = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  media: readonly KidsMedia[];
-};
 
 export type KidsConversationState = {
   childName: string;
@@ -65,6 +58,12 @@ export type KidsConversationState = {
   busy: boolean;
   canRetrySend: boolean;
   error: string | null;
+  history: {
+    hasOlder: boolean;
+    hasNewer: boolean;
+    loading: "older" | "newer" | null;
+    error: "older" | "newer" | null;
+  };
 };
 
 type ConversationClient = Pick<
@@ -79,6 +78,7 @@ type Connection = {
   subscriptions: GatewaySessionMessageSubscriptionCoordinator;
   subscription?: GatewaySessionMessageSubscription;
   projection: SessionProjectionState;
+  historyWindow: KidsHistoryWindow;
   pendingInputs: ChatPendingInputsPage["items"];
   sessionKey: string;
   sessionId?: string;
@@ -91,6 +91,8 @@ type Connection = {
   eventRevision: number;
   replying: boolean;
   runError: string | null;
+  /** One in-flight send's browser timing, retired with this connection. No message content. */
+  timing?: { runId: string; startedAt: number };
 };
 
 /** One memory-only retry, retaining the original authority and admission fences. */
@@ -105,6 +107,16 @@ type PendingSend = {
 const HISTORY_LIMIT = 80;
 const HISTORY_MAX_BYTES = 256 * 1024;
 
+/** Keep only the latest timing per phase in this document's browser diagnostics. */
+function measureSend(phase: "accepted" | "finished", startedAt: number): void {
+  if (typeof performance.measure !== "function") {
+    return;
+  }
+  const name = `rocky.send.${phase}`;
+  performance.clearMeasures(name);
+  performance.measure(name, { start: startedAt, end: performance.now() });
+}
+
 function emptyState(): KidsConversationState {
   return {
     childName: "",
@@ -116,31 +128,8 @@ function emptyState(): KidsConversationState {
     busy: false,
     canRetrySend: false,
     error: null,
+    history: { hasOlder: false, hasNewer: false, loading: null, error: null },
   };
-}
-
-function visibleMessage(message: unknown): boolean {
-  const record = asOptionalRecord(message);
-  const role = record?.role;
-  if (
-    (role !== "user" && role !== "assistant") ||
-    record?.display === false ||
-    !isVisibleChatHistoryMessage(message)
-  ) {
-    return false;
-  }
-  // Tool-bearing turns are activity. A pure-text final may legitimately inherit
-  // a toolUse stop reason. The shared extractor owns explicit final/commentary
-  // precedence and removes thinking, envelopes, and internal runtime context.
-  return (
-    (role === "user" ||
-      (record?.stopReason !== "error" &&
-        record?.stopReason !== "aborted" &&
-        (!Array.isArray(record?.content) ||
-          !record.content.some((part) => isToolCallContentType(asOptionalRecord(part)?.type))))) &&
-    (Boolean(extractText(message)?.trim()) ||
-      (role === "user" && projectKidsMedia(message).length > 0))
-  );
 }
 
 /** The app owns the socket; this owner never starts, stops, or upgrades its scopes. */
@@ -192,6 +181,16 @@ export class KidsConversation {
         request: (method, params, options) => this.request(connection, method, params, options),
       }),
       projection: createSessionProjection(),
+      historyWindow: new KidsHistoryWindow(
+        (params) =>
+          this.request<ChatHistoryResult>(connection, "chat.history", {
+            sessionKey: connection.sessionKey,
+            agentId: connection.agentId,
+            ...params,
+          }),
+        () => this.render(connection),
+        () => void this.refresh(),
+      ),
       pendingInputs: [],
       sessionKey: "",
       agentId: "",
@@ -277,6 +276,7 @@ export class KidsConversation {
     this.connection = null;
     if (connection) {
       connection.abort.abort();
+      connection.historyWindow.dispose();
       connection.subscriptions.reset();
     }
     this.snapshot = emptyState();
@@ -384,11 +384,15 @@ export class KidsConversation {
         onSent: () => {
           if (this.current(connection)) {
             this.uncertain = pending;
+            connection.timing = { runId, startedAt: performance.now() };
           }
         },
       });
       if (!this.current(connection)) {
         return false;
+      }
+      if (connection.timing?.runId === runId) {
+        measureSend("accepted", connection.timing.startedAt);
       }
       if (connection.sessionId === pending.params.sessionId) {
         this.acknowledge(pending);
@@ -457,11 +461,45 @@ export class KidsConversation {
       connection.refreshAgain = true;
       return connection.history;
     }
-    const task = this.loadHistory(connection).finally(() => {
-      connection.history = undefined;
-    });
+    const task = this.loadHistory(connection);
     connection.history = task;
     return task;
+  }
+
+  /** Browse one bounded older page; repeated calls share the window owner's read. */
+  loadOlder(): Promise<void> {
+    return this.loadHistoryPage("older");
+  }
+
+  /** Refill newer history near the window's end without changing live send authority. */
+  loadNewer(): Promise<void> {
+    return this.loadHistoryPage("newer");
+  }
+
+  /** Tail reads run first; the window owner decides whether queued reader intent is still current. */
+  private async loadHistoryPage(direction: "older" | "newer"): Promise<void> {
+    const connection = this.connection;
+    if (!connection) {
+      return;
+    }
+    const revision = connection.historyWindow.revision;
+    while (connection.history && this.current(connection)) {
+      await connection.history;
+    }
+    if (
+      this.current(connection) &&
+      this.snapshot.status === "ready" &&
+      connection.historyWindow.revision === revision
+    ) {
+      await (direction === "older"
+        ? connection.historyWindow.loadOlder()
+        : connection.historyWindow.loadNewer());
+    }
+  }
+
+  /** Discard browsing and expose the current live tail; late page reads cannot restore it. */
+  returnToLatest(): void {
+    this.connection?.historyWindow.returnToLatest();
   }
 
   /** Retires callbacks, releases the current wire observer, and joins owned I/O. Idempotent. */
@@ -486,7 +524,11 @@ export class KidsConversation {
       }
     }
     this.disconnect();
-    await Promise.allSettled(this.pending);
+    await Promise.allSettled([
+      ...this.pending,
+      connection?.history,
+      connection?.historyWindow.whenIdle(),
+    ]);
     this.uncertain = null;
   }
 
@@ -518,92 +560,110 @@ export class KidsConversation {
     return request;
   }
 
+  /** Owns admission through slot release; invalidations cannot land in a settled worker's slot. */
   private async loadHistory(connection: Connection): Promise<void> {
-    do {
-      connection.refreshAgain = false;
-      const observedRevision = connection.eventRevision;
-      try {
-        const history = await this.request<ChatHistoryResult>(connection, "chat.history", {
-          sessionKey: connection.sessionKey,
-          agentId: connection.agentId,
-          limit: HISTORY_LIMIT,
-          maxBytes: HISTORY_MAX_BYTES,
-          ...(connection.uncertainSend ? { inputRunIds: [connection.uncertainSend] } : {}),
-        });
-        if (!this.current(connection)) {
-          return;
-        }
-        const sessionId = history.sessionInfo?.sessionId ?? history.sessionId;
-        if (!sessionId || !Object.hasOwn(history.sessionInfo ?? {}, "activeLeafEntryId")) {
-          throw new Error("The conversation is missing its current branch");
-        }
-        if (connection.sessionId && connection.sessionId !== sessionId) {
-          connection.projection = createSessionProjection({
-            sessionKey: connection.sessionKey,
-            agentId: connection.agentId,
-          });
-        }
-        connection.sessionId = sessionId;
-        if (connection.uncertainSend && this.uncertain?.params.sessionId !== sessionId) {
-          this.uncertain = null;
-          connection.uncertainSend = undefined;
-          connection.runError = t("kids.sendContextChanged");
-        }
-        connection.leaf = history.sessionInfo?.activeLeafEntryId ?? null;
-        connection.projection = reduceSessionProjection(connection.projection, {
-          type: "snapshotLoaded",
-          scope: { sessionId },
-          messages: history.messages ?? [],
-          options: { shouldIncludeMessage: visibleMessage },
-        });
-        connection.pendingInputs = history.pendingInputs?.items ?? [];
-        const acceptedRunIds = new Set(
-          [...connection.pendingInputs, ...(history.inputReceipts ?? [])]
-            .map((input) => input.runId)
-            .filter((runId) => typeof runId === "string"),
-        );
-        connection.projection = retirePendingUserEntries(connection.projection, acceptedRunIds);
-        if (
-          connection.uncertainSend &&
-          history.inputReceipts?.some((receipt) => receipt.runId === connection.uncertainSend)
-        ) {
-          if (this.uncertain?.params.idempotencyKey === connection.uncertainSend) {
-            this.acknowledge(this.uncertain);
-          }
-          connection.uncertainSend = undefined;
-        }
-        if (observedRevision === connection.eventRevision) {
-          connection.replying = Boolean(history.inFlightRun);
-        }
-        const queuedCount = history.pendingInputs?.queuedCount ?? 0;
-        const interruptedInput = history.pendingInputs?.items.some(
-          (input) => input.state === "interrupted" || input.state === "cancelled",
-        );
-        this.render(connection, {
-          status: "ready",
-          busy:
-            connection.sending ||
-            Boolean(connection.uncertainSend) ||
-            connection.replying ||
-            queuedCount > 0,
-          error: connection.uncertainSend
-            ? t("kids.sendUncertain")
-            : (connection.runError ??
-              (interruptedInput && !connection.replying && queuedCount === 0
-                ? t("kids.inputInterrupted")
-                : null)),
-        });
-      } catch {
-        if (this.current(connection)) {
-          this.render(connection, {
-            status: "error",
-            busy: false,
-            error: t("kids.historyFailed"),
-          });
-        }
+    try {
+      // Tail and page snapshots share newest-relative ordinals. A tail read
+      // starts only after paging, and refresh reserves its slot before this await.
+      await connection.historyWindow.whenIdle();
+      if (!this.current(connection)) {
         return;
       }
-    } while (connection.refreshAgain && this.current(connection));
+      do {
+        connection.refreshAgain = false;
+        const observedRevision = connection.eventRevision;
+        try {
+          const history = await this.request<ChatHistoryResult>(connection, "chat.history", {
+            sessionKey: connection.sessionKey,
+            agentId: connection.agentId,
+            limit: HISTORY_LIMIT,
+            maxBytes: HISTORY_MAX_BYTES,
+            ...(connection.uncertainSend ? { inputRunIds: [connection.uncertainSend] } : {}),
+          });
+          if (!this.current(connection)) {
+            return;
+          }
+          const sessionId = history.sessionInfo?.sessionId ?? history.sessionId;
+          if (!sessionId || !Object.hasOwn(history.sessionInfo ?? {}, "activeLeafEntryId")) {
+            throw new Error("The conversation is missing its current branch");
+          }
+          if (connection.sessionId && connection.sessionId !== sessionId) {
+            connection.projection = createSessionProjection({
+              sessionKey: connection.sessionKey,
+              agentId: connection.agentId,
+            });
+          }
+          connection.sessionId = sessionId;
+          if (connection.uncertainSend && this.uncertain?.params.sessionId !== sessionId) {
+            this.uncertain = null;
+            connection.uncertainSend = undefined;
+            connection.runError = t("kids.sendContextChanged");
+          }
+          connection.leaf = history.sessionInfo?.activeLeafEntryId ?? null;
+          connection.projection = reduceSessionProjection(connection.projection, {
+            type: "snapshotLoaded",
+            scope: { sessionId },
+            messages: history.messages ?? [],
+            options: { shouldIncludeMessage: visibleMessage },
+          });
+          connection.pendingInputs = history.pendingInputs?.items ?? [];
+          const acceptedRunIds = new Set(
+            [...connection.pendingInputs, ...(history.inputReceipts ?? [])]
+              .map((input) => input.runId)
+              .filter((runId) => typeof runId === "string"),
+          );
+          connection.projection = retirePendingUserEntries(connection.projection, acceptedRunIds);
+          connection.historyWindow.updateTail(history);
+          let accepted: PendingSend | undefined;
+          if (
+            connection.uncertainSend &&
+            history.inputReceipts?.some((receipt) => receipt.runId === connection.uncertainSend)
+          ) {
+            if (this.uncertain?.params.idempotencyKey === connection.uncertainSend) {
+              accepted = this.uncertain;
+            }
+            connection.uncertainSend = undefined;
+          }
+          if (observedRevision === connection.eventRevision) {
+            connection.replying = Boolean(history.inFlightRun);
+          }
+          const queuedCount = history.pendingInputs?.queuedCount ?? 0;
+          const interruptedInput = history.pendingInputs?.items.some(
+            (input) => input.state === "interrupted" || input.state === "cancelled",
+          );
+          this.render(connection, {
+            status: "ready",
+            busy:
+              connection.sending ||
+              Boolean(connection.uncertainSend) ||
+              connection.replying ||
+              queuedCount > 0,
+            error: connection.uncertainSend
+              ? t("kids.sendUncertain")
+              : (connection.runError ??
+                (interruptedInput && !connection.replying && queuedCount === 0
+                  ? t("kids.inputInterrupted")
+                  : null)),
+          });
+          // Publish the verified physical session before its acknowledgment. The
+          // app can then retire a persisted draft even during reconnect restore.
+          if (accepted) {
+            this.acknowledge(accepted);
+          }
+        } catch {
+          if (this.current(connection)) {
+            this.render(connection, {
+              status: "error",
+              busy: false,
+              error: t("kids.historyFailed"),
+            });
+          }
+          return;
+        }
+      } while (connection.refreshAgain && this.current(connection));
+    } finally {
+      connection.history = undefined;
+    }
   }
 
   private handleEvent(event: GatewayEventFrame): void {
@@ -653,6 +713,12 @@ export class KidsConversation {
     }
     connection.eventRevision += 1;
     connection.replying = false;
+    if (connection.timing && connection.timing.runId === payload.runId) {
+      if (payload.state === "final") {
+        measureSend("finished", connection.timing.startedAt);
+      }
+      connection.timing = undefined;
+    }
     // Only durable rows provide reply text. A final event is a refresh trigger,
     // never a second provisional transcript entry that needs content deduping.
     if (payload.state === "error" || payload.state === "aborted") {
@@ -674,6 +740,22 @@ export class KidsConversation {
       entries,
       messages: entries.map((entry) => entry.message),
     };
+    const browsing = connection.historyWindow.state;
+    const displayed =
+      browsing.messages === null
+        ? entries
+        : reduceSessionProjection(
+            createSessionProjection({
+              sessionKey: connection.sessionKey,
+              agentId: connection.agentId,
+            }),
+            {
+              type: "snapshotLoaded",
+              scope: { sessionId: connection.sessionId },
+              messages: browsing.messages,
+              options: { shouldIncludeMessage: visibleMessage },
+            },
+          ).entries;
     const { pendingInputs, queuedInputs } = selectChatInputDisplay(
       connection.projection.messages,
       [],
@@ -681,30 +763,24 @@ export class KidsConversation {
     );
     const custody = new Set([...pendingInputs, ...queuedInputs]);
     const display = [
-      ...entries.map((entry, index) => ({
+      ...displayed.map((entry, index) => ({
         id: entry.identity?.id ?? entry.identity?.idempotencyKey ?? `message-${index}`,
         message: entry.message,
       })),
-      ...connection.pendingInputs
+      ...(browsing.messages === null ? connection.pendingInputs : [])
         .filter((input) => custody.has(input))
         .map((input) => ({ id: input.id, message: input.message })),
     ];
-    const messages: KidsMessage[] = [];
-    for (const entry of display) {
-      const role = asOptionalRecord(entry.message)?.role;
-      if ((role !== "user" && role !== "assistant") || !visibleMessage(entry.message)) {
-        continue;
-      }
-      messages.push({
-        id: entry.id,
-        role,
-        text: extractText(entry.message)?.trim() ?? "",
-        media: projectKidsMedia(entry.message),
-      });
-    }
+    const messages = projectKidsMessages(display);
     this.publish({
       ...patch,
-      messages: messages.slice(-HISTORY_LIMIT),
+      messages: browsing.messages === null ? messages.slice(-HISTORY_LIMIT) : messages,
+      history: {
+        hasOlder: browsing.hasOlder,
+        hasNewer: browsing.hasNewer,
+        loading: browsing.loading,
+        error: browsing.error,
+      },
       sessionId: connection.sessionId ?? "",
       canRetrySend:
         (patch.status ?? this.snapshot.status) === "ready" &&

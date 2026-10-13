@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { FileHandle } from "node:fs/promises";
 import { ARTIFACT_DOWNLOAD_PATH } from "../../packages/gateway-protocol/src/artifact-download.js";
 import type {
   ArtifactDownloadResponse,
@@ -10,12 +11,19 @@ import type { GatewayClient } from "./server-methods/types.js";
 const DOWNLOAD_TTL_MS = 5 * 60_000;
 const MAX_DOWNLOADS_PER_CONNECTION = 128;
 
+/** File results transfer their descriptor to HTTP; unsuccessful reads retain cleanup ownership. */
+export type ArtifactDownloadReadResult =
+  | (ArtifactDownloadResponse & { file?: never })
+  | (Omit<ArtifactDownloadResponse, "body"> & { file: FileHandle; body?: never });
+
 type Download = {
   expiresAt: number;
   digest: string;
   image: boolean;
   assertCurrent: () => void;
-  read: (request: ArtifactDownloadResponseRequest) => Promise<ArtifactDownloadResponse | undefined>;
+  read: (
+    request: ArtifactDownloadResponseRequest,
+  ) => Promise<ArtifactDownloadReadResult | undefined>;
   release: () => void;
 };
 

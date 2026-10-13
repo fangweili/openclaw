@@ -1,8 +1,7 @@
 /**
- * Kids media presentation admits only metadata from the shared transcript
- * projector. Paths, remote URLs, and inline bytes never become browser sources.
- * Upload previews remain owned by the in-memory draft; accepted history shows
- * the supplied media labels without opening a separate filesystem read surface.
+ * Kids media presentation retains labels and opaque artifact identities from
+ * the shared transcript projector. Browser sources come only from authorized
+ * artifact downloads; transcript paths, URLs, and inline bytes never escape.
  */
 import { t } from "../i18n/index.ts";
 import { normalizeMessage } from "../lib/chat/message-normalizer.ts";
@@ -12,9 +11,10 @@ export type KidsMedia = {
   id: string;
   kind: "image" | "video";
   label: string;
+  artifactId?: string;
 };
 
-/** Project media labels without exposing filesystem paths, network locations, or inline bytes. */
+/** Project display facts; the download owner must authorize every artifact in the current session. */
 export function projectKidsMedia(message: unknown): KidsMedia[] {
   const { images, attachments } = projectMessageMedia(message, normalizeMessage(message).content);
   return [
@@ -22,6 +22,7 @@ export function projectKidsMedia(message: unknown): KidsMedia[] {
       id: `image-${index}`,
       kind: "image",
       label: image.fileName?.trim() || image.alt?.trim() || t("kids.media.photo"),
+      artifactId: image.artifactId,
     })),
     ...attachments.flatMap((item, index): KidsMedia[] =>
       item.type === "attachment" && item.attachment.kind === "video"
@@ -30,6 +31,7 @@ export function projectKidsMedia(message: unknown): KidsMedia[] {
               id: `video-${index}`,
               kind: "video",
               label: item.attachment.label.trim() || t("kids.media.video"),
+              artifactId: item.attachment.artifactId,
             },
           ]
         : [],

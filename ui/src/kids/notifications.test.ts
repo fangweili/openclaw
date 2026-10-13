@@ -131,9 +131,7 @@ describe("kids notifications", () => {
         },
       });
       expect(f.request.mock.calls.some(([method]) => method === "push.web.test")).toBe(false);
-      await f.owner.disable();
-      expect(f.unsubscribe).toHaveBeenCalledOnce();
-      expect(f.owner.state.status).toBe("off");
+      expect(f.unsubscribe).not.toHaveBeenCalled();
     } finally {
       await f.owner.dispose();
     }
@@ -155,7 +153,7 @@ describe("kids notifications", () => {
     }
   });
 
-  it("accepts Disable while the independent foreground claim is still pending", async () => {
+  it("joins a pending foreground claim on disposal without unsubscribing", async () => {
     const f = fixture();
     f.existing();
     const claiming = createDeferred();
@@ -175,18 +173,17 @@ describe("kids notifications", () => {
     const initializing = f.owner.initialize().then(() => {
       initialized = true;
     });
-    let disabling: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
     try {
       await claiming.promise;
       await vi.advanceTimersByTimeAsync(0);
-      const readyBeforeDisable = initialized;
+      const readyBeforeClose = initialized;
       expect(f.owner.state.status).toBe("enabled");
-      disabling = f.owner.disable();
+      closing = f.owner.dispose();
       claim.resolve();
-      await Promise.all([initializing, disabling]);
-      expect(f.unsubscribe).toHaveBeenCalledOnce();
-      expect(readyBeforeDisable).toBe(true);
-      expect(f.owner.state.status).toBe("off");
+      await Promise.all([initializing, closing]);
+      expect(f.unsubscribe).not.toHaveBeenCalled();
+      expect(readyBeforeClose).toBe(true);
       const requests = f.request.mock.calls.map(([method, params]) => ({ method, params }));
       const clear = requests.findIndex(
         ({ method, params }) =>
@@ -194,12 +191,10 @@ describe("kids notifications", () => {
           (params as { sessionKey: string | null }).sessionKey === null,
       );
       expect(clear).toBeGreaterThanOrEqual(0);
-      expect(requests.findIndex(({ method }) => method === "push.web.unsubscribe")).toBeGreaterThan(
-        clear,
-      );
+      expect(requests.some(({ method }) => method === "push.web.unsubscribe")).toBe(false);
     } finally {
       claim.resolve();
-      await Promise.all([initializing, disabling]);
+      await Promise.all([initializing, closing]);
       await f.owner.dispose();
     }
     expect(vi.getTimerCount()).toBe(0);

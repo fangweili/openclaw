@@ -18,6 +18,8 @@ const enKids = {
       "A tricky question, a little practice, or something you’re curious about. Let’s figure it out together.",
     message: "Message Rocky",
     placeholder: "Ask Rocky anything…",
+    draftNotSaved:
+      "Your draft could not be saved on this device. Keep this page open until you send it.",
     send: "Send message",
     talk: "Talk to Rocky",
     dictation: {
@@ -52,6 +54,15 @@ const enKids = {
     sendContextChanged: "Your conversation changed. Check it before sending your message again.",
     sendFailed: "Your message was not sent. Check the conversation and try again.",
     historyFailed: "The conversation could not refresh. Reconnect to continue.",
+    history: {
+      olderAction: "Earlier messages",
+      newerAction: "Newer messages",
+      older: "Loading earlier messages…",
+      newer: "Loading newer messages…",
+      failed: "Those messages could not load.",
+      latest: "Latest",
+      jumpLatest: "Jump to latest message",
+    },
     runFailed: "Rocky could not finish that reply. You can try asking again.",
     inputInterrupted: "A message did not finish. You can send it again when you’re ready.",
     attachments: {
@@ -66,11 +77,12 @@ const enKids = {
     media: {
       photo: "Photo",
       video: "Video",
+      loading: "Loading…",
+      unavailable: "This photo or video is unavailable.",
     },
     notifications: {
       enable: "Notify me",
-      disable: "Turn off notifications",
-      enabled: "Notifications are on",
+      enabled: "Notifications on",
       working: "Setting up notifications…",
       installRequired:
         "On iPhone or iPad, choose Share → Add to Home Screen, then open Rocky from there to turn on notifications.",

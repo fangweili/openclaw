@@ -54,6 +54,7 @@ import type {
   CurrentUserProfileDisplayResolver,
 } from "./current-user-profile-display.js";
 import { projectTranscriptImageArtifacts } from "./transcript-image-artifacts.js";
+import { projectTranscriptMediaArtifacts } from "./transcript-media-artifacts.js";
 
 export type ChatDisplayProjectionOptions = {
   resolveCronJobName?: (jobId: string) => string | undefined;
@@ -439,7 +440,7 @@ export function prepareChatHistoryRecoveryMessages(
   options?: ChatHistoryRecoveryOptions,
 ) {
   const projectedMessages = messages.map((original) => {
-    const message = projectTranscriptImageArtifacts(original);
+    const message = projectTranscriptMediaArtifacts(projectTranscriptImageArtifacts(original));
     const entry = asOptionalRecord(message);
     const failureRunId = readSessionTranscriptFailureRunId(entry);
     if (failureRunId) {

@@ -98,6 +98,25 @@ describe("resolveArtifactDownloadSource", () => {
   const inline = { artifact, encoding: "base64", data: "cG5n" };
   const ticket = "/api/artifacts/download/connection/ticket";
 
+  it("passes cancellation to the artifact RPC and discards its late response", async () => {
+    const response = createDeferred<typeof inline>();
+    const request = vi.fn(() => response.promise);
+    const abort = new AbortController();
+    const pending = resolveArtifactDownloadSource(
+      { connected: true, client: { request } as never },
+      { sessionKey: "agent:main:main", artifactId: artifact.id },
+      abort.signal,
+    );
+    expect(request).toHaveBeenCalledWith(
+      "artifacts.download",
+      expect.any(Object),
+      expect.objectContaining({ signal: abort.signal }),
+    );
+    abort.abort();
+    response.resolve(inline);
+    expect(await pending).toBeNull();
+  });
+
   it.each([
     { page: "https://control.test", gateway: "wss://control.test", http: true, variant: undefined },
     {
