@@ -14,6 +14,8 @@ html[data-kids] body {
     sans-serif;
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
+  /* Keep native scrolling without double-tap or pinch zoom shifting the chat. */
+  touch-action: pan-x pan-y;
 }
 
 .kids-shell {
