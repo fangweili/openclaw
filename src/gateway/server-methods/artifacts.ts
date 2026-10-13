@@ -391,7 +391,9 @@ export const artifactsHandlers: GatewayRequestHandlers = {
       );
       if (found.ok) {
         if (found.value) {
-          respond(true, found.value);
+          if (artifactResponseIsCurrent(found.value, respond)) {
+            respond(true, found.value.response);
+          }
         } else {
           respondArtifactNotFound(respond, query.artifactId);
         }

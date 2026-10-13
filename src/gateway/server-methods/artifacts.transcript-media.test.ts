@@ -10,6 +10,7 @@ import {
   appendTranscriptMessage,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { saveMediaBuffer } from "../../media/store.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -24,6 +25,7 @@ import { handleGatewayRequest } from "../server-methods.js";
 import { sharingPolicyClient } from "../session-sharing.test-utils.js";
 import * as readers from "../session-transcript-readers.js";
 import { projectTranscriptMediaArtifacts } from "../transcript-media-artifacts.js";
+import * as transcriptMedia from "./artifacts-transcript-media.js";
 import { artifactsHandlers } from "./artifacts.js";
 
 const registry = createGatewayMethodRegistry(createCoreGatewayMethodDescriptors(artifactsHandlers));
@@ -99,7 +101,7 @@ it("serves owned persisted uploads with scoped grants and ranges, rejecting cros
           },
         },
       },
-    };
+    } satisfies OpenClawConfig;
     const context = createDirectChatContext({ getRuntimeConfig: () => cfg });
     const scope = {
       agentId: "main",
@@ -235,6 +237,34 @@ it("serves owned persisted uploads with scoped grants and ranges, rejecting cros
       expect((await download(otherId, other.sessionKey)).ok).toBe(false);
       spy.mockRestore();
       expect((await fetch(origin + otherGrant.payload!.url)).status).toBe(404);
+
+      // A completed grant must still be authorized when its RPC continuation
+      // publishes metadata. Revoke sharing after the real helper allocates it.
+      await upsertSessionEntryCore(other, {
+        sessionId: other.sessionId,
+        updatedAt: 3,
+        visibility: "shared",
+      });
+      const prepareDownload = transcriptMedia.downloadTranscriptMediaArtifact;
+      let prepared: Awaited<ReturnType<typeof prepareDownload>>;
+      const completion = vi
+        .spyOn(transcriptMedia, "downloadTranscriptMediaArtifact")
+        .mockImplementationOnce(async (...args) => {
+          prepared = await prepareDownload(...args);
+          await upsertSessionEntryCore(other, {
+            sessionId: other.sessionId,
+            updatedAt: 4,
+            visibility: "draft",
+          });
+          return prepared;
+        });
+      try {
+        const revoked = await download(otherId, other.sessionKey);
+        expect(prepared).toBeDefined();
+        expect(revoked).toMatchObject({ ok: false, payload: undefined });
+      } finally {
+        completion.mockRestore();
+      }
       cfg.gateway.roles.definitions.student.sessions.others = "none";
       const replacement = { ...scope, sessionId: "replacement-media" };
       await upsertSessionEntryCore(replacement, { ...entry, sessionId: replacement.sessionId });

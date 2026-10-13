@@ -37,7 +37,11 @@ function identity(opened: Opened): string {
   return JSON.stringify([dev, ino, size, mtimeMs, ctimeMs]);
 }
 
-/** Returns a grant only for an exact persisted upload in the authorized session. */
+/**
+ * Prepare a grant for an exact persisted upload in the authorized session.
+ * The caller must assertCurrent after awaiting this result and immediately before
+ * publishing response; sharing or the backing session may change while awaiting.
+ */
 export async function downloadTranscriptMediaArtifact(
   query: ArtifactsGetParams,
   access: ArtifactSessionAccess & {
@@ -165,5 +169,5 @@ export async function downloadTranscriptMediaArtifact(
     },
   });
   access.detach(selected.release);
-  return { artifact, ...download };
+  return { response: { artifact, ...download }, assertCurrent };
 }
