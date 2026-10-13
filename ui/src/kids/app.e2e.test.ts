@@ -5,6 +5,7 @@ import { chromium, type Browser } from "playwright";
 import { preview, type PreviewServer } from "vite";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
+import type { MockGatewayWindow } from "../test-helpers/control-ui-e2e-contract.ts";
 import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 
 const sessionKey = "agent:student:kids:student-profile";
@@ -760,6 +761,219 @@ it("reopens media and unsent text without changing tutor or notification setting
       id: "media-history-draft",
       label: "Saved media, restored draft, notifications on",
     });
+  } finally {
+    await context.close();
+  }
+});
+
+it("pages a long conversation without moving the reader and returns to the latest reply", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    await context.addInitScript(notificationPermissionFixture);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const exchange = [
+      "You have 3/4 of a pizza. If you share half, how much of the whole pizza did you share?",
+      "I think I shared 3/8.",
+      "Yes! Each quarter becomes two eighths. Three of those eighths went to your friend.",
+      "Can we use a number line for the next one?",
+      "Let's mark 0, 1/2, and 1. Where would you put 3/4?",
+      "Halfway between 1/2 and 1!",
+    ];
+    const messages = Array.from({ length: 600 }, (_, index) => ({
+      role: index % 2 === 0 ? "assistant" : "user",
+      content: [{ type: "text", text: exchange[index % exchange.length] }],
+      __openclaw: { id: `history-${index + 1}`, seq: index + 1 },
+    }));
+    const historyPage = (offset: number, limit: number) => {
+      const end = Math.max(0, messages.length - offset);
+      const start = Math.max(0, end - limit);
+      return {
+        sessionId: "student-session",
+        sessionInfo: {
+          sessionId: "student-session",
+          ...(offset === 0 ? { activeLeafEntryId: messages.at(-1)!["__openclaw"].id } : {}),
+        },
+        messages: messages.slice(start, end),
+        totalMessages: messages.length,
+        offset,
+        hasMore: start > 0,
+        nextOffset: messages.length - start,
+      };
+    };
+    const gateway = await installMockGateway(page, {
+      awaitInitialRoster: false,
+      heldMethods: ["connect"],
+      sessionKey,
+      operatorScopes: ["operator.sessions.write", "operator.talk"],
+      methodResponses: {
+        "users.self": { profile },
+        "agents.list": roster,
+        "sessions.create": { key: sessionKey },
+      },
+    });
+    await page.goto(baseUrl);
+    await gateway.waitForRequest("connect");
+    const serveHistory = async () => {
+      await page.evaluate((entries) => {
+        const fixture = (window as MockGatewayWindow).openclawControlUiE2eGateway;
+        if (!fixture) {
+          throw new Error("Kids history fixture is not installed");
+        }
+        fixture.setRequestHandler("chat.history", ({ params, respond }) => {
+          const { offset = 0, limit = 80 } = params as { offset?: number; limit?: number };
+          const end = Math.max(0, entries.length - offset);
+          const start = Math.max(0, end - limit);
+          respond({
+            sessionId: "student-session",
+            sessionInfo: {
+              sessionId: "student-session",
+              ...(offset === 0 ? { activeLeafEntryId: entries.at(-1)!["__openclaw"].id } : {}),
+            },
+            messages: entries.slice(start, end),
+            totalMessages: entries.length,
+            offset,
+            hasMore: start > 0,
+            nextOffset: entries.length - start,
+          });
+        });
+      }, messages);
+    };
+    await serveHistory();
+    await gateway.resolveDeferred("connect");
+    const thread = page.locator(".kids-thread");
+    const latest = page.getByRole("button", { name: "Jump to latest message" });
+    await page.locator('[data-message-id="history-600"]').waitFor();
+    expect(await page.locator(".kids-message").count()).toBe(80);
+    expect(await latest.count()).toBe(0);
+    const composer = page.getByLabel("Message Rocky", { exact: true });
+    const draft = "Can we try a number line together?";
+    await composer.fill(draft);
+
+    const visibleAnchor = () =>
+      thread.evaluate((element) => {
+        const top = element.getBoundingClientRect().top;
+        const row = [...element.querySelectorAll<HTMLElement>("[data-message-id]")].find(
+          (message) => message.getBoundingClientRect().bottom > top,
+        );
+        if (!row) {
+          throw new Error("No visible transcript message to anchor");
+        }
+        return { id: row.dataset.messageId!, offset: row.getBoundingClientRect().top - top };
+      });
+    const expectAnchor = async (anchor: { id: string; offset: number }) => {
+      const offset = await page.locator(`[data-message-id="${anchor.id}"]`).evaluate((row) => {
+        const scroll = row.closest(".kids-thread")!;
+        return row.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+      });
+      expect(Math.abs(offset - anchor.offset)).toBeLessThan(2);
+    };
+    const expectBoundedRows = async () => {
+      const ids = await page
+        .locator(".kids-message")
+        .evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.messageId));
+      expect(ids.length).toBeLessThanOrEqual(320);
+      expect(new Set(ids).size).toBe(ids.length);
+      return ids;
+    };
+
+    // Hold each page while measuring the actual wheel-driven reading position.
+    // Older pages omit branch authority, just like positive-offset Gateway reads.
+    for (let pageNumber = 1; pageNumber <= 5; pageNumber += 1) {
+      const after = await gateway.deferNext("chat.history");
+      await thread.hover();
+      await page.mouse.wheel(0, -100_000);
+      const request = await gateway.waitForRequest("chat.history", { after });
+      expect(request.params).toMatchObject({
+        sessionKey,
+        offset: pageNumber * 80,
+        limit: 80,
+        maxBytes: 256 * 1024,
+      });
+      await page.getByText("Loading earlier messages…", { exact: true }).waitFor();
+      const anchor = await visibleAnchor();
+      await gateway.resolveDeferred("chat.history", historyPage(pageNumber * 80, 80));
+      await page.locator(`[data-message-id="history-${521 - pageNumber * 80}"]`).waitFor();
+      await page
+        .getByText("Loading earlier messages…", { exact: true })
+        .waitFor({ state: "hidden" });
+      await expectAnchor(anchor);
+      const ids = await expectBoundedRows();
+      expect(ids.length).toBe(Math.min(320, (pageNumber + 1) * 80));
+    }
+    await latest.waitFor();
+    expect(await composer.inputValue()).toBe(draft);
+    expect(await page.locator('[data-message-id="history-600"]').count()).toBe(0);
+
+    // Reverse direction after eviction: fetch the adjacent newer page, not the
+    // live tail, and retain the exact visible row while the opposite edge trims.
+    const newerAfter = await gateway.deferNext("chat.history");
+    await thread.hover();
+    await page.mouse.wheel(0, 100_000);
+    const newerRequest = await gateway.waitForRequest("chat.history", { after: newerAfter });
+    expect(newerRequest.params).toMatchObject({ offset: 80, limit: 80 });
+    await page.getByText("Loading newer messages…", { exact: true }).waitFor();
+    const beforeNewer = await visibleAnchor();
+    await gateway.resolveDeferred("chat.history", historyPage(80, 80));
+    await page.locator('[data-message-id="history-520"]').waitFor();
+    await page.getByText("Loading newer messages…", { exact: true }).waitFor({ state: "hidden" });
+    await expectAnchor(beforeNewer);
+    const browsingIds = await expectBoundedRows();
+    expect(browsingIds[0]).toBe("history-201");
+    expect(browsingIds.at(-1)).toBe("history-520");
+
+    const reply = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Your next challenge is ready: place 5/8 on a number line." },
+      ],
+      __openclaw: { id: "history-601", seq: 601 },
+    };
+    messages.push(reply);
+    await serveHistory();
+    const refreshAfter = await gateway.deferNext("chat.history");
+    const beforeReply = await visibleAnchor();
+    await gateway.emitGatewayEvent("session.message", {
+      sessionKey,
+      sessionId: "student-session",
+      messageId: reply["__openclaw"].id,
+      messageSeq: reply["__openclaw"].seq,
+      message: reply,
+    });
+    await gateway.waitForRequest("chat.history", { after: refreshAfter });
+    await gateway.resolveDeferred("chat.history", historyPage(0, 80));
+    await expectAnchor(beforeReply);
+    expect(await expectBoundedRows()).toEqual(browsingIds);
+    expect(await page.getByText(reply.content[0].text, { exact: true }).count()).toBe(0);
+    expect(await composer.inputValue()).toBe(draft);
+    await page.screenshot({ path: path.join(proof, "history-latest-mobile.png"), fullPage: true });
+    examples.push({ id: "history-latest-mobile", label: "Reading earlier messages with Latest" });
+
+    await latest.click();
+    await page.getByText(reply.content[0].text, { exact: true }).waitFor();
+    await latest.waitFor({ state: "hidden" });
+    const tailIds = await expectBoundedRows();
+    expect(tailIds).toHaveLength(80);
+    expect(tailIds[0]).toBe("history-522");
+    expect(tailIds.at(-1)).toBe("history-601");
+    expect(
+      await thread.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    ).toBeLessThan(2);
+    expect(await composer.inputValue()).toBe(draft);
+    expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+    // Browsing old pages cannot replace the live branch used by the next send.
+    await gateway.deferNext("chat.send");
+    await page.getByRole("button", { name: "Send message" }).click();
+    const send = await gateway.waitForRequest("chat.send");
+    expect(send.params).toMatchObject({
+      message: draft,
+      sessionId: "student-session",
+      expectedLeafEntryId: "history-601",
+    });
+    expect(errors).toEqual([]);
   } finally {
     await context.close();
   }

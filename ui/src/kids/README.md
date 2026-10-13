@@ -11,6 +11,8 @@ the child's messages and finished assistant replies; voice shows spoken captions
 - `app.ts` owns the document, same-origin Gateway client, and the
   lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
+  It installs Safari pinch-gesture listeners on start and removes them on disposal;
+  ordinary touch events retain their native scrolling, selection, and control behavior.
   A retained draft stays hidden until that conversation is ready again; binding a
   different verified profile or backing session binds a separate draft.
   It identifies as the canonical WebChat UI, requiring an approved signed browser
@@ -20,6 +22,9 @@ the child's messages and finished assistant replies; voice shows spoken captions
   verified non-shared profile with exactly one accessible agent is admitted. It
   derives one stable key from those server facts and asks the Gateway to create or
   reopen it. Neither URLs nor browser storage choose a tutor or session.
+- `messages.ts` selects child-visible messages and projects text/media in the
+  supplied order. It is pure presentation; the conversation retains transcript,
+  custody, identity and send-admission authority.
 - The Gateway owns authentication, agent permissions, session ownership, transcript
   persistence, branch validation, and idempotent send admission. The conversation
   keeps a bounded memory-only projection, retains draft text on failed sends, and
@@ -47,6 +52,22 @@ the child's messages and finished assistant replies; voice shows spoken captions
   local text editable with a save warning, without overwriting the other tab.
   The shared store owns its seven-day expiry. Files and uncertain-send replay
   credentials remain memory-only; draft recovery does not promise offline sends.
+- `history-window.ts` owns older/newer browsing through the existing `chat.history`
+  offset API. It retains at most four pages, 320 projected rows and 1 MiB; moving
+  through history evicts the opposite edge, which can be fetched again. The live
+  conversation keeps its separate 80-message tail and remains the authority for
+  sending. Tail refreshes and page reads serialize; historical pages never replace
+  live branch or pending-input state. Latest discards browsing immediately. A failed
+  page keeps the current view and offers retry; disconnect retires all page results.
+  Edge buttons keep pages traversable when filtered rows leave too little visible
+  content to scroll.
+- `transcript-scroll.ts` owns viewport position and one resize observer. It follows
+  the latest messages until the child scrolls away, then preserves a visible
+  message across page changes and media resizing. Paging requires reader scroll
+  intent at an edge. A floating Latest button returns to the live tail without
+  altering the draft. Disposal removes listeners and the observer. Kids-only CSS
+  permits native panning without page zoom. Safari needs explicit manipulation at
+  each scrolling surface to disable double-tap; the app cancels its pinch gestures.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
   Shared chat admission, read/resize, payload, and encoding owners enforce the
   Gateway's advertised per-file and WebSocket batch limits. The app cancels reads

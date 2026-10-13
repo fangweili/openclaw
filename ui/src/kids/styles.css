@@ -14,8 +14,29 @@ html[data-kids] body {
     sans-serif;
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
-  /* Keep native scrolling without double-tap or pinch zoom shifting the chat. */
+}
+
+html[data-kids],
+html[data-kids] body,
+.kids-thread,
+.kids-composer textarea,
+.kids-message-content pre,
+.kids-message-content table {
+  /* Repeat at native scroll boundaries, where inherited touch actions reset. */
   touch-action: pan-x pan-y;
+}
+
+/* Safari resets touch action at scrolling elements and allows double-tap with
+   pan-x pan-y. Use its manipulation keyword there; app.ts cancels pinch gestures. */
+@supports (-webkit-touch-callout: none) {
+  html[data-kids],
+  html[data-kids] body,
+  .kids-thread,
+  .kids-composer textarea,
+  .kids-message-content pre,
+  .kids-message-content table {
+    touch-action: manipulation;
+  }
 }
 
 .kids-shell {
@@ -117,13 +138,52 @@ html[data-kids] body {
   height: 18px;
 }
 
-.kids-thread {
+.kids-thread-area {
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
+}
+
+.kids-thread {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   padding: 32px;
   scrollbar-width: thin;
+}
+
+.kids-latest {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border: 1px solid var(--kids-border) !important;
+  border-radius: 24px;
+  background: var(--kids-paper);
+  color: var(--kids-accent) !important;
+  box-shadow: 0 4px 16px var(--kids-border);
+}
+
+.kids-history-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--kids-muted);
+  font-size: 14px;
+}
+
+.kids-history-status button {
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: var(--kids-tint);
 }
 
 .kids-welcome {

@@ -54,6 +54,15 @@ const enKids = {
     sendContextChanged: "Your conversation changed. Check it before sending your message again.",
     sendFailed: "Your message was not sent. Check the conversation and try again.",
     historyFailed: "The conversation could not refresh. Reconnect to continue.",
+    history: {
+      olderAction: "Earlier messages",
+      newerAction: "Newer messages",
+      older: "Loading earlier messages…",
+      newer: "Loading newer messages…",
+      failed: "Those messages could not load.",
+      latest: "Latest",
+      jumpLatest: "Jump to latest message",
+    },
     runFailed: "Rocky could not finish that reply. You can try asking again.",
     inputInterrupted: "A message did not finish. You can send it again when you’re ready.",
     attachments: {

@@ -25,7 +25,11 @@ vi.mock("../api/gateway.ts", () => ({
 }));
 vi.mock("./conversation.ts", () => ({
   KidsConversation: class {
-    state = { status: "disconnected", messages: [] };
+    state = {
+      status: "disconnected",
+      messages: [],
+      history: { hasOlder: false, hasNewer: false, loading: null, error: null },
+    };
     constructor(
       _client: unknown,
       onState: (state: KidsConversationState) => void,
@@ -35,6 +39,7 @@ vi.mock("./conversation.ts", () => ({
       boundary.accepted = onAccepted;
     }
     retrySend = boundary.retry;
+    returnToLatest() {}
     disconnect() {
       boundary.update({ ...ready, status: "disconnected" });
     }
@@ -61,11 +66,21 @@ const ready: KidsConversationState = {
   status: "ready",
   busy: false,
   canRetrySend: false,
+  history: { hasOlder: false, hasNewer: false, loading: null, error: null },
   messages: [],
   error: null,
 };
 
-beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
@@ -77,6 +92,32 @@ function type(composer: HTMLTextAreaElement, text: string) {
   composer.value = text;
   composer.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+it("blocks Safari zoom only while the app is active, preserving ordinary touch defaults", async () => {
+  const app = new KidsApp(document.createElement("div"));
+  const dispatch = (eventType: string) => {
+    const event = new Event(eventType, { bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  expect(dispatch("gesturestart")).toBe(false);
+  try {
+    app.start();
+    app.start();
+    expect(dispatch("gesturestart")).toBe(true);
+    expect(dispatch("gesturechange")).toBe(true);
+    expect(dispatch("touchstart")).toBe(false);
+    expect(dispatch("touchmove")).toBe(false);
+    expect(dispatch("touchend")).toBe(false);
+    expect(dispatch("click")).toBe(false);
+  } finally {
+    await app.dispose();
+  }
+  expect(dispatch("gesturestart")).toBe(false);
+  expect(dispatch("gesturechange")).toBe(false);
+  app.start();
+  expect(dispatch("gesturestart")).toBe(false);
+});
 
 describe("kids send recovery action", () => {
   it.each([false, true])(

@@ -25,6 +25,7 @@ import { KidsDictation } from "./dictation.ts";
 import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
 import { KidsNotifications } from "./notifications.ts";
+import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
 
@@ -46,6 +47,7 @@ export class KidsApp {
   private readonly attachments: KidsAttachments;
   private readonly draft: KidsDraft;
   private readonly media: KidsHistoryMedia;
+  private readonly transcript: KidsTranscriptScroll;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -58,6 +60,9 @@ export class KidsApp {
   private boundSession = "";
   private closing: Promise<void> | null = null;
   private snapshot: KidsViewState;
+  // Safari's continuous zoom is separate from CSS double-tap handling. Cancel
+  // only its gesture events; ordinary touches retain scrolling and selection.
+  private readonly preventPageZoom = (event: Event) => event.preventDefault();
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
@@ -103,6 +108,16 @@ export class KidsApp {
       (conversation) => this.onConversation(conversation),
       (text, ids) => this.acknowledgedSend(text, ids),
     );
+    this.transcript = new KidsTranscriptScroll(
+      (away) => {
+        if (!this.disposed && this.snapshot.awayFromLatest !== away) {
+          this.snapshot.awayFromLatest = away;
+          this.paint();
+        }
+      },
+      () => void this.conversation.loadOlder(),
+      () => void this.conversation.loadNewer(),
+    );
     this.snapshot = {
       conversation: this.conversation.state,
       voice: idleVoice(),
@@ -115,6 +130,7 @@ export class KidsApp {
       voiceAllowed: false,
       notifications: null,
       attachments: this.attachments.state,
+      awayFromLatest: false,
     };
   }
 
@@ -124,6 +140,12 @@ export class KidsApp {
       return;
     }
     this.started = true;
+    this.root.ownerDocument.addEventListener("gesturestart", this.preventPageZoom, {
+      passive: false,
+    });
+    this.root.ownerDocument.addEventListener("gesturechange", this.preventPageZoom, {
+      passive: false,
+    });
     this.paint();
     this.client.start();
   }
@@ -134,6 +156,9 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
+    this.root.ownerDocument.removeEventListener("gesturestart", this.preventPageZoom);
+    this.root.ownerDocument.removeEventListener("gesturechange", this.preventPageZoom);
+    this.transcript.dispose();
     this.generation += 1;
     this.retireCapabilities();
     this.attachments.dispose();
@@ -202,6 +227,7 @@ export class KidsApp {
       if (this.disposed || generation !== this.generation || !sent) {
         return;
       }
+      this.conversation.returnToLatest();
       this.paint(true);
       return;
     }
@@ -306,6 +332,7 @@ export class KidsApp {
       return;
     }
     const attachments = this.attachments.prepare();
+    this.conversation.returnToLatest();
     if (attachments && (await this.conversation.send(draft, attachments))) {
       this.paint(true);
     }
@@ -416,9 +443,9 @@ export class KidsApp {
     if (this.disposed) {
       return;
     }
-    const thread = this.root.querySelector<HTMLElement>(".kids-thread");
-    const nearBottom =
-      !thread || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 100;
+    const chat = this.snapshot.conversation;
+    this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+    this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
       renderKidsView(this.snapshot, {
         draft: (value) => {
@@ -434,6 +461,12 @@ export class KidsApp {
         talk: () => void this.talk(),
         dictate: () => void this.dictate(),
         retry: () => void this.retry(),
+        older: () => void this.conversation.loadOlder(),
+        newer: () => void this.conversation.loadNewer(),
+        latest: () => {
+          this.conversation.returnToLatest();
+          this.paint(true);
+        },
         notifications: () => {
           const owner = this.notifications;
           if (owner) {
@@ -444,8 +477,12 @@ export class KidsApp {
       this.root,
     );
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
-    if (current && (forceScroll || nearBottom)) {
-      current.scrollTop = current.scrollHeight;
+    const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
+    if (current && content) {
+      this.transcript.afterRender(current, content);
+      if (forceScroll) {
+        this.transcript.jumpToLatest();
+      }
     }
   }
 }
