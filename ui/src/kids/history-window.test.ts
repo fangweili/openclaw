@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatHistoryResult } from "../pages/chat/chat-history-snapshot.ts";
 import { KidsHistoryWindow, type KidsHistoryPageRequest } from "./history-window.ts";
 
-function page(total: number, end = total, count = 80): ChatHistoryResult {
+function page(total: number, end = total, count = 80, source = "source-one"): ChatHistoryResult {
   const start = Math.max(1, end - count + 1);
   return {
     sessionId: "session-one",
@@ -16,7 +16,11 @@ function page(total: number, end = total, count = 80): ChatHistoryResult {
     },
     messages: Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => {
       const seq = start + index;
-      return { role: "user", content: `Message ${seq}`, __openclaw: { seq, id: `message-${seq}` } };
+      return {
+        role: "user",
+        content: `Message ${seq}`,
+        __openclaw: { seq, id: `message-${seq}`, transcriptPosition: { source, rawSeq: seq } },
+      };
     }),
     totalMessages: total,
     offset: total - end,
@@ -32,7 +36,7 @@ function fixture() {
     page(1000, 1000 - offset, limit),
   );
   const owner = new KidsHistoryWindow(read, changed, refresh);
-  owner.updateTail(page(1000));
+  void owner.updateTail(page(1000));
   return { owner, read, changed, refresh };
 }
 
@@ -56,6 +60,154 @@ function deferred<T>() {
 }
 
 describe("kids bounded history window", () => {
+  it("renews all retained pages after a rewrite without moving the reading window", async () => {
+    const { owner, read } = fixture();
+    for (let index = 0; index < 4; index += 1) {
+      await owner.loadOlder();
+    }
+    const before = sequences(owner);
+    read.mockClear();
+    read.mockImplementation(async ({ offset, limit }) =>
+      page(1002, 1002 - offset, limit, "source-two"),
+    );
+    await owner.updateTail(page(1001, 1001, 80, "source-two"));
+    expect(sequences(owner)).toEqual(before);
+    expect(owner.state.hasNewer).toBe(true);
+    expect(read.mock.calls.map(([request]) => request.offset)).toEqual([321, 322, 242, 162, 82]);
+    expect(JSON.stringify(owner.state.messages)).not.toContain("source-one");
+    expect(JSON.stringify(owner.state.messages)).toContain("source-two");
+    read.mockClear();
+    await owner.updateTail(page(1003, 1003, 80, "source-two"));
+    expect(read).not.toHaveBeenCalled();
+    expect(sequences(owner)).toEqual(before);
+  });
+
+  it("retains a complete old window on partial renewal failure and retries from the same place", async () => {
+    const { owner, read } = fixture();
+    await owner.loadOlder();
+    const before = owner.state.messages;
+    read.mockImplementation(async ({ offset, limit }) =>
+      page(1000, 1000 - offset, limit, "source-two"),
+    );
+    read.mockImplementationOnce(async ({ offset, limit }) =>
+      page(1000, 1000 - offset, limit, "source-two"),
+    );
+    read.mockRejectedValueOnce(new Error("Connection interrupted"));
+    await owner.updateTail(page(1000, 1000, 80, "source-two"));
+    expect(owner.state.error).toBe("older");
+    expect(owner.state.messages).toEqual(before);
+    await owner.loadOlder();
+    expect(owner.state.error).toBeNull();
+    expect(sequences(owner)).toEqual(before!.map((message) => readSessionMessageSequence(message)));
+    expect(JSON.stringify(owner.state.messages)).not.toContain("source-one");
+  });
+
+  it.each(["latest", "dispose"] as const)(
+    "does not restore a renewed page after %s",
+    async (retire) => {
+      const { owner, read } = fixture();
+      await owner.loadOlder();
+      const pending = deferred<ChatHistoryResult>();
+      read.mockReturnValueOnce(pending.promise);
+      const refreshing = owner.updateTail(page(1000, 1000, 80, "source-two"));
+      const joined = owner.whenIdle();
+      if (retire === "latest") {
+        owner.returnToLatest();
+      } else {
+        owner.dispose();
+      }
+      pending.resolve(page(1000, 920, 80, "source-two"));
+      await Promise.all([refreshing, joined]);
+      expect(owner.state.messages).toBeNull();
+    },
+  );
+
+  it("bounds a continuously changing rewrite renewal and leaves the window retryable", async () => {
+    const { owner, read } = fixture();
+    await owner.loadOlder();
+    const before = owner.state.messages;
+    read.mockClear();
+    let total = 1000;
+    read.mockImplementation(async ({ offset, limit }) => {
+      total += 1;
+      return page(total, total - offset, limit, "source-two");
+    });
+    await owner.updateTail(page(1000, 1000, 80, "source-two"));
+    expect(owner.state.error).toBe("older");
+    expect(read).toHaveBeenCalledTimes(7);
+    expect(owner.state.messages).toEqual(before);
+    read.mockImplementation(async ({ offset, limit }) =>
+      page(total, total - offset, limit, "source-two"),
+    );
+    await owner.updateTail(page(total, total, 80, "source-two"));
+    expect(sequences(owner)).toEqual(before!.map((message) => readSessionMessageSequence(message)));
+  });
+
+  it("refreshes the authoritative tail when renewal observes another source", async () => {
+    const { owner, read, refresh } = fixture();
+    await owner.loadOlder();
+    const before = sequences(owner);
+    read.mockClear();
+    read.mockImplementation(async ({ offset, limit }) =>
+      page(1000, 1000 - offset, limit, "source-three"),
+    );
+    await owner.updateTail(page(1000, 1000, 80, "source-two"));
+    await owner.whenIdle();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(owner.state.error).toBeNull();
+    expect(sequences(owner)).toEqual(before);
+    await owner.updateTail(page(1000, 1000, 80, "source-three"));
+    expect(sequences(owner)).toEqual(before);
+    expect(JSON.stringify(owner.state.messages)).not.toContain("source-one");
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["identity", "window-reset", "shrink"] as const)(
+    "requests authoritative history after renewal observes %s",
+    async (change) => {
+      const { owner, read, refresh } = fixture();
+      await owner.loadOlder();
+      read.mockClear();
+      const replacement = page(change === "shrink" ? 900 : 1000, 900, 80, "source-two");
+      if (change === "identity") {
+        replacement.sessionId = "session-two";
+        replacement.sessionInfo!.sessionId = "session-two";
+      } else if (change === "window-reset") {
+        replacement.windowReset = true;
+      }
+      read.mockResolvedValueOnce(replacement);
+      await owner.updateTail(page(1000, 1000, 80, "source-two"));
+      await owner.whenIdle();
+      expect(owner.state.messages).toBeNull();
+      expect(owner.state.error).toBe("older");
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledTimes(1);
+      const recovered = page(replacement.totalMessages!, undefined, 80, "source-two");
+      recovered.sessionId = replacement.sessionId;
+      recovered.sessionInfo!.sessionId = replacement.sessionId;
+      await owner.updateTail(recovered);
+      expect(owner.state.error).toBeNull();
+    },
+  );
+
+  it("accepts an empty projected page without inventing a conflicting source", async () => {
+    const { owner, read, refresh } = fixture();
+    await owner.loadOlder();
+    read.mockImplementation(async ({ offset, limit }) => {
+      const result = page(1000, 1000 - offset, limit, "source-two");
+      if (offset === 80) {
+        result.messages = [];
+      }
+      return result;
+    });
+    await owner.updateTail(page(1000, 1000, 80, "source-two"));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(owner.state.error).toBeNull();
+    expect(sequences(owner)).toEqual(Array.from({ length: 80 }, (_, index) => 921 + index));
+    expect(JSON.stringify(owner.state.messages)).not.toContain("source-one");
+  });
+
   it("visits all history in both directions while retaining a bounded contiguous window", async () => {
     const { owner, read, changed } = fixture();
     expect(changed).not.toHaveBeenCalled();
@@ -152,7 +304,7 @@ describe("kids bounded history window", () => {
     await owner.loadOlder();
     const before = owner.state.messages;
     changed.mockClear();
-    owner.updateTail(page(1001));
+    await owner.updateTail(page(1001));
     expect(owner.state.messages).toEqual(before);
     expect(owner.state.hasNewer).toBe(true);
     expect(changed).not.toHaveBeenCalled();
@@ -165,7 +317,7 @@ describe("kids bounded history window", () => {
     const pending = deferred<ChatHistoryResult>();
     read.mockReturnValueOnce(pending.promise);
     const loading = owner.loadOlder();
-    owner.updateTail(page(1001));
+    await owner.updateTail(page(1001));
     pending.resolve(page(1000, 920));
     await loading;
     expect(expectContiguous(owner)[0]).toBe(841);
@@ -216,7 +368,7 @@ describe("kids bounded history window", () => {
         } else if (change === "leaf-replace") {
           replacement.sessionInfo!.activeLeafEntryId = "replacement-leaf";
         }
-        owner.updateTail(replacement);
+        void owner.updateTail(replacement);
       }
       changed.mockClear();
       expect(owner.whenIdle()).toBe(loading);
@@ -255,7 +407,7 @@ describe("kids bounded history window", () => {
     const tail = page(1000);
     tail.messages!.splice(1, 0, sibling);
     tail.nextOffset = 79;
-    owner.updateTail(tail);
+    await owner.updateTail(tail);
     const older = page(1000, 921);
     // Replay a partially returned boundary row as the native API does.
     older.messages!.push(sibling);

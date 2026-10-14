@@ -84,7 +84,7 @@ internal image endpoints remain blocked by default.
 | OpenAI image generation with API billing         | `openai/gpt-image-2`                                                                                | `OPENAI_API_KEY`                               |
 | OpenAI GPT Image 2.5                             | `openai/gpt-image-2.5-flare` or `openai/gpt-image-2.5-sunburst`                                     | Explicit OpenAI API-key route                  |
 | OpenAI image generation with ChatGPT/Codex OAuth | `openai/gpt-image-2`                                                                                | OpenAI ChatGPT/Codex OAuth                     |
-| OpenAI transparent-background PNG/WebP           | `openai/gpt-image-1.5`                                                                              | `OPENAI_API_KEY` or OpenAI ChatGPT/Codex OAuth |
+| OpenAI transparent-background PNG/WebP           | `openai/gpt-image-2` (preview) or explicitly selected `openai/gpt-image-1.5`                        | `OPENAI_API_KEY` or OpenAI ChatGPT/Codex OAuth |
 | DeepInfra image generation                       | `deepinfra/black-forest-labs/FLUX-1-schnell`                                                        | `DEEPINFRA_API_KEY`                            |
 | fal Krea 2 expressive/style-directed generation  | `fal/krea/v2/medium/text-to-image`                                                                  | `FAL_KEY`                                      |
 | fal GPT Image 2.5                                | `fal/openai/gpt-image-2.5/flare/text-to-image` or `fal/openai/gpt-image-2.5/sunburst/text-to-image` | `FAL_KEY`                                      |
@@ -160,8 +160,8 @@ the peer who requested the image.
   available providers and models at runtime.
 </ParamField>
 <ParamField path="model" type="string">
-  Provider/model override (e.g. `openai/gpt-image-2`). Use
-  `openai/gpt-image-1.5` for transparent OpenAI backgrounds.
+  Provider/model override (e.g. `openai/gpt-image-2`). Background requests preserve
+  the selected model; OpenClaw does not silently substitute another image model.
 </ParamField>
 <ParamField path="image" type="string">
   Single reference image path or URL for edit mode.
@@ -341,9 +341,11 @@ and ComfyUI support 1.
     or Azure endpoint.
 
     The `openai/gpt-image-1.5`, `openai/gpt-image-1`, and
-    `openai/gpt-image-1-mini` models can still be selected explicitly. Use
-    `gpt-image-1.5` for transparent-background PNG/WebP output. The current
-    `gpt-image-2` API rejects `background: "transparent"`.
+    `openai/gpt-image-1-mini` models can still be selected explicitly.
+    `gpt-image-2` supports transparent PNG/WebP output in
+    [preview](https://developers.openai.com/api/docs/guides/tools-image-generation).
+    Availability depends on the selected provider and account. A rejected preview
+    request remains an error from that model; OpenClaw does not downgrade it.
 
     `gpt-image-2` supports both text-to-image generation and
     reference-image editing through the same `image_generate` tool.
@@ -379,8 +381,8 @@ and ComfyUI support 1.
 
     `openai.background` accepts `transparent`, `opaque`, or `auto`.
     Transparent outputs require `outputFormat` `png` or `webp` and a
-    transparency-capable OpenAI image model. OpenClaw routes default
-    `gpt-image-2` transparent-background requests to `gpt-image-1.5`.
+    transparency-capable OpenAI image model. OpenClaw preserves the selected model
+    for transparent-background requests.
     `openai.outputCompression` applies to JPEG/WebP outputs and is ignored
     for PNG outputs.
 

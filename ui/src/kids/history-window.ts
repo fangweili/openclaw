@@ -8,6 +8,12 @@
  * Latest, identity resets and disposal fence late completions synchronously.
  * Historical reads never adopt branch metadata or pending-input/live-run state.
  * Failed reads retain the current window and are retried by the same direction.
+ * Transcript rewrites renew retained pages atomically through updateTail; their
+ * message identities and reader position stay intact. A failed renewal keeps the
+ * old pages reachable and uses the existing older-edge retry, even at the start
+ * of history. Renewal and paging share the same read slot and retry budget.
+ * A newly observed source asks the conversation for its authoritative tail;
+ * physical resets retire the window through the same recovery path as paging.
  *
  * Browsing retains at most four pages, 320 projected rows and 1 MiB of serialized
  * message payload, plus one bounded latest-tail reference. Whole opposite-edge
@@ -16,6 +22,8 @@
  * makes at most seven reads to rebase concurrent appends or narrow a byte-capped
  * forward interval; continued changes require another explicit reader attempt.
  */
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { readTranscriptDisplayPosition } from "../../../src/chat/transcript-display-position.js";
 import { prependUniqueNativeMessages } from "../lib/chat/history-message-identity.ts";
 import type { ChatHistoryPagination } from "../pages/chat/chat-history-pagination.ts";
 import {
@@ -87,6 +95,15 @@ function range(pages: Page[]): { start: number; end: number } {
   };
 }
 
+function messageSource(message: unknown): string | undefined {
+  const metadata = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"]);
+  return readTranscriptDisplayPosition(metadata?.transcriptPosition)?.source;
+}
+
+function pageSource(page: Page | null): string | undefined {
+  return page?.messages.map(messageSource).findLast((source) => source !== undefined);
+}
+
 export class KidsHistoryWindow {
   private tail: Page | null = null;
   private pages: Page[] | null = null;
@@ -97,7 +114,7 @@ export class KidsHistoryWindow {
   private disposed = false;
   private olderStopped = false;
   private error: Direction | null = null;
-  private operation?: { generation: number; direction: Direction; promise: Promise<void> };
+  private operation?: { generation: number; direction: Direction | null; promise: Promise<void> };
 
   /**
    * Callbacks run synchronously and may read state. readPage is connection-scoped
@@ -139,9 +156,17 @@ export class KidsHistoryWindow {
    * Ordinary appends update paging totals without moving the reader. Physical
    * session changes, explicit resets, shrinking history, and same-size leaf
    * replacement retire browsing. The caller owns any additional reset evidence
-   * and publishes this synchronous state change; this method does not notify.
+   * and publishes this state change. A source rewrite renews retained pages in
+   * the existing serialized read slot before resolving; renewal failure keeps
+   * the complete old window and publishes an older-edge retry. Latest/disposal
+   * fence results, and ordinary concurrent appends rebase offsets.
    */
-  updateTail(result: ChatHistoryResult): void {
+  updateTail(result: ChatHistoryResult): Promise<void> {
+    this.adoptTail(result);
+    return this.renewStalePages();
+  }
+
+  private adoptTail(result: ChatHistoryResult): void {
     if (this.disposed) {
       return;
     }
@@ -153,7 +178,10 @@ export class KidsHistoryWindow {
       sessionId !== this.sessionId ||
       result.windowReset === true ||
       total < this.total ||
-      (total === this.total && this.leaf !== undefined && leaf !== undefined && leaf !== this.leaf)
+      (total === this.tail?.end &&
+        this.leaf !== undefined &&
+        leaf !== undefined &&
+        leaf !== this.leaf)
     ) {
       this.retireWindow();
     }
@@ -161,7 +189,56 @@ export class KidsHistoryWindow {
     this.leaf = leaf;
     this.total = total;
     const tail = pageFrom(result, pagination, 0);
+    if (!this.tail && !this.pages && tail) {
+      // An authoritative recovery replaces the retired window's edge error.
+      this.error = null;
+    }
     this.tail = sessionId && tail && fits([tail]) ? tail : null;
+  }
+
+  /** A new canonical source invalidates positional media IDs; ordinary appends do not. */
+  hasChangedSource(message: unknown): boolean {
+    const source = messageSource(message);
+    const current = pageSource(this.tail);
+    return source !== undefined && current !== undefined && source !== current;
+  }
+
+  private staleSource(): string | undefined {
+    const source = pageSource(this.tail);
+    return source &&
+      this.pages?.some((page) => {
+        const previous = pageSource(page);
+        return previous !== undefined && previous !== source;
+      })
+      ? source
+      : undefined;
+  }
+
+  /** Renew the old projection only; errors retain it for the existing edge retry. */
+  private renewStalePages(): Promise<void> {
+    const source = this.staleSource();
+    if (!source) {
+      return Promise.resolve();
+    }
+    if (this.operation) {
+      return this.operation.promise.then(() => this.renewStalePages());
+    }
+    const generation = this.generation;
+    this.error = null;
+    const task = this.refreshPages(source, generation)
+      .catch(() => {
+        if (this.current(generation)) {
+          this.error = "older";
+        }
+      })
+      .finally(() => {
+        this.operation = undefined;
+        if (this.current(generation)) {
+          this.onChange();
+        }
+      });
+    this.operation = { generation, direction: null, promise: task };
+    return task;
   }
 
   /** Join the current operation, or prepend one contiguous older page. */
@@ -212,6 +289,58 @@ export class KidsHistoryWindow {
     return !this.disposed && generation === this.generation;
   }
 
+  /** Renew one fixed reading window in the owned slot; reject without a partial commit. */
+  private async refreshPages(source: string, generation: number): Promise<void> {
+    const previous = this.pages!;
+    const refreshed: Page[] = [];
+    for (let reads = 0; reads < MAX_READS && refreshed.length < previous.length; reads += 1) {
+      const target = previous[refreshed.length]!;
+      const requestedTotal = this.total;
+      const offset = Math.max(0, requestedTotal - target.end);
+      const result = await this.readPage({ offset, limit: PAGE_ROWS, maxBytes: PAGE_BYTES });
+      if (!this.current(generation)) {
+        return;
+      }
+      const pagination = resolveChatHistoryPagination(result);
+      const total = pagination.totalMessages;
+      if (
+        result.windowReset === true ||
+        historySessionId(result) !== this.sessionId ||
+        (total !== undefined && total < requestedTotal)
+      ) {
+        this.retireWindow();
+        this.tail = null;
+        this.error = "older";
+        this.onChange();
+        this.onRefreshRequired();
+        return;
+      }
+      const page = pageFrom(result, pagination, offset);
+      if (!page || total === undefined) {
+        throw new Error("Refreshed history is missing pagination");
+      }
+      const nextSource = pageSource(page);
+      if (nextSource !== undefined && nextSource !== source) {
+        // The tail must adopt the new source before renewing again. The
+        // conversation coalesces this request and joins our occupied read slot.
+        this.onRefreshRequired();
+        return;
+      }
+      this.total = Math.max(this.total, total);
+      if (page.end !== target.end) {
+        continue;
+      }
+      if (page.start > target.start || !fits([...refreshed, page])) {
+        throw new Error("Refreshed history does not cover the current reading window");
+      }
+      refreshed.push(page);
+    }
+    if (refreshed.length !== previous.length) {
+      throw new Error("History kept changing while refreshing its media references");
+    }
+    this.pages = refreshed;
+  }
+
   private start(direction: Direction): Promise<void> {
     if (this.disposed) {
       return Promise.resolve();
@@ -220,6 +349,11 @@ export class KidsHistoryWindow {
     // accumulate abandoned reads when the reader repeatedly changes direction.
     if (this.operation) {
       return this.operation.promise;
+    }
+    // A stale window needs new references before any further navigation. This
+    // also admits the existing retry when the reader is already at message one.
+    if (this.staleSource()) {
+      return this.renewStalePages();
     }
     const state = this.state;
     if (direction === "older" ? !state.hasOlder : !state.hasNewer) {

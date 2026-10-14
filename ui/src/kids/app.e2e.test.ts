@@ -1,76 +1,31 @@
-import { writeFile } from "node:fs/promises";
 /** Browser boundary proof with a synthetic Gateway; no live conversations or providers. */
 import path from "node:path";
-import { chromium, type Browser } from "playwright";
-import { preview, type PreviewServer } from "vite";
-import { afterAll, beforeAll, expect, it } from "vitest";
-import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
+import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
+import type { Browser } from "playwright";
+import { afterAll, assert, beforeAll, expect, it } from "vitest";
 import type { MockGatewayWindow } from "../test-helpers/control-ui-e2e-contract.ts";
+import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e-defaults.ts";
 import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
+import {
+  notificationPermissionFixture,
+  profile,
+  roster,
+  sessionKey,
+  startKidsE2e,
+} from "./app.e2e.test-support.ts";
 
-const sessionKey = "agent:student:kids:student-profile";
-const profile = {
-  id: "student-profile",
-  displayName: "Alex",
-  emails: ["student@example.test"],
-  avatarMime: null,
-  mergedInto: null,
-  createdAt: 1,
-  updatedAt: 1,
-  githubIdentity: null,
-  hasAvatar: false,
-  role: "student",
-  effectiveRole: "student",
-};
-const roster = {
-  defaultId: "student",
-  mainKey: "main",
-  scope: "per-sender",
-  agents: [{ id: "student", identity: { name: "Rocky" } }],
-};
 let browser: Browser;
-let server: PreviewServer;
 let baseUrl: string;
 let proof: string;
-const examples: Array<{ id: string; label: string }> = [];
-
-// Headless Chromium denies Web Push even with a permission grant. Keep this
-// fixture deterministic; subscription/delivery behavior has its own owner tests.
-function notificationPermissionFixture() {
-  Object.defineProperty(Notification, "permission", {
-    get: () =>
-      sessionStorage.getItem("kids-test-block-notifications") === "1" ? "denied" : "default",
-  });
-}
+let examples: Array<{ id: string; label: string }>;
+let harness: Awaited<ReturnType<typeof startKidsE2e>> | undefined;
 
 beforeAll(async () => {
-  server = await preview({
-    configFile: path.resolve("ui/vite.kids.config.ts"),
-    preview: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
-  const address = server.httpServer.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Kids preview did not bind a TCP port");
-  }
-  baseUrl = `http://127.0.0.1:${address.port}/kids/`;
-  proof = createControlUiE2eArtifactDir("kids-app");
-  browser = await chromium.launch({
-    headless: true,
-    args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
-  });
+  harness = await startKidsE2e("kids-app");
+  ({ browser, baseUrl, proof, examples } = harness);
 });
-
 afterAll(async () => {
-  if (proof) {
-    await writeFile(
-      path.join(proof, "gallery.html"),
-      String.raw`<!doctype html><meta charset="utf-8"><title>Rocky preview</title><style>body{font:16px system-ui;margin:32px;background:#f7f8f5;color:#26372b}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:28px}section{background:white;padding:20px;border-radius:16px}img{max-width:100%;max-height:750px;object-fit:contain;display:block;margin:auto}textarea{box-sizing:border-box;width:100%;min-height:90px;margin-top:8px}button{padding:12px 20px;margin:16px 0}</style><h1>Rocky for kids</h1><p>Static captures from the real app with synthetic conversations. Feedback stays in this browser.</p><button id="copy">Copy feedback</button><main>${examples.map(({ id, label }) => `<section><h2>${label}</h2><img src="${id}.png" alt="${label}"><label for="${id}">Feedback: ${label}</label><textarea id="${id}"></textarea></section>`).join("")}</main><script>const key='rocky-gallery-feedback-v1';let saved={};try{saved=JSON.parse(localStorage.getItem(key)||'{}')}catch{}for(const field of document.querySelectorAll('textarea')){field.value=saved[field.id]||'';field.oninput=()=>{saved[field.id]=field.value;localStorage.setItem(key,JSON.stringify(saved))}}document.querySelector('#copy').onclick=async()=>{const text=Array.from(document.querySelectorAll('textarea')).map(x=>'## '+x.id+' — '+x.closest('section').querySelector('h2').textContent+'\n'+x.value).join('\n\n');try{await navigator.clipboard.writeText(text);document.querySelector('#copy').textContent='Copied'}catch{const field=document.createElement('textarea');field.value=text;document.body.append(field);field.select();document.execCommand('copy');field.remove()}}</script>`,
-    );
-  }
-  await browser?.close();
-  await new Promise<void>((resolve, reject) => {
-    server?.httpServer.close((error) => (error ? reject(error) : resolve()));
-  });
+  await harness?.close();
 });
 
 it("opens only the owned tutor, sends text, hides controls and internal events", async () => {
@@ -232,7 +187,13 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
       { count: 1, duration: expect.any(Number) },
       { count: 1, duration: expect.any(Number) },
     ]);
-    expect(timings[1].duration).toBeGreaterThanOrEqual(timings[0].duration!);
+    const [acceptedTiming, finishedTiming] = timings;
+    assert(acceptedTiming?.duration !== undefined);
+    assert(finishedTiming?.duration !== undefined);
+    expect(finishedTiming.duration).toBeGreaterThanOrEqual(acceptedTiming.duration);
+    expect(await page.getByRole("button", { name: "Today", exact: true }).count()).toBe(0);
+    expect(await gateway.getRequests("kids.activity.get")).toHaveLength(0);
+    expect(await gateway.getRequests("kids.activity.touch")).toHaveLength(0);
     expect(await page.getByText(answer).count()).toBe(1);
     expect(await page.getByText("Can we try a fraction puzzle?", { exact: true }).count()).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -506,6 +467,14 @@ it("records dictation into an editable draft and sends only on request", async (
     await context.addInitScript(notificationPermissionFixture);
     // Observe the actual browser recorder, so finish cannot race microphone startup.
     await context.addInitScript(() => {
+      const acquire = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        document.documentElement.dataset.microphoneRequested = "true";
+        await new Promise<void>((resolve) => {
+          window.addEventListener("kids-fixture-grant-microphone", () => resolve(), { once: true });
+        });
+        return acquire(constraints);
+      };
       const NativeRecorder = MediaRecorder;
       window.MediaRecorder = class extends NativeRecorder {
         override start(timeslice?: number) {
@@ -523,8 +492,25 @@ it("records dictation into an editable draft and sends only on request", async (
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    const activity: ActivitySnapshot = {
+      now: 1000,
+      date: "2026-10-13",
+      correctStreak: 0,
+      daily: null,
+      nextActivity: null,
+      activity: null,
+      pet: {
+        state: "normal",
+        scene: null,
+        image: null,
+        lastInteractionAt: 1000,
+        excitedUntil: null,
+      },
+    };
     const gateway = await installMockGateway(page, {
       awaitInitialRoster: false,
+      featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
+      deferredMethods: ["kids.transcribe"],
       sessionKey,
       operatorScopes: ["operator.sessions.write", "operator.talk"],
       methodResponses: {
@@ -537,12 +523,27 @@ it("records dictation into an editable draft and sends only on request", async (
           messages: [],
         },
         "kids.transcribe": { text: "Can we practice fractions?" },
+        "kids.activity.get": activity,
+        "kids.activity.touch": { snapshot: activity },
       },
     });
     await page.goto(baseUrl);
     await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
     await page.getByRole("button", { name: "Dictate a message" }).click();
+    await page.waitForFunction(
+      () => document.documentElement.dataset.microphoneRequested === "true",
+    );
+    const today = page.getByRole("button", { name: "Today", exact: true });
+    const chat = page.getByRole("button", { name: "Chat", exact: true });
+    const finish = page.getByRole("button", { name: "Finish dictation", exact: true });
+    expect(await today.isDisabled()).toBe(true);
+    expect(await today.getAttribute("title")).toBe("Finish dictation to open Today.");
+    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await finish.isVisible()).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new Event("kids-fixture-grant-microphone")));
     await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
+    expect(await today.isDisabled()).toBe(true);
+    expect(await finish.isVisible()).toBe(true);
     expect(await page.getByRole("button", { name: "Send message" }).isDisabled()).toBe(true);
     expect(
       await page.getByRole("button", { name: "Talk to Rocky", exact: true }).isDisabled(),
@@ -556,12 +557,21 @@ it("records dictation into an editable draft and sends only on request", async (
       mimeType: expect.stringMatching(/^audio\/(webm|mp4|ogg)/),
     });
     expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
+    expect(await today.isDisabled()).toBe(true);
+    expect(await today.getAttribute("title")).toBe(
+      "Wait for your words to appear before opening Today.",
+    );
+    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await page.locator(".kids-footer").isVisible()).toBe(true);
+    await page.getByText("Finishing your words…", { exact: true }).waitFor();
+    await gateway.resolveDeferred("kids.transcribe", { text: "Can we practice fractions?" });
     const composer = page.getByLabel("Message Rocky", { exact: true });
     await page.waitForFunction(
       () =>
         document.querySelector<HTMLTextAreaElement>("textarea")?.value ===
         "Can we practice fractions?",
     );
+    expect(await today.isEnabled()).toBe(true);
     expect(await gateway.getRequests("chat.send")).toHaveLength(0);
     await composer.fill("Can we practice fractions together?");
     await page.screenshot({ path: path.join(proof, "dictation-draft.png"), fullPage: true });
@@ -625,6 +635,8 @@ it("reopens media and unsent text without changing tutor or notification setting
         path: "ui/kids/public/rocky-192.png",
       },
     ];
+    const diagramFixture = media[2];
+    assert(diagramFixture);
     for (const item of media) {
       await page.route(`**/api/artifacts/download/fixture/${item.id}`, (route) =>
         route.fulfill({
@@ -656,9 +668,9 @@ it("reopens media and unsent text without changing tutor or notification setting
         content: [
           {
             type: "image",
-            artifactId: media[2].id,
+            artifactId: diagramFixture.id,
             mimeType: "image/png",
-            fileName: media[2].name,
+            fileName: diagramFixture.name,
           },
         ],
       },
@@ -951,11 +963,10 @@ it("pages a long conversation without moving the reader and returns to the lates
     expect(browsingIds[0]).toBe("history-201");
     expect(browsingIds.at(-1)).toBe("history-520");
 
+    const replyText = "Your next challenge is ready: place 5/8 on a number line.";
     const reply = {
       role: "assistant",
-      content: [
-        { type: "text", text: "Your next challenge is ready: place 5/8 on a number line." },
-      ],
+      content: [{ type: "text", text: replyText }],
       __openclaw: { id: "history-601", seq: 601 },
     };
     messages.push(reply);
@@ -973,13 +984,13 @@ it("pages a long conversation without moving the reader and returns to the lates
     await gateway.resolveDeferred("chat.history", historyPage(0, 80));
     await expectAnchor(beforeReply);
     expect(await expectBoundedRows()).toEqual(browsingIds);
-    expect(await page.getByText(reply.content[0].text, { exact: true }).count()).toBe(0);
+    expect(await page.getByText(replyText, { exact: true }).count()).toBe(0);
     expect(await composer.inputValue()).toBe(draft);
     await page.screenshot({ path: path.join(proof, "history-latest-mobile.png"), fullPage: true });
     examples.push({ id: "history-latest-mobile", label: "Reading earlier messages with Latest" });
 
     await latest.click();
-    await page.getByText(reply.content[0].text, { exact: true }).waitFor();
+    await page.getByText(replyText, { exact: true }).waitFor();
     await latest.waitFor({ state: "hidden" });
     const tailIds = await expectBoundedRows();
     expect(tailIds).toHaveLength(80);

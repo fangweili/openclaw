@@ -26,6 +26,7 @@
     "@novnc/novnc": "1.7.0",
     "@openclaw/gateway-client": "workspace:*",
     "@openclaw/gateway-protocol": "workspace:*",
+    "@openclaw/kids-activity-contract": "workspace:*",
     "@openclaw/libterminal": "0.3.7",
     "@openclaw/media-core": "workspace:*",
     "@openclaw/mermaid-renderer": "workspace:*",

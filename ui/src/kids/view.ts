@@ -11,6 +11,8 @@ import { strokeIcon } from "../components/icons-tools.ts";
 import { toSanitizedMarkdownHtml } from "../components/markdown.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import { renderKidsActivity, type KidsActivityActions } from "./activity-view.ts";
+import type { KidsActivityState } from "./activity.ts";
 import type { KidsAttachmentState } from "./attachments.ts";
 import type { KidsConversationState } from "./conversation.ts";
 import { kidsMediaPreview } from "./history-media-view.ts";
@@ -21,6 +23,9 @@ import type { KidsVoiceState } from "./voice.ts";
 registerKidsEnglish();
 
 export type KidsViewState = {
+  activityEnabled: boolean;
+  tab: "chat" | "today";
+  activity: KidsActivityState;
   conversation: KidsConversationState;
   voice: KidsVoiceState;
   dictation: { active: boolean; finishing: boolean; detail: string | null };
@@ -36,6 +41,8 @@ export type KidsViewState = {
 };
 
 export type KidsViewActions = {
+  tab: (tab: "chat" | "today") => void;
+  activity: KidsActivityActions;
   draft: (value: string) => void;
   send: () => void;
   attach: (files: readonly File[]) => void;
@@ -126,22 +133,63 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
-  const status = calling
-    ? t(`kids.voice.${voice.status}`)
-    : chat.busy
-      ? t("kids.thinking")
-      : ready
-        ? t("kids.here")
-        : t("kids.connecting");
+  const today = ready && state.activityEnabled && state.tab === "today" && !calling && !dictating;
+  const todayUnavailable = calling
+    ? t("kids.activity.finishCall")
+    : state.dictation.finishing
+      ? t("kids.activity.waitForDictation")
+      : dictating
+        ? t("kids.activity.finishDictation")
+        : null;
+  // Keep the empty idle live region mounted so its first useful update is announced.
+  const status = error
+    ? t("kids.unavailable")
+    : calling
+      ? t(`kids.voice.${voice.status}`)
+      : chat.busy
+        ? t("kids.thinking")
+        : !ready
+          ? t("kids.connecting")
+          : null;
   return html`
     <div class="kids-shell">
       <header class="kids-header">
-        <div class="kids-identity">
-          <img class="kids-avatar" src="/kids/rocky.svg" alt="" />
-          <div>
-            <h1>${t("kids.name")}</h1>
-            <p class="kids-status" role="status">${error ? t("kids.unavailable") : status}</p>
-          </div>
+        <h1 class="kids-sr-only">${t("kids.name")}</h1>
+        <div class="kids-header-main">
+          ${
+            state.activityEnabled
+              ? html`<nav class="kids-mode-switch" aria-label=${t("kids.activity.navigation")}>
+                    <button
+                      type="button"
+                      aria-current=${!today ? "page" : nothing}
+                      ?disabled=${!ready}
+                      @click=${() => actions.tab("chat")}
+                    >
+                      ${t("kids.activity.chat")}
+                    </button>
+                    <button
+                      class="kids-today-mode"
+                      type="button"
+                      aria-current=${today ? "page" : nothing}
+                      aria-describedby=${todayUnavailable ? "kids-today-voice-help" : nothing}
+                      title=${todayUnavailable ?? nothing}
+                      ?disabled=${!ready || calling || dictating}
+                      @click=${() => actions.tab("today")}
+                    >
+                      <span class="kids-mode-pet" aria-hidden="true">
+                        <img
+                          data-kids-pet="header"
+                          src=${ready && state.activity.imageUrl ? state.activity.imageUrl : "/kids/rocky.svg"}
+                          alt=""
+                        />
+                      </span>
+                      <span>${t("kids.activity.today")}</span>
+                    </button>
+                  </nav>
+                  ${todayUnavailable ? html`<span id="kids-today-voice-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
+              : nothing
+          }
+          <p class="kids-status" role="status">${status ?? nothing}</p>
         </div>
         <div class="kids-header-actions">
           ${chat.childName ? html`<span class="kids-child">${chat.childName}</span>` : nothing}
@@ -164,7 +212,8 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
           }
         </div>
       </header>
-      <div class="kids-thread-area">
+      ${today ? renderKidsActivity(state.activity, actions.activity) : nothing}
+      <div class="kids-thread-area" ?hidden=${today}>
         <main class="kids-thread" aria-label=${t("kids.conversation")}>
           <div class="kids-thread-content">
             ${
@@ -257,7 +306,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
             : nothing
         }
       </div>
-      <footer class="kids-footer">
+      <footer class="kids-footer" ?hidden=${today}>
         ${
           calling
             ? html`

@@ -54,6 +54,7 @@ export class KidsVoice {
   constructor(
     private readonly client: GatewayBrowserClient,
     private readonly onState: (state: KidsVoiceState) => void,
+    private readonly onUserTurn: () => void = () => {},
   ) {}
 
   get state(): KidsVoiceState {
@@ -102,6 +103,11 @@ export class KidsVoice {
           if (current()) {
             this.conversation = updateRealtimeTalkConversation(this.conversation, entry);
             this.publish({ entries: this.conversation.entries });
+            // The shared transcript owner already deduplicates accepted finals;
+            // provisional caption boundaries are not speech admission authority.
+            if (entry.role === "user" && entry.final && entry.text.trim()) {
+              this.onUserTurn();
+            }
           }
         },
         onTranscriptOrder: (orders) => {

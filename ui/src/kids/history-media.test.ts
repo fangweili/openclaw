@@ -42,7 +42,7 @@ describe("kids history media view", () => {
     const observations: Array<{
       callback: IntersectionObserverCallback;
       target?: Element;
-      disconnect: ReturnType<typeof vi.fn>;
+      disconnect: () => void;
     }> = [];
     vi.stubGlobal(
       "IntersectionObserver",
@@ -139,8 +139,8 @@ beforeEach(() => {
   vi.stubGlobal(
     "URL",
     class extends URL {
-      static createObjectURL = createObjectUrl;
-      static revokeObjectURL = revokeObjectUrl;
+      static override createObjectURL = createObjectUrl;
+      static override revokeObjectURL = revokeObjectUrl;
     },
   );
 });

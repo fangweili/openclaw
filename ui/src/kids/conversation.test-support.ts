@@ -7,7 +7,11 @@ import type { GatewayProtocolRequestOptions } from "@openclaw/gateway-client/bro
 import type { GatewayEventFrame, GatewayHelloOk } from "../api/gateway.ts";
 import { KidsConversation, type KidsConversationState } from "./conversation.ts";
 
-export const hello: GatewayHelloOk = { type: "hello-ok", protocol: 4 };
+export const hello: GatewayHelloOk = {
+  type: "hello-ok",
+  protocol: 4,
+  auth: { role: "operator", scopes: ["operator.sessions.write", "operator.talk"] },
+};
 export const sessionKey = "agent:student:kids:child-one";
 export const textMessage = (role: string, text: string, id: string, extra: object = {}) => ({
   role,
