@@ -11,8 +11,10 @@ service; they are not additional fixed assets.
 
 Rocky is a moss-green rounded mountain creature with an ivory snowy peak, short
 rounded arms and feet, and a softly textured clay/felt surface. The reference
-owns its identity. Daily generation may change the theme and accessories, but
-preserves that identity.
+owns its anatomy, proportions, colors and material. Daily generation may change
+the activity, outfit, equipment, expression, whole-body pose and viewpoint while
+keeping Rocky's face and snowy mountain shape recognizable. The reference pose
+is not a template for daily acting.
 
 The activity media owner reads these files from the installed plugin directory.
 All files have genuine transparent alpha, are at most 720 pixels per side and

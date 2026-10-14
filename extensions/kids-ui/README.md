@@ -166,8 +166,15 @@ the agent's generated daily captions. Private image reads require the same
 session authority, and no local paths enter browser responses. Generated art is
 stored and served as PNG, preserving any provider alpha through the shared image
 worker's bounded resizing. The plugin rejects output still exceeding 512 KiB;
-compression never flattens it into JPEG. Prompts ask for an isolated pet and small
-theme props, without a background, floor, or frame. Actual transparent generation
+compression never flattens it into JPEG. Prompts preserve Rocky's anatomy, colors
+and clay material while allowing contextual activities, costumes, expressions and
+whole-body poses. The planner prioritizes recent conversation and dated school
+context maintained in the child's profile, with established interests or seasonal
+ideas as a fallback. It can revisit a relevant topic through a fresh moment rather
+than forcing a new theme. The excited image continues the normal image's theme, outfit
+and core equipment with a distinct action and silhouette; its composition can
+change. Both remain isolated cutouts with only necessary equipment and small
+props or action cues, without a background, floor, or frame. Actual transparent generation
 also requires support from the selected provider; the plugin does not change models.
 
 The store retains 90 days by last activity update. It prunes whole day bundles
@@ -189,7 +196,8 @@ that hook.
 
 Private preparation context also carries each recent day's `scenePrompt`, the
 saved normal-scene creative plan (up to 3,000 characters). It preserves intended
-themes and props across isolated preparation jobs; it is not evidence that every
+themes, actions, outfits and compositions across isolated preparation jobs so the
+planner can vary more than props; it is not evidence that every
 planned detail appeared in the generated art. This text stays out of browser
 snapshots and the per-turn tutor prompt.
 
