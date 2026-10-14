@@ -106,15 +106,18 @@ The plugin ships approved canonical and fixed pose artwork under `pets/`.
 Both children use the same original Rocky mountain character, with distinct
 reference, bored, and sleeping poses. Rocky is a soft clay moss-green rounded
 mountain with an ivory snowy central top peak, small rounded green arms and feet,
-large black-and-ivory eyes, and a friendly smile; it has no ears, tail, or belly
+large black-and-ivory eyes; it has no ears, tail, or belly
 patch. The fixed files are `rocky-reference.webp`, `rocky-bored.webp`, and
 `rocky-sleeping.webp`. Daily normal pictures keep this identity while personalizing
-the theme and small props for each child. Excited pictures reference that child's
-normal picture. Both captions and fixed mood captions come from the preparing
-agent.
+the activity, outfit, equipment, expression and whole-body pose. The planner
+prioritizes recent conversations and dated school context already maintained in
+the child's profile, falling back to established interests or seasonal ideas.
+Excited pictures reference that child's normal picture, continuing its theme,
+outfit and core equipment with a distinct action and silhouette. Both captions
+and fixed mood captions come from the preparing agent.
 
 The private preparation context retains each day's `scenePrompt` alongside its
-captions, so later jobs can remember intended props and story details. This is the
+captions, so later jobs can remember intended actions, outfits and story details. This is the
 requested scene, not a claim that every generated visual detail was verified. It
 is omitted from the child's public activity snapshot.
 
