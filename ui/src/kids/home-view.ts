@@ -21,9 +21,13 @@ const create = strokeIcon(
 );
 const finish = strokeIcon(svg`<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>`);
 
-/** Keep this panel mounted while authorized so native scrolling survives navigation. */
+/**
+ * Render the admitted conversation name only; an empty name gets a generic title.
+ * Keep this panel mounted while authorized so native scrolling survives navigation.
+ */
 export function renderKidsHome(
   activity: KidsActivityState,
+  childName: string,
   navigate: (page: KidsPage) => void,
   retry: () => void,
   hidden: boolean,
@@ -33,9 +37,11 @@ export function renderKidsHome(
     aria-label=${t("kids.activity.today")}
     ?hidden=${hidden}
   >
+    <h1 class="kids-home-title" id="kids-home-title">
+      ${childName ? t("kids.home.personalTitle", { name: childName }) : t("kids.home.title")}
+    </h1>
     ${renderKidsPet(activity, retry)}
     <section class="kids-home-content" aria-labelledby="kids-home-title">
-      <h1 id="kids-home-title">${t("kids.home.title")}</h1>
       <button
         class="kids-home-chat"
         aria-label=${t("kids.activity.chatAction")}

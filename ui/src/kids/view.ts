@@ -69,7 +69,6 @@ const arrow = strokeIcon(svg`<path d="M12 19V5m-6 6 6-6 6 6"/>`);
 const back = strokeIcon(svg`<path d="M19 12H5m6-6-6 6 6 6"/>`);
 const down = strokeIcon(svg`<path d="M12 5v14m-6-6 6 6 6-6"/>`);
 const stop = strokeIcon(svg`<rect x="6" y="6" width="12" height="12" rx="2"/>`);
-const bell = strokeIcon(svg`<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>`);
 
 /** Keep sanitized learning links, but never let a reply navigate into gateway applications. */
 function messageHtml(text: string): string {
@@ -164,67 +163,44 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
           ? t("kids.connecting")
           : null;
   return html`
-    <div class="kids-shell">
-      <header class="kids-header">
-        <h1 class="kids-sr-only">${t("kids.name")}</h1>
-        <div class="kids-header-main">
-          ${
-            state.activityEnabled && page !== "today"
-              ? html`<nav class="kids-page-navigation" aria-label=${t("kids.home.navigation")}>
-                    <button
-                      type="button"
-                      aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
-                      title=${todayUnavailable ?? nothing}
-                      ?disabled=${!ready || calling || dictating}
-                      @click=${() => actions.navigate("today")}
-                    >
-                      <span aria-hidden="true">${back}</span>${t("kids.activity.today")}
-                    </button>
-                    ${
-                      page === "chat" && state.returnToSolve
-                        ? html`<button
-                            class="kids-return-solve"
-                            type="button"
-                            aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
-                            title=${todayUnavailable ?? nothing}
-                            ?disabled=${!ready || calling || dictating}
-                            @click=${() => actions.navigate("solve")}
-                          >
-                            ${t("kids.home.backToSolve")}
-                          </button>`
-                        : nothing
-                    }
-                  </nav>
-                  ${todayUnavailable ? html`<span id="kids-navigation-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
-              : nothing
-          }
-          <p class="kids-status" role="status">${status ?? nothing}</p>
-        </div>
-        <div class="kids-header-actions">
-          ${chat.childName ? html`<span class="kids-child">${chat.childName}</span>` : nothing}
-          ${
-            state.notifications?.status === "enabled"
-              ? html`<span class="kids-notifications-on" title=${t("kids.notifications.enabled")}
-                  ><span aria-hidden="true">${bell}</span
-                  ><span class="kids-sr-only">${t("kids.notifications.enabled")}</span></span
-                >`
-              : state.notifications
-                ? html`<button
-                    class="kids-notifications"
-                    aria-label=${t("kids.notifications.enable")}
-                    ?disabled=${state.notifications.status === "working"}
-                    @click=${actions.notifications}
-                  >
-                    ${bell}
-                  </button>`
-                : nothing
-          }
-        </div>
-      </header>
+    <div
+      class=${`kids-shell${state.activityEnabled && page !== "today" ? " kids-shell--with-navigation" : ""}`}
+    >
+      <h1 class="kids-sr-only" ?hidden=${page === "today"}>${t("kids.name")}</h1>
+      ${
+        state.activityEnabled && page !== "today"
+          ? html`<nav class="kids-page-navigation" aria-label=${t("kids.home.navigation")}>
+                <button
+                  type="button"
+                  aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
+                  title=${todayUnavailable ?? nothing}
+                  ?disabled=${!ready || calling || dictating}
+                  @click=${() => actions.navigate("today")}
+                >
+                  <span aria-hidden="true">${back}</span>${t("kids.activity.today")}
+                </button>
+                ${
+                  page === "chat" && state.returnToSolve
+                    ? html`<button
+                        class="kids-return-solve"
+                        type="button"
+                        aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
+                        title=${todayUnavailable ?? nothing}
+                        ?disabled=${!ready || calling || dictating}
+                        @click=${() => actions.navigate("solve")}
+                      >
+                        ${t("kids.home.backToSolve")}
+                      </button>`
+                    : nothing
+                }
+              </nav>
+              ${todayUnavailable ? html`<span id="kids-navigation-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
+          : nothing
+      }
       ${
         ready && state.activityEnabled
           ? html`
-              ${renderKidsHome(state.activity, actions.navigate, actions.activity.retry, page !== "today")}
+              ${renderKidsHome(state.activity, chat.childName, actions.navigate, actions.activity.retry, page !== "today")}
               ${renderKidsActivity(
                 state.activity,
                 actions.activity,
@@ -245,6 +221,9 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
       <div class="kids-thread-area" ?hidden=${page !== "chat"}>
         <main class="kids-thread" aria-label=${t("kids.conversation")}>
           <div class="kids-thread-content">
+            <p class=${`kids-status${ready || error ? " kids-sr-only" : ""}`} role="status">
+              ${status ?? nothing}
+            </p>
             ${
               error
                 ? html`<section class="kids-notice" role="alert">
@@ -336,6 +315,18 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
         }
       </div>
       <footer class="kids-footer" ?hidden=${page !== "chat"}>
+        ${
+          state.notifications && state.notifications.status !== "enabled"
+            ? html`<button
+                class="kids-notifications"
+                type="button"
+                ?disabled=${state.notifications.status === "working"}
+                @click=${actions.notifications}
+              >
+                ${t(state.notifications.status === "working" ? "kids.notifications.working" : "kids.notifications.enable")}
+              </button>`
+            : nothing
+        }
         ${
           calling
             ? html`

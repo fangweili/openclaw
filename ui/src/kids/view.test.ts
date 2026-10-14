@@ -95,7 +95,12 @@ it("opens Today choices and retains the Chat, home, and Solve panels across navi
     const composer = root.querySelector<HTMLTextAreaElement>("#kids-message")!;
     expect(home.hidden).toBe(false);
     expect(solve.hidden).toBe(true);
-    expect(root.querySelector("h1#kids-home-title")?.textContent).toBe("What shall we do?");
+    expect(root.querySelector("h1#kids-home-title")?.textContent?.trim()).toBe(
+      "What shall we do, Child?",
+    );
+    state.conversation.childName = "";
+    paint();
+    expect(root.querySelector("h1#kids-home-title")?.textContent?.trim()).toBe("What shall we do?");
     const choices = home.querySelectorAll<HTMLButtonElement>(".kids-home-grid button");
     expect([...choices].map((choice) => choice.disabled)).toEqual([false, true, true, true]);
     for (const choice of [...choices].slice(1)) {
@@ -132,18 +137,28 @@ it("keeps a mounted useful status and all navigation disabled during a live or f
     paint();
     const statusRegion = root.querySelector(".kids-status")!;
     expect(statusRegion.textContent?.trim()).toBe("");
+    expect(statusRegion.closest(".kids-thread-content")).not.toBeNull();
+    state.conversation.busy = true;
+    paint();
+    expect(root.querySelector(".kids-status")).toBe(statusRegion);
+    expect(statusRegion.classList.contains("kids-sr-only")).toBe(true);
+    expect(root.querySelector(".kids-thinking")?.textContent).toBe("Rocky is replying…");
+    state.conversation.busy = false;
     state.page = "solve";
     state.returnToSolve = true;
     for (const status of ["listening", "stopping"] as const) {
       state.voice = { status, active: status === "listening", detail: null, entries: [] };
       paint();
       expect(root.querySelector<HTMLElement>(".kids-thread-area")!.hidden).toBe(false);
-      for (const button of root.querySelectorAll<HTMLButtonElement>("header nav button")) {
+      for (const button of root.querySelectorAll<HTMLButtonElement>(
+        ".kids-page-navigation button",
+      )) {
         expect(button.disabled).toBe(true);
         button.click();
       }
       expect(actions.navigate).not.toHaveBeenCalled();
       expect(root.querySelector(".kids-status")).toBe(statusRegion);
+      expect(statusRegion.classList.contains("kids-sr-only")).toBe(true);
       expect(statusRegion.textContent?.trim()).toBe(
         status === "listening" ? "I’m listening" : "Finishing our call…",
       );
@@ -154,9 +169,11 @@ it("keeps a mounted useful status and all navigation disabled during a live or f
     expect(root.querySelector(".kids-home")).toBeNull();
     expect(root.querySelector(".kids-solve")).toBeNull();
     expect(statusRegion.textContent?.trim()).toBe("Connecting…");
+    expect(statusRegion.classList.contains("kids-sr-only")).toBe(false);
     state.connectionError = "Synthetic connection failure";
     paint();
     expect(statusRegion.textContent?.trim()).toBe("Let’s reconnect");
+    expect(statusRegion.classList.contains("kids-sr-only")).toBe(true);
   } finally {
     render(null, root);
   }
@@ -173,7 +190,7 @@ it.each([false, true])(
     state.dictation = { active: !finishing, finishing, detail: null };
     try {
       render(renderKidsView(state, actions), root);
-      const modes = root.querySelector("header nav")!;
+      const modes = root.querySelector(".kids-page-navigation")!;
       const [today, solve] = modes.querySelectorAll("button");
       expect(solve!.disabled).toBe(true);
       expect(today!.disabled).toBe(true);
@@ -279,21 +296,32 @@ describe("kids media composer", () => {
 });
 
 describe("kids notification control", () => {
-  it("offers setup when off and shows a noninteractive status once enabled", () => {
+  it("offers setup only in the Chat footer and removes it completely once enabled", () => {
     const root = document.createElement("div");
     const state = readyState();
     const actions = viewActions();
     try {
       state.notifications = { status: "off", detail: null };
       render(renderKidsView(state, actions), root);
-      root.querySelector<HTMLButtonElement>(".kids-notifications")!.click();
+      const footer = root.querySelector<HTMLElement>(".kids-footer")!;
+      footer.querySelector<HTMLButtonElement>(".kids-notifications")!.click();
+      expect(actions.notifications).toHaveBeenCalledOnce();
+      state.page = "today";
+      render(renderKidsView(state, actions), root);
+      expect(footer.hidden).toBe(true);
+      state.page = "chat";
+      state.notifications = { status: "working", detail: "Setting up notifications…" };
+      render(renderKidsView(state, actions), root);
+      expect(footer.hidden).toBe(false);
+      const working = footer.querySelector<HTMLButtonElement>(".kids-notifications")!;
+      expect(working.disabled).toBe(true);
+      working.click();
       expect(actions.notifications).toHaveBeenCalledOnce();
       state.notifications = { status: "enabled", detail: null };
       render(renderKidsView(state, actions), root);
       expect(root.querySelector("button.kids-notifications")).toBeNull();
-      const status = root.querySelector<HTMLElement>(".kids-notifications-on")!;
-      expect(status.textContent).toContain("Notifications on");
-      status.click();
+      expect(root.textContent).not.toContain("Notifications on");
+      expect(root.querySelector(".kids-notifications-on")).toBeNull();
       expect(actions.notifications).toHaveBeenCalledOnce();
     } finally {
       render(null, root);

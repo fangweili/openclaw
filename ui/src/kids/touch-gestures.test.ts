@@ -9,7 +9,7 @@ function fixture(markup = "<p>A fraction puzzle</p>", safari = true) {
   root.innerHTML = markup;
   document.body.append(root);
   const target = root.firstElementChild!;
-  const owner = new KidsTouchGestures(root);
+  const owner = new KidsTouchGestures(document);
   owners.push(owner);
   return { root, target, owner };
 }
@@ -81,6 +81,50 @@ describe("kids Safari touch gestures", () => {
     expect(tap(target, 1350, 220)).toBe(false);
   });
 
+  it.each([
+    "<button><span>Solve</span></button>",
+    "<button disabled><span>Practice</span></button>",
+    "<a href='#story'><span>Read</span></a>",
+    "<details><summary><span>Hint</span></summary></details>",
+    "<video controls></video>",
+    "<audio controls></audio>",
+  ])("suppresses the second tap on a control without synthesizing clicks: %s", (markup) => {
+    const { root, target, owner } = fixture(markup);
+    const touched = root.querySelector("span") ?? target;
+    const clicked = vi.fn();
+    touched.addEventListener("click", clicked);
+    owner.start();
+    expect(tap(touched, 0)).toBe(false);
+    expect(tap(touched, 150)).toBe(true);
+    expect(clicked).not.toHaveBeenCalled();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    touched.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows consecutive taps on different controls and normalizes a control's children", () => {
+    const { root, owner } = fixture(
+      "<button><span>Solve</span><small>Ready</small></button><button>Chat</button>",
+    );
+    owner.start();
+    expect(tap(root.querySelector("span")!, 0)).toBe(false);
+    expect(tap(root.querySelector("small")!, 150)).toBe(true);
+    expect(tap(root.querySelector("span")!, 400)).toBe(false);
+    expect(tap(root.lastElementChild!, 550)).toBe(false);
+    expect(tap(root, 700)).toBe(false);
+  });
+
+  it("protects the document outside the app root and removes protection on disposal", () => {
+    const { owner } = fixture();
+    owner.start();
+    expect(tap(document.body, 0)).toBe(false);
+    expect(tap(document.body, 150)).toBe(true);
+    owner.dispose();
+    expect(tap(document.body, 400)).toBe(false);
+    expect(tap(document.body, 550)).toBe(false);
+  });
+
   it("does not interpret a scroll or cancelled touch as the first tap of a pair", () => {
     const { target, owner } = fixture();
     owner.start();
@@ -110,10 +154,6 @@ describe("kids Safari touch gestures", () => {
     "<textarea>Keep word selection</textarea>",
     "<input value='Keep typing'>",
     "<select><option>A choice</option></select>",
-    "<button><span>Send</span></button>",
-    "<a href='#story'><span>Read</span></a>",
-    "<video controls></video>",
-    "<audio controls></audio>",
     "<div contenteditable><span>Keep word selection</span></div>",
   ])("preserves rapid native interaction on %s", (markup) => {
     const { target, owner } = fixture(markup);
@@ -123,14 +163,14 @@ describe("kids Safari touch gestures", () => {
     expect(tap(touched, 150)).toBe(false);
   });
 
-  it("keeps disclosure controls native while suppressing zoom in their plain body", () => {
+  it("suppresses zoom in both a disclosure control and its plain body", () => {
     const { root, owner } = fixture(
       "<details open><summary><span>Hint</span></summary><p>Try a common denominator.</p></details>",
     );
     owner.start();
     const summaryLabel = root.querySelector("summary span")!;
     expect(tap(summaryLabel, 0)).toBe(false);
-    expect(tap(summaryLabel, 150)).toBe(false);
+    expect(tap(summaryLabel, 150)).toBe(true);
     const body = root.querySelector("p")!;
     expect(tap(body, 500)).toBe(false);
     expect(tap(body, 650)).toBe(true);

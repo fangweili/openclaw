@@ -2,7 +2,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
-import type { Browser } from "playwright";
+import type { Browser, Locator } from "playwright";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e-defaults.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
@@ -32,7 +32,51 @@ it("keeps saved activities beside chat, grades through the server, and carries a
   const context = await browser.newContext({ viewport: { width: 1024, height: 1366 } });
   try {
     await context.addInitScript(notificationPermissionFixture);
+    // Exercise Safari's event fallback in Chromium; this does not prove native iPad zoom.
+    await context.addInitScript(() => {
+      const supports = CSS.supports.bind(CSS);
+      Object.defineProperty(CSS, "supports", {
+        value: (property: string, value?: string) =>
+          property === "-webkit-touch-callout" && value === "none"
+            ? true
+            : value === undefined
+              ? supports(property)
+              : supports(property, value),
+      });
+    });
     const page = await context.newPage();
+    const doubleTap = async (target: Locator, cancelsSecond = true) => {
+      const prevented = await target.evaluate((element) => {
+        element.dispatchEvent(new TouchEvent("touchcancel", { bubbles: true }));
+        const bounds = element.getBoundingClientRect();
+        const finger = new Touch({
+          identifier: 1,
+          target: element,
+          clientX: bounds.left + 8,
+          clientY: bounds.top + 8,
+        });
+        return [1000, 1150].map((at) => {
+          const start = new TouchEvent("touchstart", {
+            bubbles: true,
+            cancelable: true,
+            touches: [finger],
+            changedTouches: [finger],
+          });
+          Object.defineProperty(start, "timeStamp", { value: at });
+          element.dispatchEvent(start);
+          const end = new TouchEvent("touchend", {
+            bubbles: true,
+            cancelable: true,
+            touches: [],
+            changedTouches: [finger],
+          });
+          Object.defineProperty(end, "timeStamp", { value: at + 30 });
+          element.dispatchEvent(end);
+          return end.defaultPrevented;
+        });
+      });
+      expect(prevented).toEqual([false, cancelsSecond]);
+    };
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const capture = async (id: string, label: string) => {
@@ -58,6 +102,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           const bounds = element.getBoundingClientRect();
           return {
             sideBySide: pet.right <= card.left,
+            clearOfNavigation:
+              document.querySelector(".kids-page-navigation")!.getBoundingClientRect().bottom <=
+              Math.min(pet.top, card.top),
             visible: card.top >= bounds.top && card.bottom <= bounds.bottom,
             verticalOverflow: element.scrollHeight - element.clientHeight,
             horizontalOverflow: element.scrollWidth - element.clientWidth,
@@ -67,6 +114,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           };
         });
         expect(layout.sideBySide).toBe(true);
+        expect(layout.clearOfNavigation).toBe(true);
         expect(layout.visible).toBe(true);
         expect(layout.verticalOverflow).toBeLessThanOrEqual(1);
         expect(layout.horizontalOverflow).toBeLessThanOrEqual(1);
@@ -142,11 +190,14 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       },
     });
     await page.goto(baseUrl);
-    await page.getByRole("heading", { name: "What shall we do?" }).waitFor();
+    await page.getByRole("heading", { name: "What shall we do, Alex?" }).waitFor();
     const home = page.getByRole("main", { name: "Today", exact: true });
     const homePet = home.locator('img[src^="blob:"]');
     await homePet.waitFor();
     await homePet.evaluate((element: HTMLImageElement) => element.decode());
+    await doubleTap(home.locator(".kids-home-solve strong"));
+    await doubleTap(home);
+    await doubleTap(page.locator("body"));
     for (const name of ["Practice", "Create", "Finish"]) {
       expect(
         await home.getByRole("button", { name: `${name}, coming later`, exact: true }).isDisabled(),
@@ -155,6 +206,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
     for (const viewport of [
       { width: 1024, height: 1366 },
+      { width: 1024, height: 768 },
       { width: 1180, height: 820 },
       { width: 320, height: 844 },
     ]) {
@@ -162,9 +214,20 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       const id = `home-${viewport.width}-${viewport.height}`;
       await page.screenshot({ path: path.join(proof, `${id}.png`), animations: "disabled" });
       examples.push({ id, label: `Today home — ${viewport.width} × ${viewport.height}` });
-      expect(await home.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-        true,
-      );
+      const layout = await home.evaluate((element) => {
+        const title = element.querySelector("h1")!.getBoundingClientRect();
+        const pet = element.querySelector(".kids-pet")!.getBoundingClientRect();
+        const cards = element.querySelector(".kids-home-content")!.getBoundingClientRect();
+        const bounds = element.getBoundingClientRect();
+        return {
+          overflow: element.scrollWidth - element.clientWidth,
+          centered: Math.abs((title.left + title.right) / 2 - (bounds.left + bounds.right) / 2),
+          aboveBoth: title.bottom <= pet.top && title.bottom <= cards.top,
+        };
+      });
+      expect(layout.overflow).toBeLessThanOrEqual(1);
+      expect(layout.centered).toBeLessThanOrEqual(1);
+      expect(layout.aboveBoth).toBe(true);
     }
     await page.setViewportSize({ width: 1024, height: 1366 });
     await page.getByRole("button", { name: "Solve", exact: true }).click();
@@ -174,12 +237,36 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     expect(new URL(page.url()).hash).toBe("#solve");
     await page.locator('.kids-solve img[src^="blob:"]').waitFor();
     const currentPet = await page.locator(".kids-solve .kids-pet-picture img").getAttribute("src");
+    await doubleTap(page.locator(".kids-solve .kids-activity-card"));
+    await doubleTap(page.getByRole("button", { name: "Let's explore", exact: true }));
     await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     const composer = page.getByLabel("Message Rocky", { exact: true });
     await composer.fill("I found a leaf in the garden.");
+    await doubleTap(page.locator(".kids-message-content").first());
+    await doubleTap(page.locator(".kids-thread"));
+    await doubleTap(page.getByRole("button", { name: "Send message", exact: true }));
+    await doubleTap(composer, false);
+    expect(
+      await composer.evaluate((element) =>
+        ["gesturestart", "gesturechange"].map((type) => {
+          const pinch = new Event(type, { bubbles: true, cancelable: true });
+          element.dispatchEvent(pinch);
+          return pinch.defaultPrevented;
+        }),
+      ),
+    ).toEqual([true, true]);
+    expect(await composer.inputValue()).toBe("I found a leaf in the garden.");
     expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).count()).toBe(0);
     const thread = page.locator(".kids-thread");
+    expect(
+      await thread.evaluate((element) => {
+        element.scrollTop = 0;
+        const first = element.querySelector(".kids-message")!.getBoundingClientRect();
+        const navigation = document.querySelector(".kids-page-navigation")!.getBoundingClientRect();
+        return first.top >= navigation.bottom;
+      }),
+    ).toBe(true);
     await thread.evaluate(
       (element) =>
         new Promise<void>((resolve) => {
@@ -189,10 +276,10 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     );
     await page.getByRole("button", { name: "Jump to latest message", exact: true }).waitFor();
     const readingPosition = await thread.evaluate((element) => element.scrollTop);
-    await page.screenshot({ path: path.join(proof, "header-chat-ipad.png"), fullPage: true });
+    await page.screenshot({ path: path.join(proof, "chat-navigation-ipad.png"), fullPage: true });
     examples.push({
-      id: "header-chat-ipad",
-      label: "iPad — Chat header while reading earlier messages",
+      id: "chat-navigation-ipad",
+      label: "iPad — floating Chat navigation while reading earlier messages",
     });
     await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByRole("button", { name: "Solve", exact: true }).click();

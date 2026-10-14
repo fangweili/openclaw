@@ -5,12 +5,17 @@ text, photos, short videos, voice dictation, live voice, and private notificatio
 **Today** is the home screen: Rocky, **Chat with Rocky**, and a two-by-two grid
 of **Solve**, **Practice**, **Create**, and **Finish**. Chat and Solve are active;
 the other three are native disabled choices labeled **Coming later**. The home
-heading is **What shall we do?**, with no subtitle. Solve offers saved choice,
-numeric and short explanation questions. The server alone grades them. Landscape tablets place Rocky left of the choices
-or challenge; portrait and small screens stack them.
+heading is **What shall we do, [child name]?**, centered above Rocky and the cards.
+The name comes only from the verified conversation; an empty name uses
+**What shall we do?**. There is no header or subtitle. Solve offers saved choice,
+numeric and short explanation questions. The server alone grades them. Landscape
+tablets place Rocky left of the choices or challenge; portrait and small screens
+stack them.
 
-**Today** returns home from Chat or Solve. **Talk it through** records the current
-hint before placing the question into the existing chat draft. Chat entered from
+Compact floating **Today** controls return home from Chat or Solve; each scroller
+reserves their safe-area top inset so initial content stays clear. **Talk it
+through** records the current hint before placing the question into the existing
+chat draft. Chat entered from
 Solve offers **Back to Solve**. Unsent text, attachments, quiz feedback and native
 home/Solve scroll positions survive these page changes; the transcript's existing
 scroll owner preserves the Chat reading position. The old tabs and header flight
@@ -19,8 +24,10 @@ animation are removed. The pet's gentle mood animation still respects reduced mo
 During a live or finishing voice call, or dictation awaiting microphone permission,
 recording, or finishing transcription, the originating Chat or Solve controls
 remain visible and navigation away is disabled with an accessible explanation.
-One dictation owner serves both surfaces, and live voice cannot overlap it. Useful connection, reply and voice status remains in a persistent live
-region; the child's name and notification control remain unobtrusive in the header.
+One dictation owner serves both surfaces, and live voice cannot overlap it.
+Connection, reply and voice status remains in a persistent live region inside
+Chat. Connecting is visible; the other status text is screen-reader-only because
+the reply, call or error already has a visible presentation.
 
 The URL fragment is the only page preference: **#today**, **#solve**, or **#chat**.
 Reloading restores that presentation after authentication. Missing or unknown
@@ -172,11 +179,14 @@ to screen readers.
   fallback, with listeners installed on start and removed on disposal. CSS keeps
   native panning at each scrolling boundary. Safari releases before
   [WebKit's manipulation fix](https://github.com/WebKit/WebKit/commit/504edb5c563f9ad8d0436f60b5a608f0ec384f42)
-  can still zoom on a double tap. On noninteractive app surfaces, the fallback
-  cancels only the second nearby stationary tap; it has no timers or synthetic
-  clicks. Scrolling, long presses, existing selections, editable fields, buttons,
-  links, and native media controls stay native. Double-tap word selection in plain
+  can still zoom on a double tap. The fallback covers the whole kids document,
+  including Today cards and Chat. It cancels only a second nearby stationary tap
+  on plain surfaces or the same non-editing control (button, link, disclosure or
+  media); the first tap stays native. It has no timers or synthetic clicks.
+  Scrolling, long presses, different controls, existing selections and editable
+  fields retain their native touch behavior. Double-tap word selection in plain
   transcript text may also be suppressed; composer word selection is untouched.
+  Pinch gestures are cancelled across the document, including editable fields.
   Native iPad gesture recognition needs physical-device verification; synthetic
   touch tests verify cancellation and lifecycle, not Safari's zoom recognizer.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
@@ -236,9 +246,10 @@ to screen readers.
   clears the claim, and disconnect or lease expiry restores delivery if browser
   shutdown prevents cleanup. The worker still displays every received push, as
   required by Safari's Web Push contract.
-  Once enabled, the header shows a noninteractive status. The kids app only
-  offers notification setup; turning notifications off remains in device/browser
-  settings, so tapping the status cannot unsubscribe accidentally.
+  The Chat footer offers notification setup only until it is enabled, then the
+  control disappears completely. Setup details remain visible in Chat. Turning
+  notifications off remains in device/browser settings; there is no in-app
+  unsubscribe control.
 - `extensions/kids-ui` serves public build assets and owns bounded, authenticated
   dictation requests. Its service joins provider work and deletes private temporary
   recordings; provider selection and credentials stay with the existing runtime.

@@ -76,6 +76,10 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
         throw error;
       });
     expect(await page.getByRole("heading", { name: "Rocky", exact: true }).count()).toBe(1);
+    expect(await page.getByRole("banner").count()).toBe(0);
+    const setup = page.getByRole("button", { name: "Notify me", exact: true });
+    await setup.waitFor();
+    expect(await setup.evaluate((element) => element.closest("footer") !== null)).toBe(true);
     expect(await page.locator("select").count()).toBe(0);
     expect(await page.getByRole("button", { name: /model|session|settings|tools/i }).count()).toBe(
       0,
@@ -727,9 +731,8 @@ it("reopens media and unsent text without changing tutor or notification setting
         throw new Error("The saved video did not decode");
       }
     });
-    const status = page.locator(".kids-notifications-on");
-    await status.waitFor();
-    await status.click();
+    await gateway.waitForRequest("push.web.preferences.set");
+    await page.locator(".kids-notifications").waitFor({ state: "detached" });
     expect(await page.getByRole("button", { name: /notifications/i }).count()).toBe(0);
     expect(await gateway.getRequests("push.web.unsubscribe")).toHaveLength(0);
     const composer = page.getByLabel("Message Rocky", { exact: true });

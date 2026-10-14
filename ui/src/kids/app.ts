@@ -69,7 +69,7 @@ export class KidsApp {
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
-    this.touchGestures = new KidsTouchGestures(root);
+    this.touchGestures = new KidsTouchGestures(root.ownerDocument);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;

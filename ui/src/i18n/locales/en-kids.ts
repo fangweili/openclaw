@@ -23,6 +23,7 @@ const enKids = {
     talk: "Talk to Rocky",
     home: {
       title: "What shall we do?",
+      personalTitle: "What shall we do, {name}?",
       navigation: "Rocky pages",
       chatDetail: "Talk, wonder, ask anything",
       solve: "Solve",
@@ -153,7 +154,6 @@ const enKids = {
     },
     notifications: {
       enable: "Notify me",
-      enabled: "Notifications on",
       working: "Setting up notifications…",
       installRequired:
         "On iPhone or iPad, choose Share → Add to Home Screen, then open Rocky from there to turn on notifications.",
