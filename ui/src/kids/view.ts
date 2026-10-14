@@ -17,6 +17,8 @@ import type { KidsAttachmentState } from "./attachments.ts";
 import type { KidsConversationState } from "./conversation.ts";
 import { kidsMediaPreview } from "./history-media-view.ts";
 import type { KidsHistoryMedia } from "./history-media.ts";
+import { renderKidsHome } from "./home-view.ts";
+import type { KidsPage } from "./navigation.ts";
 import type { KidsNotificationsState } from "./notifications.ts";
 import type { KidsVoiceState } from "./voice.ts";
 
@@ -24,7 +26,8 @@ registerKidsEnglish();
 
 export type KidsViewState = {
   activityEnabled: boolean;
-  tab: "chat" | "today";
+  page: KidsPage;
+  returnToSolve: boolean;
   activity: KidsActivityState;
   conversation: KidsConversationState;
   voice: KidsVoiceState;
@@ -41,7 +44,7 @@ export type KidsViewState = {
 };
 
 export type KidsViewActions = {
-  tab: (tab: "chat" | "today") => void;
+  navigate: (page: KidsPage) => void;
   activity: KidsActivityActions;
   draft: (value: string) => void;
   send: () => void;
@@ -62,6 +65,7 @@ const microphone = strokeIcon(
 const plus = strokeIcon(svg`<path d="M12 5v14M5 12h14"/>`);
 const cross = strokeIcon(svg`<path d="m6 6 12 12M6 18 18 6"/>`);
 const arrow = strokeIcon(svg`<path d="M12 19V5m-6 6 6-6 6 6"/>`);
+const back = strokeIcon(svg`<path d="M19 12H5m6-6-6 6 6 6"/>`);
 const down = strokeIcon(svg`<path d="M12 5v14m-6-6 6 6 6-6"/>`);
 const stop = strokeIcon(svg`<rect x="6" y="6" width="12" height="12" rx="2"/>`);
 const bell = strokeIcon(svg`<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>`);
@@ -133,7 +137,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
-  const today = ready && state.activityEnabled && state.tab === "today" && !calling && !dictating;
+  const page = ready && state.activityEnabled && !calling && !dictating ? state.page : "chat";
   const todayUnavailable = calling
     ? t("kids.activity.finishCall")
     : state.dictation.finishing
@@ -157,36 +161,33 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
         <h1 class="kids-sr-only">${t("kids.name")}</h1>
         <div class="kids-header-main">
           ${
-            state.activityEnabled
-              ? html`<nav class="kids-mode-switch" aria-label=${t("kids.activity.navigation")}>
+            state.activityEnabled && page !== "today"
+              ? html`<nav class="kids-page-navigation" aria-label=${t("kids.home.navigation")}>
                     <button
                       type="button"
-                      aria-current=${!today ? "page" : nothing}
-                      ?disabled=${!ready}
-                      @click=${() => actions.tab("chat")}
-                    >
-                      ${t("kids.activity.chat")}
-                    </button>
-                    <button
-                      class="kids-today-mode"
-                      type="button"
-                      aria-current=${today ? "page" : nothing}
-                      aria-describedby=${todayUnavailable ? "kids-today-voice-help" : nothing}
+                      aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
                       title=${todayUnavailable ?? nothing}
                       ?disabled=${!ready || calling || dictating}
-                      @click=${() => actions.tab("today")}
+                      @click=${() => actions.navigate("today")}
                     >
-                      <span class="kids-mode-pet" aria-hidden="true">
-                        <img
-                          data-kids-pet="header"
-                          src=${ready && state.activity.imageUrl ? state.activity.imageUrl : "/kids/rocky.svg"}
-                          alt=""
-                        />
-                      </span>
-                      <span>${t("kids.activity.today")}</span>
+                      <span aria-hidden="true">${back}</span>${t("kids.activity.today")}
                     </button>
+                    ${
+                      page === "chat" && state.returnToSolve
+                        ? html`<button
+                            class="kids-return-solve"
+                            type="button"
+                            aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
+                            title=${todayUnavailable ?? nothing}
+                            ?disabled=${!ready || calling || dictating}
+                            @click=${() => actions.navigate("solve")}
+                          >
+                            ${t("kids.home.backToSolve")}
+                          </button>`
+                        : nothing
+                    }
                   </nav>
-                  ${todayUnavailable ? html`<span id="kids-today-voice-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
+                  ${todayUnavailable ? html`<span id="kids-navigation-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
               : nothing
           }
           <p class="kids-status" role="status">${status ?? nothing}</p>
@@ -212,8 +213,15 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
           }
         </div>
       </header>
-      ${today ? renderKidsActivity(state.activity, actions.activity) : nothing}
-      <div class="kids-thread-area" ?hidden=${today}>
+      ${
+        ready && state.activityEnabled
+          ? html`
+              ${renderKidsHome(state.activity, actions.navigate, actions.activity.retry, page !== "today")}
+              ${renderKidsActivity(state.activity, actions.activity, page !== "solve")}
+            `
+          : nothing
+      }
+      <div class="kids-thread-area" ?hidden=${page !== "chat"}>
         <main class="kids-thread" aria-label=${t("kids.conversation")}>
           <div class="kids-thread-content">
             ${
@@ -306,7 +314,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
             : nothing
         }
       </div>
-      <footer class="kids-footer" ?hidden=${today}>
+      <footer class="kids-footer" ?hidden=${page !== "chat"}>
         ${
           calling
             ? html`

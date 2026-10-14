@@ -9,9 +9,11 @@ Keep the deployed plugin and these files on the same reviewed release.
 
 The activity plugin owns saved quizzes, answers, attempts, pet clocks and complete
 scene publication. Two isolated daily cron jobs ask the existing agents to plan
-their child's three three-question challenges and one art pair. Cron owns scheduling, run cancellation and retries. The
+their child's three three-question challenges and four daily mood pictures.
+Cron owns scheduling, run cancellation and retries. The
 plugin's `kids_activity` tool owns image generation through the configured image
-runtime, including normal-to-excited reference continuity. The job supplies words
+runtime, including normal-to-excited/bored/sleeping reference continuity and fixed
+resting fallbacks. The job supplies words
 and verified questions; it cannot choose an image path, provider or sibling.
 
 Create one isolated preparation job per configured child, with `delivery.mode`
@@ -96,8 +98,17 @@ snapshot so the invitation job can check that unfinished work actually exists.
 
 `prepare_daily` requires `timeoutMs: 600000`, the host's supported ten-minute
 tool-call budget. The larger job budget leaves room for planning and cleanup;
-it does not extend that tool limit. A slow provider/fallback sequence may exceed
-it. Cancellation fences publication and joins any dispatched provider work;
+it does not extend that tool limit. After required normal/excited art, the two
+optional rest renders run concurrently for at most 180 seconds and only until
+540 seconds after preparation began. Provider timeout hints use that remaining
+window, but each provider fallback still owns its timeout. At the optional
+deadline the owner freezes completed results, uses fixed poses for unfinished
+moods, and publishes once. Challenges can therefore become ready while the tool
+still joins late provider work; those results cannot adopt files or change the
+saved bundle. The deadline timer is cleared on every exit. No optional phase is
+started if required work already consumed its window. A slow required
+provider/fallback sequence can still exceed the tool watchdog. Cancellation
+fences publication and joins any dispatched provider work;
 previous complete bundles remain valid. Context and evidence reads retain the
 ordinary tool timeout. Never treat a timeout as proof that a retry is safe before
 the prior operation has settled and the saved day has been checked.
@@ -112,9 +123,12 @@ patch. The fixed files are `rocky-reference.webp`, `rocky-bored.webp`, and
 the activity, outfit, equipment, expression and whole-body pose. The planner
 prioritizes recent conversations and dated school context already maintained in
 the child's profile, falling back to established interests or seasonal ideas.
-Excited pictures reference that child's normal picture, continuing its theme,
-outfit and core equipment with a distinct action and silhouette. Both captions
-and fixed mood captions come from the preparing agent.
+Excited, bored, and sleeping pictures reference that child's exact normal picture,
+continuing its theme and outfit. Excitement uses a distinct action and silhouette;
+the resting variations show comfortable daydreaming or sleep. All four scene
+directions and captions come from the preparing agent. Copy the updated daily
+preparation template with this release: `prepare_daily` now requires bounded
+`boredPrompt` and `sleepingPrompt` directions in addition to the existing fields.
 
 The private preparation context retains each day's `scenePrompt` alongside its
 captions, so later jobs can remember intended actions, outfits and story details. This is the
@@ -124,24 +138,30 @@ is omitted from the child's public activity snapshot.
 Planner prompts describe scene content and pose while the renderer owns the
 canonical character and visual style. Pictures contain no lettering; questions
 and numbers belong in the app's text. Bored/sleeping captions can recall or dream
-about the daily theme, but do not assert that daily props or costumes appear in
-the permanent stock poses.
+about the daily theme, but must also fit the fixed fallback poses: do not assert
+that a particular prop, costume or setting is visibly present.
 
 The runtime chooses the configured image model/fallback; preparation never
 overrides them. Before publication, generated pictures are encoded as PNG with alpha preserved,
 at most 512 KiB each and durably written beneath the plugin's private media root.
 No generated image is exposed by the public static `/kids/` handler. Authenticated
 image reads are scoped to one configured child. At most two preparations and
-eight image reads run concurrently; shutdown revokes admission and joins them
+eight image reads run concurrently; each preparation can admit two optional
+provider calls concurrently. Shutdown revokes admission and joins them
 before releasing dependencies.
 
-Each day contains exactly three challenges of three questions each, plus two
+Each day contains exactly three challenges of three questions each, plus up to four
 pictures shared by the whole day. The child sees one challenge at a time and can
 choose Another challenge or Chat after completion. After all three, the app
 shows All done for today. A started unfinished challenge stays resumable across
 days; unstarted extras are replaced when the next morning's batch arrives. The
 newest day's counts exclude any older carryover. A published day is immutable;
-a duplicate preparation returns without generating again. If generation fails, previous complete activities remain usable. A pair
+a duplicate preparation returns without generating again. Required-art or storage
+failure preserves the previous complete activities. Optional render/encoding failures
+use original fixed poses without blocking publication. Daily resting art is shown
+only on its own local date; old batches and missing variants use fixed originals.
+The optional `restImages` field is a backward-readable schema-1 JSON extension;
+there is no migration or browser protocol change. Artwork
 that loses a confirmed publication race is removed. A publication error with an
 unknown commit outcome retains the image files; retry checks the saved day before
 spending again. Files left by an interrupted/uncertain publication are retained
@@ -150,7 +170,7 @@ artifacts, not proof of an activity. Do not guess whether a commit succeeded.
 Quiz evidence uses the store's bounded history. Each quiz has its own attempts
 and completion; each day contributes only one scene-history entry. Image artifacts are retained until
 an operator removes unreferenced files; their maximum normal growth is roughly
-1 MiB per prepared child-day. Do not delete images referenced by retained bundles
+2 MiB per prepared child-day. Do not delete images referenced by retained bundles
 or an unfinished activity. Generation and publishing never wake the pet, change
 its streak, or send notifications.
 
@@ -158,7 +178,8 @@ its streak, or send notifications.
 
 Run the plugin's focused tests and the host collector's existing fixture suite.
 Use synthetic profiles and a no-delivery test configuration for a full preparation
-run. Verify normal/excited identity, saved quiz correctness, reload/resume behavior,
-inactivity transitions, evidence IDs, cancellation and child isolation. Confirm
+run. Verify identity across all four moods, fixed resting fallbacks on failure or
+timeout, and the exclusion of another day's rest art. Check saved quiz correctness,
+reload/resume behavior, inactivity transitions, evidence IDs, cancellation and child isolation. Confirm
 nightly evidence distinguishes independent and helped correctness. Activate the
 reviewed host edits only after the matching app/plugin release is installed.

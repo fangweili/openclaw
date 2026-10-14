@@ -70,6 +70,11 @@ export function validateDailyActivityBundle(
       throw new Error("The daily scene is incomplete.");
     }
   }
+  for (const imageId of [bundle.restImages?.bored, bundle.restImages?.sleeping]) {
+    if (imageId !== undefined && !/^[a-zA-Z0-9_-]{1,160}$/u.test(imageId)) {
+      throw new Error("A daily resting image is invalid.");
+    }
+  }
   if (!bounded(bundle.stateText?.bored, 400) || !bounded(bundle.stateText?.sleeping, 400)) {
     throw new Error("Prepare the resting-state captions.");
   }

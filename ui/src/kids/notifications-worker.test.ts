@@ -11,7 +11,7 @@ type WorkerEvent = {
 
 function workerFixture(existingUrl = "https://family.example/kids/") {
   const listeners = new Map<string, (event: WorkerEvent) => void>();
-  const existing = { url: existingUrl, focus: vi.fn(async () => undefined) };
+  const existing = { url: existingUrl, focus: vi.fn(async () => undefined), postMessage: vi.fn() };
   const showNotification = vi.fn(async () => undefined);
   const clients = {
     claim: vi.fn(async () => undefined),
@@ -71,6 +71,7 @@ describe("kids private notification worker", () => {
 
   it.each([
     "https://family.example/kids/",
+    "https://family.example/kids/#solve",
     "https://family.example/",
     "https://untrusted.example/kids/",
   ])("opens only the kids destination when an existing window is %s", async (existing) => {
@@ -80,11 +81,12 @@ describe("kids private notification worker", () => {
       notification: { close, data: { url: "https://untrusted.example/private" } },
     });
     expect(close).toHaveBeenCalledOnce();
-    if (existing === "https://family.example/kids/") {
+    if (existing.startsWith("https://family.example/kids/")) {
+      expect(f.existing.postMessage).toHaveBeenCalledWith({ type: "kids:navigate", hash: "#chat" });
       expect(f.existing.focus).toHaveBeenCalledOnce();
       expect(f.clients.openWindow).not.toHaveBeenCalled();
     } else {
-      expect(f.clients.openWindow).toHaveBeenCalledWith("https://family.example/kids/");
+      expect(f.clients.openWindow).toHaveBeenCalledWith("https://family.example/kids/#chat");
       expect(f.existing.focus).not.toHaveBeenCalled();
     }
   });

@@ -527,18 +527,17 @@ it("records dictation into an editable draft and sends only on request", async (
         "kids.activity.touch": { snapshot: activity },
       },
     });
-    await page.goto(baseUrl);
+    await page.goto(`${baseUrl}#chat`);
     await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
     await page.getByRole("button", { name: "Dictate a message" }).click();
     await page.waitForFunction(
       () => document.documentElement.dataset.microphoneRequested === "true",
     );
     const today = page.getByRole("button", { name: "Today", exact: true });
-    const chat = page.getByRole("button", { name: "Chat", exact: true });
     const finish = page.getByRole("button", { name: "Finish dictation", exact: true });
     expect(await today.isDisabled()).toBe(true);
-    expect(await today.getAttribute("title")).toBe("Finish dictation to open Today.");
-    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await today.getAttribute("title")).toBe("Finish dictation before leaving Chat.");
+    expect(await page.locator(".kids-thread-area").isVisible()).toBe(true);
     expect(await finish.isVisible()).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new Event("kids-fixture-grant-microphone")));
     await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
@@ -559,9 +558,9 @@ it("records dictation into an editable draft and sends only on request", async (
     expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
     expect(await today.isDisabled()).toBe(true);
     expect(await today.getAttribute("title")).toBe(
-      "Wait for your words to appear before opening Today.",
+      "Wait for your words to appear before leaving Chat.",
     );
-    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await page.locator(".kids-thread-area").isVisible()).toBe(true);
     expect(await page.locator(".kids-footer").isVisible()).toBe(true);
     await page.getByText("Finishing your words…", { exact: true }).waitFor();
     await gateway.resolveDeferred("kids.transcribe", { text: "Can we practice fractions?" });
@@ -603,12 +602,12 @@ it("reopens media and unsent text without changing tutor or notification setting
         }),
       };
       Object.defineProperty(navigator, "serviceWorker", {
-        value: {
+        value: Object.assign(new EventTarget(), {
           register: async () => ({
             active: { state: "activated" },
             pushManager: { getSubscription: async () => subscription },
           }),
-        },
+        }),
       });
     });
     const page = await context.newPage();

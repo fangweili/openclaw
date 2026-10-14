@@ -26,8 +26,8 @@ import { KidsConversation, type KidsConversationState } from "./conversation.ts"
 import { KidsDictation } from "./dictation.ts";
 import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
+import { parseKidsPage, type KidsPage } from "./navigation.ts";
 import { KidsNotifications } from "./notifications.ts";
-import { KidsPetTransition } from "./pet-transition.ts";
 import { KidsTouchGestures } from "./touch-gestures.ts";
 import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
@@ -54,7 +54,6 @@ export class KidsApp {
   private readonly media: KidsHistoryMedia;
   private readonly transcript: KidsTranscriptScroll;
   private readonly touchGestures: KidsTouchGestures;
-  private readonly petTransition: KidsPetTransition;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -71,7 +70,6 @@ export class KidsApp {
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
     this.touchGestures = new KidsTouchGestures(root);
-    this.petTransition = new KidsPetTransition(root);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -129,7 +127,8 @@ export class KidsApp {
       () => void this.conversation.loadNewer(),
     );
     this.snapshot = {
-      tab: "chat",
+      page: parseKidsPage(location.hash) ?? "today",
+      returnToSolve: false,
       activityEnabled: false,
       activity: emptyKidsActivity(),
       conversation: this.conversation.state,
@@ -154,6 +153,8 @@ export class KidsApp {
     }
     this.started = true;
     this.touchGestures.start();
+    window.addEventListener("hashchange", this.locationChanged);
+    navigator.serviceWorker?.addEventListener("message", this.workerMessage);
     this.paint();
     this.client.start();
   }
@@ -164,8 +165,9 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
-    this.petTransition.dispose();
     this.touchGestures.dispose();
+    window.removeEventListener("hashchange", this.locationChanged);
+    navigator.serviceWorker?.removeEventListener("message", this.workerMessage);
     this.transcript.dispose();
     this.generation += 1;
     this.retireCapabilities();
@@ -220,7 +222,6 @@ export class KidsApp {
   }
 
   private retireCapabilities(): void {
-    this.petTransition.cancel();
     this.snapshot.activityEnabled = false;
     this.activity.setVisible(false);
     this.activity.disconnect();
@@ -281,11 +282,16 @@ export class KidsApp {
       return;
     }
     this.snapshot.conversation = conversation;
+    if (conversation.status === "ready" && !this.snapshot.activityEnabled) {
+      this.snapshot.page = "chat";
+      this.writeLocation();
+    }
     if (conversation.sessionKey && conversation.sessionId) {
       const binding = `${conversation.sessionKey}\0${conversation.sessionId}`;
       if (binding !== this.boundSession) {
         this.retireDictation();
         this.boundSession = binding;
+        this.snapshot.returnToSolve = false;
       }
       if (conversation.status === "ready") {
         if (this.snapshot.activityEnabled) {
@@ -479,7 +485,7 @@ export class KidsApp {
     const chat = this.snapshot.conversation;
     const showingChat =
       !this.snapshot.activityEnabled ||
-      this.snapshot.tab === "chat" ||
+      this.snapshot.page === "chat" ||
       this.snapshot.voice.active ||
       this.snapshot.voice.status === "stopping" ||
       this.snapshot.dictation.active ||
@@ -490,7 +496,7 @@ export class KidsApp {
     this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
       renderKidsView(this.snapshot, {
-        tab: (tab) => this.selectTab(tab),
+        navigate: (page) => this.navigate(page),
         activity: {
           start: () => void this.activity.act("start"),
           answer: (optionId) => void this.activity.act("answer", optionId),
@@ -498,7 +504,7 @@ export class KidsApp {
           next: () => this.activity.continue(),
           retry: () => void this.activity.retry(),
           help: () => void this.activityHelp(),
-          chat: () => this.selectTab("chat"),
+          chat: () => this.navigate("chat"),
         },
         draft: (value) => {
           this.draft.update(value);
@@ -528,7 +534,6 @@ export class KidsApp {
       }),
       this.root,
     );
-    this.petTransition.reconcile();
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
     const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
     if (current && content && showingChat) {
@@ -539,29 +544,72 @@ export class KidsApp {
     }
   }
 
-  /** Preserve context while moving Rocky; microphone work must finish before leaving Chat. */
-  private selectTab(tab: "chat" | "today"): void {
-    if (this.disposed || tab === this.snapshot.tab) {
+  /** URL fragments select presentation only; no page can redirect the tutor binding. */
+  private readonly locationChanged = (): void => {
+    this.navigate(parseKidsPage(location.hash) ?? "today");
+  };
+
+  /** Only the same-origin kids worker can request a known presentation destination. */
+  private readonly workerMessage = (event: MessageEvent): void => {
+    const message: unknown = event.data;
+    if (
+      event.origin !== location.origin ||
+      typeof message !== "object" ||
+      message === null ||
+      !("type" in message) ||
+      message.type !== "kids:navigate" ||
+      !("hash" in message)
+    ) {
       return;
     }
+    const page = parseKidsPage(message.hash);
+    if (page) {
+      this.navigate(page);
+    }
+  };
+
+  /** Keep the current location reloadable without adding history or private identifiers. */
+  private writeLocation(): void {
+    if (location.hash === `#${this.snapshot.page}`) {
+      return;
+    }
+    const url = new URL(location.href);
+    url.hash = this.snapshot.page;
+    history.replaceState(history.state, "", url);
+  }
+
+  /** Keep microphone controls visible; ordinary navigation preserves drafts and scroll owners. */
+  private navigate(requested: KidsPage): void {
+    if (this.disposed) {
+      return;
+    }
+    const page =
+      this.snapshot.conversation.status === "ready" && !this.snapshot.activityEnabled
+        ? "chat"
+        : requested;
     if (
-      tab === "today" &&
-      (!this.snapshot.activityEnabled ||
-        this.snapshot.voice.active ||
+      page !== "chat" &&
+      (this.snapshot.voice.active ||
         this.snapshot.voice.status === "stopping" ||
         this.snapshot.dictation.active ||
         this.snapshot.dictation.finishing)
     ) {
+      this.writeLocation();
       return;
     }
-    if (tab === "today") {
-      this.transcript.suspend();
+    if (page === this.snapshot.page) {
+      this.writeLocation();
+      return;
     }
-    this.petTransition.move(() => {
-      this.snapshot.tab = tab;
-      this.paint();
-    });
-    if (tab === "today") {
+    if (page !== "chat") {
+      this.transcript.suspend();
+    } else {
+      this.snapshot.returnToSolve = this.snapshot.page === "solve";
+    }
+    this.snapshot.page = page;
+    this.writeLocation();
+    this.paint();
+    if (page === "solve") {
       void this.activity.refresh();
     }
   }
@@ -581,7 +629,7 @@ export class KidsApp {
       this.disposed ||
       generation !== this.generation ||
       binding !== this.boundSession ||
-      this.snapshot.tab !== "today" ||
+      this.snapshot.page !== "solve" ||
       !this.draft.state.ready ||
       current.error ||
       current.canRetry ||
@@ -596,7 +644,7 @@ export class KidsApp {
       question: question.prompt,
     });
     this.draft.update([this.snapshot.draft.trim(), message].filter(Boolean).join("\n\n"));
-    this.selectTab("chat");
+    this.navigate("chat");
     this.root.querySelector<HTMLTextAreaElement>("#kids-message")?.focus();
   }
 }

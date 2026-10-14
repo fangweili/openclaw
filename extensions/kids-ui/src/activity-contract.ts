@@ -16,12 +16,14 @@ export type ActivityDefinition = {
   subject: string;
   questions: ActivityQuestion[];
 };
-/** Atomic publication: exactly three challenges and one normal/excited art pair. */
+/** Atomic publication: three challenges, required normal/excited art, optional daily rest art. */
 export type DailyActivityBundle = {
   childId: string;
   date: string;
   activities: ActivityDefinition[];
   scene: NonNullable<ActivitySnapshot["pet"]["scene"]>;
+  /** Absent in older batches or after optional rendering failure; use the fixed pose. */
+  restImages?: { bored?: string; sleeping?: string };
   /** Private creative plan for continuity; describes intended art, not verified image contents. */
   scenePrompt: string;
   stateText: { bored: string; sleeping: string };

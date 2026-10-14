@@ -242,6 +242,54 @@ describe("activity worker authority and progress", () => {
     ).toBe("normal");
   });
 
+  it.each([
+    { moods: [] },
+    { moods: ["bored"] },
+    { moods: ["sleeping"] },
+    { moods: ["bored", "sleeping"] },
+  ] as const)(
+    "selects same-day rest art and preserves fixed fallbacks for available moods $moods",
+    async ({ moods }) => {
+      const childId = `rest-${moods.join("-") || "legacy"}`;
+      const value = bundle(childId);
+      if (moods.length) {
+        value.restImages = {};
+        for (const mood of moods) {
+          value.restImages[mood] = `${childId}-${mood}`;
+        }
+      }
+      await publishBundle(value);
+      await mutate(childId, { kind: "touch", requestId: "wake", source: "chat" });
+      for (const [mood, elapsed] of [
+        ["bored", ACTIVITY_BORED_MS],
+        ["sleeping", ACTIVITY_SLEEP_MS],
+      ] as const) {
+        expect((await get(childId, timestamp + elapsed)).pet.image).toEqual({
+          imageId: value.restImages?.[mood] ?? mood,
+          caption: value.stateText[mood],
+        });
+      }
+      const saved = await store.execute({
+        type: "findDaily",
+        input: { childId, date: value.date },
+      });
+      expect(saved).toEqual(value);
+      const tomorrow = await get(childId, timestamp + 86_400_000, "2026-10-14");
+      expect(tomorrow.pet.image).toEqual({
+        imageId: "sleeping",
+        caption: "Resting until our next adventure.",
+      });
+      expect(tomorrow.pet.scene).toEqual(value.scene);
+    },
+  );
+
+  it("rejects invalid optional art before publishing any of the day's challenges", async () => {
+    const value = bundle("invalid-rest");
+    value.restImages = { bored: "../../private" };
+    await expect(publishBundle(value)).rejects.toThrow("resting image");
+    expect((await get(value.childId)).activity).toBeNull();
+  });
+
   it("resumes an unfinished day while displaying the new day's scene and refuses replacements", async () => {
     await publish("resume");
     await start("resume");

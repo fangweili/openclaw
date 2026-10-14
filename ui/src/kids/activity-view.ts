@@ -1,8 +1,9 @@
-/** Pure Today presentation. Only server snapshots decide progress, mood, and results. */
+/** Pure Solve presentation. Only server snapshots decide progress, mood, and results. */
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
+import { renderKidsPet } from "./pet-view.ts";
 
 export type KidsActivityActions = {
   start: () => void;
@@ -15,34 +16,22 @@ export type KidsActivityActions = {
 };
 
 /** Render a private snapshot already admitted to the current conversation. */
-export function renderKidsActivity(state: KidsActivityState, actions: KidsActivityActions) {
+export function renderKidsActivity(
+  state: KidsActivityState,
+  actions: KidsActivityActions,
+  hidden = false,
+) {
   const data = state.snapshot;
   const activity = data?.activity;
   const question = activity?.currentQuestion;
   const heading = state.feedback?.activity ?? activity;
   const locked = state.busy || state.canRetry || state.error !== null;
-  const mood = data?.pet.state ?? "normal";
-  return html`<main class="kids-today" aria-label=${t("kids.activity.today")}>
-    <section class=${`kids-pet kids-pet--${mood}`} aria-label=${t("kids.activity.pet")}>
-      <div class="kids-pet-picture">
-        <img
-          data-kids-pet="hero"
-          class=${state.imageUrl ? "" : "kids-pet-placeholder"}
-          src=${state.imageUrl ?? "/kids/rocky.svg"}
-          alt=${state.imageUrl ? t(`kids.activity.mood.${mood}`) : ""}
-        />
-      </div>
-      <p class="kids-pet-caption" role="status">
-        ${data?.pet.image?.caption ?? t("kids.activity.gettingReady")}
-      </p>
-      ${
-        state.imageError
-          ? html`<button class="kids-activity-link" @click=${actions.retry}>
-              ${t("kids.activity.imageRetry")}
-            </button>`
-          : nothing
-      }
-    </section>
+  return html`<main
+    class="kids-today kids-solve"
+    aria-label=${t("kids.home.solve")}
+    ?hidden=${hidden}
+  >
+    ${renderKidsPet(state, actions.retry)}
     <section
       class="kids-activity-card"
       aria-label=${t("kids.activity.challenge")}

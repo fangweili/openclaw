@@ -65,53 +65,33 @@ html[data-kids] body,
   opacity: 0.45;
 }
 
+.kids-today[hidden],
 .kids-thread-area[hidden],
 .kids-footer[hidden] {
   display: none;
 }
 
-.kids-mode-switch {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 18px;
-  background: var(--kids-tint);
+.kids-page-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.kids-mode-switch button {
+.kids-page-navigation button {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 88px;
-  padding: 8px 18px;
-  border-radius: 14px;
-  color: var(--kids-muted);
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
   background: transparent;
-  font-weight: 650;
+  color: var(--kids-muted);
+  font-size: 14px;
 }
 
-.kids-mode-switch .kids-today-mode {
-  gap: 4px;
-  padding: 0 12px 0 4px;
-}
-
-.kids-mode-pet {
-  display: block;
-  flex: 0 0 46px;
-  width: 46px;
-  height: 46px;
-}
-
-.kids-mode-pet img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.kids-mode-switch [aria-current="page"] {
+.kids-page-navigation .kids-return-solve {
+  padding: 8px 12px;
   color: var(--kids-accent);
-  background: var(--kids-paper);
+  background: var(--kids-tint);
 }
 
 .kids-today {
@@ -163,30 +143,115 @@ html[data-kids] body,
   animation: kids-pet-bounce 1.5s ease-in-out infinite;
 }
 
-/* The real image briefly leaves layout; its wrapper keeps its space. Fixed
-   positioning lets it cross the Today scroller without clipping or a clone. */
-.kids-shell img.kids-pet-in-transit {
-  position: fixed;
-  z-index: 5;
-  top: var(--kids-pet-top);
-  left: var(--kids-pet-left);
-  width: var(--kids-pet-width);
-  height: var(--kids-pet-height);
-  margin: 0;
-  pointer-events: none;
-  transform-origin: top left;
-  animation: none;
-}
-
-.kids-pet-obscured {
-  visibility: hidden;
-}
-
 .kids-pet-caption {
   margin: 18px auto 0;
   max-width: 420px;
   color: var(--kids-muted);
   line-height: 1.6;
+}
+
+.kids-home-content {
+  width: 100%;
+  max-width: 540px;
+  min-width: 0;
+  margin: auto;
+}
+
+.kids-home-content h1 {
+  margin: 0 0 24px;
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+  text-align: center;
+}
+
+.kids-shell .kids-home-chat,
+.kids-shell .kids-home-card {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--kids-border);
+  border-radius: 22px;
+  background: var(--kids-paper);
+  text-align: left;
+}
+
+.kids-shell .kids-home-chat {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 100px;
+  margin-bottom: 14px;
+}
+
+.kids-home-card-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kids-home-card-copy span,
+.kids-home-detail {
+  margin-top: 5px;
+  color: var(--kids-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.kids-shell .kids-home-chat strong,
+.kids-shell .kids-home-card strong {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.kids-home-icon,
+.kids-home-arrow {
+  display: flex;
+  color: var(--kids-accent);
+}
+
+.kids-home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.kids-shell .kids-home-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 142px;
+}
+
+.kids-home-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: var(--kids-accent);
+}
+
+.kids-home-soon {
+  color: var(--kids-muted);
+  font-size: 11px;
+}
+
+.kids-shell .kids-home-solve {
+  border-color: var(--kids-accent);
+  background: var(--kids-tint);
+}
+
+.kids-shell .kids-home-card:disabled {
+  color: var(--kids-muted);
+  background: var(--kids-background);
+  opacity: 1;
+}
+
+.kids-shell .kids-home-card:disabled .kids-home-card-top {
+  color: var(--kids-muted);
 }
 
 .kids-activity-card {
@@ -438,6 +503,16 @@ html[data-kids] body,
   .kids-activity-actions {
     margin-top: 16px;
   }
+
+  .kids-home {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: 36px;
+  }
+
+  .kids-home .kids-pet {
+    margin: 0;
+  }
 }
 
 @media (max-width: 560px) {
@@ -452,6 +527,24 @@ html[data-kids] body,
   }
   .kids-activity-card h2 {
     font-size: 23px;
+  }
+
+  .kids-shell .kids-home-card,
+  .kids-shell .kids-home-chat {
+    padding: 16px;
+  }
+
+  .kids-home-grid {
+    gap: 10px;
+  }
+
+  .kids-home-content h1 {
+    font-size: 25px;
+  }
+
+  .kids-shell .kids-home-chat strong,
+  .kids-shell .kids-home-card strong {
+    font-size: 19px;
   }
 }
 
@@ -802,15 +895,6 @@ html[data-kids] body,
   .kids-header {
     gap: 8px;
     padding: max(18px, env(safe-area-inset-top)) 20px 18px;
-  }
-
-  .kids-mode-switch button {
-    min-width: 64px;
-    padding: 8px;
-  }
-
-  .kids-mode-switch .kids-today-mode {
-    padding: 0 8px 0 0;
   }
 
   .kids-thread {

@@ -57,6 +57,8 @@ const preparationFields = {
   ),
   normalPrompt: text(3000),
   excitedPrompt: text(1500),
+  boredPrompt: text(1500),
+  sleepingPrompt: text(1500),
   normalCaption: text(400),
   excitedCaption: text(400),
   boredCaption: text(400),
@@ -127,7 +129,7 @@ function createActivityTool(
     name: "kids_activity",
     label: "Kids activity preparation",
     description: child
-      ? "Prepare your creation-bound child's three daily challenges and shared pet scene. First prepare_context for recent quiz evidence and previous scenes; read the child's profile, notes and verified conversations separately. prepare_daily accepts exactly three fully solved three-question challenges, creative scene directions and brief mood captions; it generates exactly two pictures for the whole day with the configured image model, then atomically publishes. It waits for completion: do not call image_generate separately. A published date is a no-op. No messages are sent. evidence reads the same bounded learning evidence."
+      ? "Prepare your creation-bound child's three daily challenges and shared pet scene. First prepare_context for recent quiz evidence and previous scenes; read the child's profile, notes and verified conversations separately. prepare_daily accepts exactly three fully solved three-question challenges, creative directions for normal/excited/bored/sleeping pictures, and brief mood captions. It requires normal/excited artwork, attempts both resting pictures within its remaining budget, and atomically publishes with fixed resting fallbacks when needed. It waits for admitted image calls to settle even if readiness was already published: do not call image_generate separately. A published date is a no-op. No messages are sent. evidence reads the same bounded learning evidence."
       : "Read saved quiz attempts, support used and dated scene history for a configured child. This read-only evidence supplements transcripts and notes; do not count the same activity twice. No generation, publication or delivery is permitted.",
     parameters,
     execute: async (_toolCallId, args, signal) => {

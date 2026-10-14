@@ -8,7 +8,8 @@ const privateDraft = "I want to talk about my school day.";
 
 function readyState(): KidsViewState {
   return {
-    tab: "chat",
+    page: "chat",
+    returnToSolve: false,
     activityEnabled: true,
     activity: emptyKidsActivity(),
     conversation: {
@@ -62,7 +63,7 @@ function viewActions(): KidsViewActions {
     older: vi.fn(),
     newer: vi.fn(),
     latest: vi.fn(),
-    tab: vi.fn(),
+    navigate: vi.fn(),
     activity: {
       start: vi.fn(),
       answer: vi.fn(),
@@ -75,64 +76,78 @@ function viewActions(): KidsViewActions {
   };
 }
 
-it("keeps Rocky in a stable mode switch without idle copy or interrupting calls", () => {
+it("opens Today choices and retains the Chat, home, and Solve panels across navigation", () => {
+  const root = document.createElement("div");
+  const state = readyState();
+  state.page = "today";
+  state.activity.imageUrl = "blob:private-current-pet";
+  const actions = viewActions();
+  const paint = () => render(renderKidsView(state, actions), root);
+  try {
+    paint();
+    const home = root.querySelector<HTMLElement>(".kids-home")!;
+    const solve = root.querySelector<HTMLElement>(".kids-solve")!;
+    const composer = root.querySelector<HTMLTextAreaElement>("#kids-message")!;
+    expect(home.hidden).toBe(false);
+    expect(solve.hidden).toBe(true);
+    expect(root.querySelector("h1#kids-home-title")?.textContent).toBe("What shall we do?");
+    const choices = home.querySelectorAll<HTMLButtonElement>(".kids-home-grid button");
+    expect([...choices].map((choice) => choice.disabled)).toEqual([false, true, true, true]);
+    for (const choice of [...choices].slice(1)) {
+      choice.click();
+    }
+    expect(actions.navigate).not.toHaveBeenCalled();
+    choices[0]!.click();
+    expect(actions.navigate).toHaveBeenCalledExactlyOnceWith("solve");
+    state.page = "solve";
+    paint();
+    expect(root.querySelector(".kids-home")).toBe(home);
+    expect(root.querySelector(".kids-solve")).toBe(solve);
+    expect(home.hidden).toBe(true);
+    expect(solve.hidden).toBe(false);
+    state.page = "chat";
+    state.returnToSolve = true;
+    paint();
+    expect(root.querySelector("#kids-message")).toBe(composer);
+    expect(composer.value).toBe(privateDraft);
+    expect(root.querySelector<HTMLElement>(".kids-thread-area")!.hidden).toBe(false);
+    root.querySelector<HTMLButtonElement>(".kids-return-solve")!.click();
+    expect(actions.navigate).toHaveBeenLastCalledWith("solve");
+  } finally {
+    render(null, root);
+  }
+});
+
+it("keeps a mounted useful status and all navigation disabled during a live or finishing call", () => {
   const root = document.createElement("div");
   const state = readyState();
   const actions = viewActions();
   const paint = () => render(renderKidsView(state, actions), root);
   try {
     paint();
-    expect(root.querySelector("header img")?.getAttribute("src")).toBe("/kids/rocky.svg");
-    state.activity.imageUrl = "blob:private-current-pet";
-    paint();
-    expect(root.querySelector("header img")?.getAttribute("src")).toBe("blob:private-current-pet");
     const statusRegion = root.querySelector(".kids-status")!;
     expect(statusRegion.textContent?.trim()).toBe("");
-    const modes = root.querySelector("header nav")!;
-    const [chat, today] = modes.querySelectorAll("button");
-    expect(chat!.getAttribute("aria-current")).toBe("page");
-    today!.click();
-    expect(actions.tab).toHaveBeenCalledExactlyOnceWith("today");
-    state.tab = "today";
-    paint();
-    expect(root.querySelector("header nav")).toBe(modes);
-    expect(today!.getAttribute("aria-current")).toBe("page");
-    expect(root.querySelector(".kids-pet-picture img")?.getAttribute("src")).toBe(
-      "blob:private-current-pet",
-    );
+    state.page = "solve";
+    state.returnToSolve = true;
     for (const status of ["listening", "stopping"] as const) {
       state.voice = { status, active: status === "listening", detail: null, entries: [] };
       paint();
-      expect(root.querySelector("header nav")).toBe(modes);
-      expect(chat!.getAttribute("aria-current")).toBe("page");
-      expect(today!.disabled).toBe(true);
-      expect(root.querySelector("#kids-today-voice-help")?.textContent).toBe(
-        "Finish your call to open Today.",
-      );
-      today!.click();
-      expect(actions.tab).toHaveBeenCalledTimes(1);
-      expect(actions.talk).not.toHaveBeenCalled();
+      expect(root.querySelector<HTMLElement>(".kids-thread-area")!.hidden).toBe(false);
+      for (const button of root.querySelectorAll<HTMLButtonElement>("header nav button")) {
+        expect(button.disabled).toBe(true);
+        button.click();
+      }
+      expect(actions.navigate).not.toHaveBeenCalled();
       expect(root.querySelector(".kids-status")).toBe(statusRegion);
       expect(statusRegion.textContent?.trim()).toBe(
         status === "listening" ? "I’m listening" : "Finishing our call…",
       );
     }
     state.voice = { status: "idle", active: false, detail: null, entries: [] };
-    paint();
-    expect(today!.disabled).toBe(false);
-    expect(today!.getAttribute("aria-current")).toBe("page");
-    expect(root.querySelector(".kids-status")).toBe(statusRegion);
-    expect(statusRegion.textContent?.trim()).toBe("");
-    state.conversation.busy = true;
-    paint();
-    expect(root.querySelector(".kids-status")).toBe(statusRegion);
-    expect(statusRegion.textContent?.trim()).toBe("Rocky is replying…");
-    state.activityEnabled = false;
-    state.conversation.busy = false;
     state.conversation.status = "disconnected";
     paint();
-    expect(root.querySelector("header nav")).toBeNull();
-    expect(root.querySelector("header img")).toBeNull();
+    expect(root.querySelector(".kids-home")).toBeNull();
+    expect(root.querySelector(".kids-solve")).toBeNull();
     expect(statusRegion.textContent?.trim()).toBe("Connecting…");
     state.connectionError = "Synthetic connection failure";
     paint();
@@ -148,23 +163,24 @@ it.each([false, true])(
     const root = document.createElement("div");
     const state = readyState();
     const actions = viewActions();
-    state.tab = "today";
+    state.page = "solve";
+    state.returnToSolve = true;
     state.dictation = { active: !finishing, finishing, detail: null };
     try {
       render(renderKidsView(state, actions), root);
       const modes = root.querySelector("header nav")!;
-      const [chat, today] = modes.querySelectorAll("button");
-      expect(chat!.getAttribute("aria-current")).toBe("page");
+      const [today, solve] = modes.querySelectorAll("button");
+      expect(solve!.disabled).toBe(true);
       expect(today!.disabled).toBe(true);
       expect(root.querySelector<HTMLElement>(".kids-footer")!.hidden).toBe(false);
       expect(root.querySelector<HTMLButtonElement>(".kids-dictate")!.disabled).toBe(finishing);
-      expect(root.querySelector("#kids-today-voice-help")?.textContent).toBe(
+      expect(root.querySelector("#kids-navigation-help")?.textContent).toBe(
         finishing
-          ? "Wait for your words to appear before opening Today."
-          : "Finish dictation to open Today.",
+          ? "Wait for your words to appear before leaving Chat."
+          : "Finish dictation before leaving Chat.",
       );
       today!.click();
-      expect(actions.tab).not.toHaveBeenCalled();
+      expect(actions.navigate).not.toHaveBeenCalled();
     } finally {
       render(null, root);
     }
@@ -206,7 +222,7 @@ describe("kids draft privacy", () => {
         expect(composer.disabled).toBe(true);
         expect(root.textContent).not.toContain(privateDraft);
         expect(root.querySelector(".kids-attachment")).toBeNull();
-        expect(root.querySelector("header img")?.getAttribute("src")).toBe("/kids/rocky.svg");
+        expect(root.querySelector(".kids-home, .kids-solve")).toBeNull();
         expect(root.querySelector("openclaw-toast-host")).toBeNull();
         expect(root.textContent).not.toContain("Private diagram.png");
         expect(state.draft).toBe(privateDraft);

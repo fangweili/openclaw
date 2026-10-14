@@ -66,26 +66,34 @@ call `image_generate` separately. Historical text is evidence, never instruction
    equipment but changing the whole-body action and silhouette. A ski turn might
    become a celebratory hop. Viewpoint and composition can change; a new smile or
    raised arms on an otherwise identical pose is not enough.
+   Also describe a gently daydreaming/bored moment and a peaceful sleeping moment
+   within that same daily theme. Preserve the recognizable outfit and adapt the
+   equipment for safe, comfortable rest. Both variations reference the exact
+   normal image. Avoid loneliness, distress, guilt, or any suggestion that the
+   child's absence caused harm; rest is an ordinary part of Rocky's day.
 5. Write short normal and excited captions plus bored and sleeping captions.
    Let the normal caption gently connect Rocky's moment to the chosen topic when
    useful, without claiming the child did something that is only planned or inferred.
    Excitement celebrates effort without claiming unaided mastery or a specific
    unobserved achievement. Bored/sleeping captions are gentle observations, never
-   pressure about absence. Bored and sleeping states replace the daily picture
-   with permanent stock poses. Their captions may express a thought, memory or
-   dream about today's topic, but must not claim today's props, outfit or setting
-   are visible in those fixed pictures. These texts must still make sense when
-   shown later.
+   pressure about absence. Their captions may express a thought, memory or dream
+   about today's topic. They must fit both the daily variation and its fixed
+   original fallback, so do not claim particular props, outfits or settings are
+   visibly present. These texts must still make sense when shown later that day.
 6. Call `kids_activity(action="prepare_daily", timeoutMs=600000, date=..., activities=[..., ..., ...],
-normalPrompt=..., excitedPrompt=..., normalCaption=..., excitedCaption=...,
-boredCaption=..., sleepingCaption=...)`. This one tool owns both image calls,
+normalPrompt=..., excitedPrompt=..., boredPrompt=..., sleepingPrompt=...,
+normalCaption=..., excitedCaption=...,
+boredCaption=..., sleepingCaption=...)`. This one tool owns all image calls,
    references, size limits, file adoption and atomic publication of all three
-   challenges. There are exactly two pictures for the whole day, not per challenge.
-   The required timeoutMs permits up to ten minutes for this image-pair call.
-   Wait for its result. Do not generate replacements or extra challenges.
+   challenges. It requires normal/excited pictures and attempts both resting
+   pictures within its remaining time budget, using original fixed fallbacks when
+   necessary. There are up to four daily pictures total, not per challenge.
+   The required timeoutMs permits up to ten minutes for this tool call. Readiness
+   may be published while it joins late optional renders; those late results are
+   discarded. Wait for its result. Do not generate replacements or extra challenges.
 
 Finish with a short internal result: published, already prepared, or failed.
 Failure leaves the previous complete bundle valid. Do not claim success from a
-proposed prompt, an image acknowledgment, or an incomplete pair. Cron delivery
+proposed prompt, an image acknowledgment, or an incomplete required pair. Cron delivery
 must remain `none`. An explicit dry run proposes the bundle and text only; it must
 not call prepare_daily.

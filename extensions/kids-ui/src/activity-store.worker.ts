@@ -2,7 +2,7 @@
  * Sole SQLite owner for published quizzes, grading evidence, idempotency receipts,
  * and pet clocks. Runs only in the SQLite broker worker. Admission creates schema
  * once; all state changes use one synchronous transaction with host authority at
- * BEGIN/COMMIT. Each immutable day owns three quizzes and one scene pair; quiz
+ * BEGIN/COMMIT. Each immutable day owns three quizzes and its mood artwork; quiz
  * progress is independent. Completing a quiz offers an explicit next start. An
  * unfinished quiz survives newer days; unstarted old extras cease being offered.
  * Ninety-day history and the newest 512 receipts are retained. Day-level pruning
@@ -58,7 +58,7 @@ type Progress = {
   questions: ActivityQuestionEvidence[];
   attempts: ActivityAttemptEvidence[];
 };
-type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText">;
+type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText" | "restImages">;
 type DayRow = { child_id: string; date: string; created_at: number; content: string };
 type ActivityRow = {
   child_id: string;
@@ -226,12 +226,13 @@ class ActivityDatabaseOwner {
             ? "bored"
             : "normal";
     const daily = latest ? readDay(latest) : undefined;
+    const currentDay = latest?.date === target.date ? daily : undefined;
     const image =
       state === "bored" || state === "sleeping"
         ? {
-            imageId: state,
+            imageId: currentDay?.restImages?.[state] ?? state,
             caption:
-              daily?.stateText[state] ??
+              currentDay?.stateText[state] ??
               (state === "sleeping"
                 ? "Resting until our next adventure."
                 : "Wondering what we will explore next."),
@@ -394,6 +395,7 @@ class ActivityDatabaseOwner {
         scene: bundle.scene,
         scenePrompt: bundle.scenePrompt,
         stateText: bundle.stateText,
+        ...(bundle.restImages ? { restImages: bundle.restImages } : {}),
       };
       executeSqliteQuerySync(
         this.db,

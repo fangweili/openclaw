@@ -54,7 +54,7 @@ export type ActivityOwner = {
     mutation: ActivityMutation,
     assertCurrent: () => void,
   ): Promise<ActivityResult>;
-  /** Atomically accepts three challenges and one art pair for a date; later calls return published:false. */
+  /** Atomically accepts three challenges and their mood art for a date; later calls return published:false. */
   publish(bundle: DailyActivityBundle, assertCurrent: () => void): Promise<{ published: boolean }>;
 };
 type ActiveOwner = {

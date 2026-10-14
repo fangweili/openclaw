@@ -2,27 +2,33 @@
 
 This separate frontend opens one child's verified tutor conversation. V1 includes
 text, photos, short videos, voice dictation, live voice, and private notifications.
-**Today** offers three short, saved daily challenges and Rocky; **Chat** retains
-the same tutor conversation. Switching tabs preserves unsent text and attachments.
-The header's labeled **Chat / Today** switch stays in the same place in both modes.
-During a live or finishing voice call, Chat stays selected and Today is disabled
-with an accessible explanation. The same restriction applies while dictation
-awaits microphone permission, records, or finishes transcription, keeping its
-Stop control and progress visible. It uses the dictation owner's existing active
-and finishing states; completing or cancelling dictation makes Today available again.
-Only useful connection, reply, or voice status
-appears beneath the switch; there is no wordmark or idle subtitle.
-The Today button includes a small image of Rocky in both modes, using the same
-private scene as the Today hero. Switching moves that image between its header
-and hero positions; reduced motion switches immediately.
-The child's name and notification control remain on the right.
-On landscape tablets (at least 933 × 560 CSS pixels), Today places Rocky on the
-left and the challenge on the right, using up to 1100px of viewport width with
-answers in two columns. Portrait and
-small screens retain the stacked layout. This is CSS-only presentation: rotation
-keeps the same activity state and DOM, and the existing Today scroller keeps long
-questions, hints, and larger text reachable without clipping. The Chat layout and
-fixed header retain their existing sizing.
+**Today** is the home screen: Rocky, **Chat with Rocky**, and a two-by-two grid
+of **Solve**, **Practice**, **Create**, and **Finish**. Chat and Solve are active;
+the other three are native disabled choices labeled **Coming later**. The home
+heading is **What shall we do?**, with no subtitle. Solve uses the existing saved
+multiple-choice challenges; this navigation change introduces no new grading or
+content-generation behavior. Landscape tablets place Rocky left of the choices
+or challenge; portrait and small screens stack them.
+
+**Today** returns home from Chat or Solve. **Talk it through** records the current
+hint before placing the question into the existing chat draft. Chat entered from
+Solve offers **Back to Solve**. Unsent text, attachments, quiz feedback and native
+home/Solve scroll positions survive these page changes; the transcript's existing
+scroll owner preserves the Chat reading position. The old tabs and header flight
+animation are removed. The pet's gentle mood animation still respects reduced motion.
+
+During a live or finishing voice call, or dictation awaiting microphone permission,
+recording, or finishing transcription, Chat controls remain visible and navigation
+away is disabled with an accessible explanation. There is no separate microphone
+state. Useful connection, reply and voice status remains in a persistent live
+region; the child's name and notification control remain unobtrusive in the header.
+
+The URL fragment is the only page preference: **#today**, **#solve**, or **#chat**.
+Reloading restores that presentation after authentication. Missing or unknown
+fragments start at Today; a deployment without activities stays Chat-only. A cold
+Home Screen launch using the manifest's plain start URL starts at Today rather
+than remembering a previous closed window. These fragments never select a child,
+tutor, conversation or quiz ID. No new local preference store is created.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
@@ -36,6 +42,10 @@ to screen readers.
   lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
   It starts and disposes the document's touch-gesture owner with the app.
+  It also owns the URL page projection and hash/worker-message listeners. Known
+  fragments pass the same parser for reload, hash navigation and same-origin
+  worker messages. Microphone guards reject leaving Chat and restore its URL.
+  Disposal removes these listeners before retiring conversation resources.
   It also binds the activity projection to the admitted physical conversation.
   Today and activity requests are enabled only when the current connection
   advertises the optional `kids.activity.get` capability; otherwise the app stays
@@ -55,23 +65,18 @@ to screen readers.
   request ID for an explicit retry. Reconnect clears all private presentation and
   can recover that retry only after the same backing session is verified. A new
   backing session discards it. The app polls every 15 seconds while foregrounded
-  in either mode so header Rocky stays current; hiding the page, disconnecting,
+  on every page so Rocky stays current; hiding the page, disconnecting,
   or disposing stops its timer. Opening Chat or Today never wakes the pet.
-  Entering Today also requests fresh progress through that same serialized owner.
+  Entering Solve also requests fresh progress through that same serialized owner.
   Media bytes use the authenticated `kids.activity.image` RPC, never public paths.
   State and image completions are generation-fenced; disposal revokes the URL and
   joins admitted requests before the app closes its transport.
-- `pet-transition.ts` owns one short animation on the real destination image,
-  borrowing the activity owner's URL without copying media or creating a second
-  cache. The app brackets each tab render with it. A fixed-size header wrapper
-  and Today picture preserve layout while the image temporarily uses fixed
-  positioning to cross the scroller without clipping. Completion restores styles
-  and listeners. A new tab change, changed image, Today scroll, resize, page visibility,
-  or reduced-motion change cancels immediately; ordinary same-image renders do
-  not. Disconnect and disposal cancel before activity media is revoked. Retired
-  completion callbacks cannot affect a later transition. The app retains its
-  existing microphone restrictions, draft and transcript-scroll owners.
-- `activity-view.ts` renders server-selected mood, caption, quiz and feedback.
+- `home-view.ts` renders only the accepted home choices and emits page intentions.
+  `pet-view.ts` shares the activity owner's admitted art and caption between home
+  and Solve without another request, URL owner, or interaction write. Both panels
+  stay mounted but hidden when inactive, preserving their native scroll positions;
+  loss of conversation admission removes both private panels immediately.
+- `activity-view.ts` renders the existing server-selected quiz and feedback.
   Hints and answers never grade locally, and reads contain no unearned answer keys.
   Feedback keeps the submitted question's heading until **Continue**, including
   when finishing yesterday's quiz reveals today's invitation on the server.
@@ -83,7 +88,7 @@ to screen readers.
   uses the same serialized, idempotent start operation. A started unfinished
   challenge carries into the next day, while unopened extras are replaced by the
   new daily batch. The plugin owns selection and carryover; the UI renders its facts.
-  A wrong answer offers a friendly retry. **Help me, Rocky** first records a hint
+  A wrong answer offers a friendly retry. **Talk it through** first records a hint
   so future correctness is accurately marked assisted, then appends that same
   question and an explicit request for one small hint to the existing draft for
   review. The request asks Rocky to wait for the child to try before explaining
@@ -200,7 +205,10 @@ to screen readers.
   or session navigation. Views never make permission or routing decisions.
 - The notification owner registers a worker scoped to `/kids/`, using the existing
   Web Push subscription owner. Lock-screen text is private. Worker clicks always
-  open `/kids/`; payload URLs never select a conversation. There is no offline chat
+  open `/kids/#chat`; a matching same-origin kids window receives a fixed Chat
+  presentation message before focus. Payload URLs are still ignored, and no
+  activity-specific notification routing is claimed. Notification navigation
+  never selects a conversation. There is no offline chat
   cache. Current profile, device, agent access, and session ownership are rechecked
   at delivery by the Gateway.
   While this chat is visible, the connection renews a short-lived

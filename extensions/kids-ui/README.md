@@ -153,7 +153,9 @@ pet normal. Chat does not clear a streak or interrupt an ongoing celebration.
 Mood is derived from saved timestamps, so no durable timers are necessary.
 
 Each morning prepares one batch of exactly three three-question challenges per
-child, with two shared daily pictures (normal and excited). Publication is atomic;
+child and attempts four shared daily pictures (normal, excited, bored, and sleeping).
+Normal and excited are required; either resting picture can fall back to its fixed
+original when rendering, encoding, or the optional deadline fails. Publication is atomic;
 retries reuse the saved batch. The app shows one challenge. Completing it keeps
 the result visible and offers `nextActivity`; only an explicit `start` advances.
 After all three, `nextActivity` is null. A started incomplete challenge remains
@@ -161,8 +163,10 @@ resumable across midnight. Once it is finished, the first challenge of the newes
 batch appears; yesterday's unstarted extras are no longer offered. `daily` counts
 always describe the newest batch, so completing a carryover does not count toward
 today's three. The current daily scene is independent of that retained quiz. Model or
-image failure preserves the last complete bundle. Fixed bored/sleeping poses use
-the agent's generated daily captions. Private image reads require the same
+required-image failure preserves the last complete bundle. Resting pictures and
+their daily captions are selected only for the child's current local date; without
+a current batch, the fixed originals use timeless captions. Older saved batches
+without daily resting art still use their fixed poses. Private image reads require the same
 session authority, and no local paths enter browser responses. Generated art is
 stored and served as PNG, preserving any provider alpha through the shared image
 worker's bounded resizing. The plugin rejects output still exceeding 512 KiB;
@@ -171,11 +175,30 @@ and clay material while allowing contextual activities, costumes, expressions an
 whole-body poses. The planner prioritizes recent conversation and dated school
 context maintained in the child's profile, with established interests or seasonal
 ideas as a fallback. It can revisit a relevant topic through a fresh moment rather
-than forcing a new theme. The excited image continues the normal image's theme, outfit
+than forcing a new theme. All three mood variations reference the exact daily normal
+image. The excited image continues the normal image's theme, outfit
 and core equipment with a distinct action and silhouette; its composition can
-change. Both remain isolated cutouts with only necessary equipment and small
+change. Resting poses preserve the theme and outfit while showing comfortable
+daydreaming or sleep. All remain isolated cutouts with only necessary equipment and small
 props or action cues, without a background, floor, or frame. Actual transparent generation
 also requires support from the selected provider; the plugin does not change models.
+
+The optional rest-render phase runs both moods concurrently for at most three
+minutes, ending no later than nine minutes after preparation starts. If required
+work already used that window, both resting pictures use fixed fallbacks. At that
+deadline, the owner freezes completed results and publishes once; late results
+cannot write files or change the saved scene. It still joins admitted provider
+calls before the tool settles or shutdown completes, so challenges can become
+ready before the preparation tool returns. Provider timeouts and fallback chains
+remain provider-owned; the existing ten-minute tool watchdog is not a guarantee
+that all cleanup ends within ten minutes. Required work can itself overrun that
+budget, and authority loss always prevents subsequent publication.
+
+Daily resting IDs live in an optional private `restImages` field beside the
+existing `stateText` captions. This additive schema-1 JSON extension requires no
+migration: old readers ignore it and new readers accept its absence. Browser
+responses retain the existing selected `pet.image` contract. Refresh the daily
+preparation prompt with this release to supply both resting scene directions.
 
 The store retains 90 days by last activity update. It prunes whole day bundles
 and protects a day containing the current unfinished challenge, keeping scene

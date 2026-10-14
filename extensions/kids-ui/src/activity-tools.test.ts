@@ -88,6 +88,8 @@ const daily: ActivityDailyPreparation = {
   })),
   normalPrompt: "Rocky looks at two equal leaf pieces.",
   excitedPrompt: "Rocky celebrates beside the same pieces.",
+  boredPrompt: "Rocky daydreams beside the leaf pieces.",
+  sleepingPrompt: "Rocky naps beside the leaf pieces.",
   normalCaption: "Ready to explore?",
   excitedCaption: "What a discovery!",
   boredCaption: "Thinking about tiny puzzles.",
@@ -168,6 +170,8 @@ describe("activity cron tool authority", () => {
       { action: "prepare_daily", ...daily },
       { ...prepareRequest, timeoutMs: 90_000 },
       { ...prepareRequest, excitedPrompt: "x".repeat(1501) },
+      { ...prepareRequest, boredPrompt: "x".repeat(1501) },
+      { ...prepareRequest, sleepingPrompt: "" },
       { ...prepareRequest, activities: daily.activities.slice(0, 2) },
       {
         ...prepareRequest,
