@@ -390,6 +390,56 @@ html[data-kids] body,
   }
 }
 
+/* Landscape tablets share one Today scroller: Rocky on the left, the full
+   challenge on the right. Taller content remains reachable instead of clipped. */
+@media (orientation: landscape) and (min-width: 933px) and (min-height: 560px) {
+  .kids-today {
+    box-sizing: border-box;
+    display: grid;
+    align-self: center;
+    width: min(100vw, 1100px);
+    grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+    align-items: start;
+    gap: 24px;
+    padding-top: 24px;
+  }
+
+  .kids-pet {
+    min-width: 0;
+    width: 100%;
+    margin: 24px 0 0;
+  }
+
+  .kids-activity-card {
+    box-sizing: border-box;
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+  }
+
+  .kids-activity-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kids-activity-option {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .kids-activity-progress {
+    margin-bottom: 16px;
+  }
+
+  .kids-activity-question {
+    margin-bottom: 16px;
+  }
+
+  .kids-activity-actions {
+    margin-top: 16px;
+  }
+}
+
 @media (max-width: 560px) {
   .kids-today {
     padding: 0 16px max(24px, env(safe-area-inset-bottom));

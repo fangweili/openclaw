@@ -40,6 +40,40 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       await page.screenshot({ path: path.join(proof, `${id}.png`), fullPage: true });
       examples.push({ id, label });
     };
+    // Check usable viewport space, rather than mirroring CSS column sizes.
+    const landscape = async (state: string) => {
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1180, height: 820 },
+        { width: 1366, height: 1024 },
+        { width: 1024, height: 650 },
+      ]) {
+        await page.setViewportSize(viewport);
+        const id = `today-${state}-landscape-${viewport.width}-${viewport.height}`;
+        await page.screenshot({ path: path.join(proof, `${id}.png`), animations: "disabled" });
+        examples.push({ id, label: `Landscape ${viewport.width} × ${viewport.height} — ${state}` });
+        const layout = await page.locator(".kids-today").evaluate((element) => {
+          const pet = element.querySelector(".kids-pet")!.getBoundingClientRect();
+          const card = element.querySelector(".kids-activity-card")!.getBoundingClientRect();
+          const bounds = element.getBoundingClientRect();
+          return {
+            sideBySide: pet.right <= card.left,
+            visible: card.top >= bounds.top && card.bottom <= bounds.bottom,
+            verticalOverflow: element.scrollHeight - element.clientHeight,
+            horizontalOverflow: element.scrollWidth - element.clientWidth,
+            targets: Array.from(element.querySelectorAll("button")).every(
+              (button) => button.getBoundingClientRect().height >= 44,
+            ),
+          };
+        });
+        expect(layout.sideBySide).toBe(true);
+        expect(layout.visible).toBe(true);
+        expect(layout.verticalOverflow).toBeLessThanOrEqual(1);
+        expect(layout.horizontalOverflow).toBeLessThanOrEqual(1);
+        expect(layout.targets).toBe(true);
+      }
+      await page.setViewportSize({ width: 1024, height: 1366 });
+    };
     const image = await readFile(path.resolve("extensions/kids-ui/pets/rocky-reference.webp"));
     const today: ActivitySnapshot = {
       now: 1000,
@@ -74,6 +108,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
             { id: "broad", text: "A wide, flat leaf" },
             { id: "thin", text: "A thin blade of grass" },
             { id: "torn", text: "A leaf with a big hole" },
+            { id: "curled", text: "A tightly curled leaf" },
           ],
         },
       },
@@ -209,12 +244,19 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     const started = structuredClone(today);
     started.activity!.started = true;
     await gateway.setMethodResponse("kids.activity.start", { snapshot: started });
+    await gateway.setMethodResponse("kids.activity.get", started);
     await page.getByRole("button", { name: "Let's explore", exact: true }).click();
     await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).waitFor();
     expect((await gateway.getRequests("kids.activity.start"))[0]?.params).toMatchObject({
       sessionKey,
       activityId: "leaf-boats",
     });
+    await page.screenshot({
+      path: path.join(proof, "today-question-portrait.png"),
+      animations: "disabled",
+    });
+    examples.push({ id: "today-question-portrait", label: "Portrait — four-answer challenge" });
+    await landscape("question");
     const hinted = structuredClone(started);
     hinted.activity!.currentQuestion!.hint = "Think about a shape that spreads out over the water.";
     await gateway.setMethodResponse("kids.activity.hint", { snapshot: hinted });
@@ -234,6 +276,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByText(hinted.activity!.currentQuestion!.hint!).waitFor();
     await capture("today-hint-ipad", "iPad — a question with an optional hint");
+    await landscape("hint");
     const answered = structuredClone(hinted);
     answered.correctStreak = 1;
     answered.activity!.currentIndex = 1;
@@ -257,13 +300,14 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     });
     await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).click();
     await page.getByRole("heading", { name: "You figured it out!" }).waitFor();
+    await gateway.setMethodResponse("kids.activity.get", answered);
+    await landscape("feedback");
     expect(
       await page.getByText(started.activity!.currentQuestion!.prompt, { exact: true }).count(),
     ).toBe(1);
     expect(
       await page.getByText(answered.activity!.currentQuestion!.prompt, { exact: true }).count(),
     ).toBe(0);
-    await gateway.setMethodResponse("kids.activity.get", answered);
     await page.getByRole("button", { name: "Chat", exact: true }).click();
     await composer.waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Today", exact: true }).click();
@@ -305,6 +349,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await page.getByText("1 of 3 challenges complete", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Another challenge", exact: true }).waitFor();
     await capture("today-complete-ipad", "iPad — choose another challenge or chat");
+    await landscape("complete");
     // Neither revisiting Today nor choosing Chat starts an optional extra.
     await gateway.setMethodResponse("kids.activity.get", completed);
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();

@@ -16,6 +16,13 @@ The Today button includes a small image of Rocky in both modes, using the same
 private scene as the Today hero. Switching moves that image between its header
 and hero positions; reduced motion switches immediately.
 The child's name and notification control remain on the right.
+On landscape tablets (at least 933 × 560 CSS pixels), Today places Rocky on the
+left and the challenge on the right, using up to 1100px of viewport width with
+answers in two columns. Portrait and
+small screens retain the stacked layout. This is CSS-only presentation: rotation
+keeps the same activity state and DOM, and the existing Today scroller keeps long
+questions, hints, and larger text reachable without clipping. The Chat layout and
+fixed header retain their existing sizing.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
