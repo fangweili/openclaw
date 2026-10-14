@@ -180,7 +180,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
     await page.getByRole("button", { name: "Finish dictation", exact: true }).click();
     await gateway.waitForRequest("kids.transcribe");
-    await page.getByText("Finishing your words…", { exact: true }).waitFor();
+    await page.locator(".kids-solve").getByText("Finishing your words…", { exact: true }).waitFor();
     expect(await page.locator(".kids-footer").isVisible()).toBe(false);
     await gateway.resolveDeferred("kids.transcribe", { text: "No. They are different." });
     await page.waitForFunction(

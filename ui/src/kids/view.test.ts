@@ -369,6 +369,7 @@ it("keeps the submitted free answer and live result mounted while checking and r
     const live = root.querySelector(".kids-answer-result")!;
     expect(field.value).toBe(state.activity.answerDraft);
     expect(live.textContent?.trim()).toBe("");
+    expect(live.classList.contains("kids-answer-result--populated")).toBe(false);
     root
       .querySelector<HTMLFormElement>(".kids-answer")!
       .dispatchEvent(new Event("submit", { cancelable: true }));
@@ -384,6 +385,7 @@ it("keeps the submitted free answer and live result mounted while checking and r
     paint();
     expect(root.querySelector("#kids-answer")).toBe(field);
     expect(root.querySelector(".kids-answer-result")).toBe(live);
+    expect(live.classList.contains("kids-answer-result--populated")).toBe(true);
     expect(field.readOnly).toBe(true);
     expect(live.textContent).toContain("Rocky is checking");
     state.activity.busy = false;

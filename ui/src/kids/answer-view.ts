@@ -81,7 +81,10 @@ export function renderKidsAnswer(
             ></textarea>
             ${!correct ? html`<p class="kids-answer-note">${t("kids.answer.note")}</p>` : nothing}`
     }
-    <div class="kids-answer-result" role="status">
+    <div
+      class=${state.checking || state.feedback ? "kids-answer-result kids-answer-result--populated" : "kids-answer-result"}
+      role="status"
+    >
       ${
         state.checking
           ? html`<strong>${t("kids.answer.checking")}</strong

@@ -1137,7 +1137,7 @@ html[data-kids] body,
   font-size: 14px;
 }
 
-.kids-answer-result:not(:empty) {
+.kids-answer-result--populated {
   margin-top: 15px;
   padding: 15px 17px;
   border-radius: 15px;
