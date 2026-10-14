@@ -288,6 +288,21 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     );
     await page.getByRole("button", { name: "Jump to latest message", exact: true }).waitFor();
     const readingPosition = await thread.evaluate((element) => element.scrollTop);
+    // Long history scrolls inside the transcript, including its hidden speaker labels.
+    expect(readingPosition).toBe(400);
+    expect(
+      await thread.evaluate((element) => ({
+        hasHistoryOverflow: element.scrollHeight > element.clientHeight,
+        bodyHeight: document.body.scrollHeight,
+        shellHeight: document.querySelector(".kids-shell")!.scrollHeight,
+        viewportHeight: window.innerHeight,
+      })),
+    ).toEqual({
+      hasHistoryOverflow: true,
+      bodyHeight: 1366,
+      shellHeight: 1366,
+      viewportHeight: 1366,
+    });
     await page.screenshot({ path: path.join(proof, "chat-navigation-ipad.png"), fullPage: true });
     examples.push({
       id: "chat-navigation-ipad",
