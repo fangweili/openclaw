@@ -94,6 +94,8 @@ const daily: ActivityDailyPreparation = {
   sleepingCaption: "Dreaming of leaves.",
 };
 
+const prepareRequest = { action: "prepare_daily", timeoutMs: 600_000, ...daily };
+
 function harness() {
   const prepare = vi.fn<ActivityToolRuntime["prepare"]>().mockResolvedValue(evidence);
   const prepareDaily = vi
@@ -147,13 +149,10 @@ describe("activity cron tool authority", () => {
     expect(h.prepare).toHaveBeenLastCalledWith(child.childId, expect.any(Function));
     await tool.execute("call-two", { action: "evidence" });
     expect(h.prepare).toHaveBeenLastCalledWith(child.childId, expect.any(Function));
-    const result = await tool.execute("call-three", {
-      action: "prepare_daily",
-      ...daily,
-    });
+    const result = await tool.execute("call-three", prepareRequest);
     expect(h.prepareDaily).toHaveBeenCalledWith(
       child.childId,
-      expect.objectContaining({ date: "2026-10-14" }),
+      daily,
       expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     expect(result.details).toEqual({ published: true, date: "2026-10-14" });
@@ -164,17 +163,17 @@ describe("activity cron tool authority", () => {
     const tool = registeredTool(h.context, h.options)!;
     for (const args of [
       { action: "evidence", childId: sibling.childId },
-      { action: "prepare_daily", ...daily, childId: sibling.childId },
+      { ...prepareRequest, childId: sibling.childId },
       { action: "prepare_daily", date: daily.date },
-      { action: "prepare_daily", ...daily, excitedPrompt: "x".repeat(1501) },
-      { action: "prepare_daily", ...daily, activities: daily.activities.slice(0, 2) },
+      { action: "prepare_daily", ...daily },
+      { ...prepareRequest, timeoutMs: 90_000 },
+      { ...prepareRequest, excitedPrompt: "x".repeat(1501) },
+      { ...prepareRequest, activities: daily.activities.slice(0, 2) },
       {
-        action: "prepare_daily",
-        ...daily,
-        activities: daily.activities.map((activity) => ({
-          ...activity,
-          questions: activity.questions.slice(0, 2),
-        })),
+        ...prepareRequest,
+        activities: daily.activities.map((activity) =>
+          Object.assign({}, activity, { questions: activity.questions.slice(0, 2) }),
+        ),
       },
       null,
     ]) {
@@ -216,10 +215,7 @@ describe("activity cron tool authority", () => {
     const tool = registeredTool(h.context, h.options)!;
     const context = await tool.execute("context", { action: "prepare_context" });
     expect(context.details).toMatchObject({ childId: child.childId, ...evidence });
-    const publication = await tool.execute("publication", {
-      action: "prepare_daily",
-      ...daily,
-    });
+    const publication = await tool.execute("publication", prepareRequest);
     expect(publication.details).toEqual({ published: true, date: "2026-10-14" });
     expect(h.prepareDaily).toHaveBeenCalledOnce();
   });

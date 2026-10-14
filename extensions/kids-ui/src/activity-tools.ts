@@ -111,7 +111,12 @@ function createActivityTool(
     ? Type.Union([
         Type.Object({ action: Type.Literal("prepare_context") }, { additionalProperties: false }),
         Type.Object(
-          { action: Type.Literal("prepare_daily"), ...preparationFields },
+          {
+            action: Type.Literal("prepare_daily"),
+            // The host's supported argument extends its ordinary 90-second tool watchdog.
+            timeoutMs: Type.Literal(600_000),
+            ...preparationFields,
+          },
           { additionalProperties: false },
         ),
         evidenceSchema,
@@ -149,7 +154,7 @@ function createActivityTool(
           if (!child) {
             return toolError("This job can read evidence only.");
           }
-          const { action: _action, ...preparation } = input;
+          const { action: _action, timeoutMs: _timeoutMs, ...preparation } = input;
           const result = await runtime.generation.prepareDaily(child.childId, preparation, {
             assertCurrent,
             agentDir: context.agentDir,

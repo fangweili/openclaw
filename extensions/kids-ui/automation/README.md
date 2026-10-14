@@ -15,7 +15,7 @@ runtime, including normal-to-excited reference continuity. The job supplies word
 and verified questions; it cannot choose an image path, provider or sibling.
 
 Create one isolated preparation job per configured child, with `delivery.mode`
-set to `none`, a 1,200-second timeout covering image-provider fallback, and tools limited to `read`, `exec`, and
+set to `none`, a 1,200-second job timeout, and tools limited to `read`, `exec`, and
 `kids_activity`. Suggested schedules are `0 6 * * *` and `10 6 * * *` in the
 children's configured timezone. Point each payload to `cron-daily-prepare.md`.
 Record each actual job ID as that child's `preparationJobId` and the job's agent
@@ -87,6 +87,14 @@ Chat message counts remain chat counts. `appActivity` carries the saved activity
 snapshot so the invitation job can check that unfinished work actually exists.
 
 ## Artwork, publication and recovery
+
+`prepare_daily` requires `timeoutMs: 600000`, the host's supported ten-minute
+tool-call budget. The larger job budget leaves room for planning and cleanup;
+it does not extend that tool limit. A slow provider/fallback sequence may exceed
+it. Cancellation fences publication and joins any dispatched provider work;
+previous complete bundles remain valid. Context and evidence reads retain the
+ordinary tool timeout. Never treat a timeout as proof that a retry is safe before
+the prior operation has settled and the saved day has been checked.
 
 The plugin ships approved canonical and fixed pose artwork under `pets/`.
 Both children use the same original Rocky mountain character, with distinct
