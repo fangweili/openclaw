@@ -51,7 +51,21 @@ export function registerKidsActivityContext(
         })),
       }));
       return {
-        prependContext: `<kids_activity_context>\nAuthoritative saved activity facts for this child's tutor. Use these to continue the current question and recall learning. Daily counts cover only the latest batch; an older started challenge may also need finishing. After completion offer another challenge only when nextActivity exists, otherwise chat. Quiz progress changes only through the activity app; do not claim a chat answer was scored. Independent means correct on the first attempt without a hint. Pet rest is friendly; never blame the child for time away.\n${JSON.stringify({ pet: { state: snapshot.pet.state, caption: snapshot.pet.image?.caption }, activity: snapshot.activity, daily: snapshot.daily, nextActivity: snapshot.nextActivity, recent })}\n</kids_activity_context>`,
+        prependContext: [
+          "<kids_activity_context>",
+          "Authoritative saved activity facts for this child's tutor. Use these to continue the current question and recall learning.",
+          "For help with an unfinished challenge, start with one small hint or diagnostic question, then stop and wait for the child to try. A generic help request is not a request for the solution: do not give the final answer, choose an option, or complete the reasoning on the first help turn.",
+          "Use the displayed question and any hint already revealed; offer the next small step instead of repeating the same clue. After the child tries, respond to their reasoning. If they explicitly ask for a worked explanation or remain stuck after a hint, explain briefly, then let them try a similar step. Follow requests to change topic or stop.",
+          "Daily counts cover only the latest batch; an older started challenge may also need finishing. After completion offer another challenge only when nextActivity exists, otherwise chat. Quiz progress changes only through the activity app; do not claim a chat answer was scored. When ready, the child chooses their answer in Today. Independent means correct on the first attempt without a hint. Pet rest is friendly; never blame the child for time away.",
+          JSON.stringify({
+            pet: { state: snapshot.pet.state, caption: snapshot.pet.image?.caption },
+            activity: snapshot.activity,
+            daily: snapshot.daily,
+            nextActivity: snapshot.nextActivity,
+            recent,
+          }),
+          "</kids_activity_context>",
+        ].join("\n"),
       };
     } catch {
       api.logger.warn("Kids activity context was unavailable for this tutor turn.");

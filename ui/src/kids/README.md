@@ -85,8 +85,9 @@ to screen readers.
   new daily batch. The plugin owns selection and carryover; the UI renders its facts.
   A wrong answer offers a friendly retry. **Help me, Rocky** first records a hint
   so future correctness is accurately marked assisted, then appends that same
-  question to the existing draft for review. It never sends automatically or
-  starts another session. A failed or retired assistance request cannot switch
+  question and an explicit request for one small hint to the existing draft for
+  review. The request asks Rocky to wait for the child to try before explaining
+  the answer. It never sends automatically or starts another session. A failed or retired assistance request cannot switch
   conversations or alter a newer draft. The plugin supplies authoritative activity context to
   the tutor. Gentle CSS motion respects reduced-motion preferences. Polling can
   display a time-based mood change up to 15 seconds after the server's threshold.
@@ -129,8 +130,14 @@ to screen readers.
   through history evicts the opposite edge, which can be fetched again. The live
   conversation keeps its separate 80-message tail and remains the authority for
   sending. Tail refreshes and page reads serialize; historical pages never replace
-  live branch or pending-input state. Latest discards browsing immediately. A failed
-  page keeps the current view and offers retry; disconnect retires all page results.
+  live branch or pending-input state. A canonical transcript-source change also
+  refreshes positional attachment references before the tutor's final response.
+  Retained browsing pages renew together, preserving message identities and the
+  reading position. A failed read keeps the complete prior window and offers
+  the existing history retry without reconnecting or clearing the draft. A further
+  source change requests a fresh authoritative tail; physical session resets and
+  shrinking history retain the existing window-reset behavior. Latest
+  discards browsing immediately; disconnect retires all page results.
   Edge buttons keep pages traversable when filtered rows leave too little visible
   content to scroll.
 - `transcript-scroll.ts` owns viewport position and one resize observer. It follows

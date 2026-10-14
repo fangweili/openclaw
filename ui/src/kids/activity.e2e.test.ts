@@ -270,6 +270,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await composer.waitFor({ state: "visible" });
     expect(await composer.inputValue()).toContain("I found a leaf in the garden.");
     expect(await composer.inputValue()).toContain(started.activity!.currentQuestion!.prompt);
+    expect(await composer.inputValue()).toContain(
+      "Give me one small hint and let me try before you explain the answer.",
+    );
     expect((await gateway.getRequests("chat.send")).length).toBe(0);
     expect((await gateway.getRequests("sessions.create")).length).toBe(1);
     await gateway.setMethodResponse("kids.activity.get", hinted);

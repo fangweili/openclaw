@@ -54,7 +54,8 @@ const enKids = {
       dailyProgress: "{completed} of {total} challenges complete",
       questionProgress: "Questions: {completed} of {total}",
       finishedDetail: "Nice exploring. Your progress is saved, and Rocky knows what you practiced.",
-      helpMessage: "Help me with my challenge: {title}\n\n{question}",
+      helpMessage:
+        "Help me with my challenge: {title}\n\n{question}\n\nGive me one small hint and let me try before you explain the answer.",
       mood: {
         normal: "Your companion is ready to explore",
         bored: "Your companion is relaxing",

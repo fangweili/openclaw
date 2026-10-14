@@ -613,7 +613,10 @@ export class KidsConversation {
               .filter((runId) => typeof runId === "string"),
           );
           connection.projection = retirePendingUserEntries(connection.projection, acceptedRunIds);
-          connection.historyWindow.updateTail(history);
+          await connection.historyWindow.updateTail(history);
+          if (!this.current(connection)) {
+            return;
+          }
           let accepted: PendingSend | undefined;
           if (
             connection.uncertainSend &&
@@ -685,15 +688,17 @@ export class KidsConversation {
     if (event.event === "session.message") {
       connection.eventRevision += 1;
       if (visibleMessage(payload.message)) {
+        const sourceChanged = connection.historyWindow.hasChangedSource(payload.message);
         connection.projection = reduceSessionProjection(connection.projection, {
           type: "messagePersisted",
           message: payload.message,
           envelope: payload,
         });
         this.render(connection);
-        if (asOptionalRecord(payload.message)?.role === "assistant") {
+        if (sourceChanged || asOptionalRecord(payload.message)?.role === "assistant") {
           // Proactive or voice replies may arrive without this client's chat
-          // run lifecycle. Refresh the branch before admitting the next turn.
+          // run lifecycle. A rewritten user row also invalidates earlier media
+          // references, so renew history before the tutor's final response.
           void this.refresh();
         }
       }

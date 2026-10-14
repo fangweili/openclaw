@@ -180,7 +180,12 @@ completion timestamps let nightly profile/report jobs deduplicate real evidence
 instead of treating the activity's publication date as its learning date. A
 bounded prompt hook adds the current activity and recent evidence to the matching
 tutor conversation and voice consultations with the same host-resolved memory
-audience. Direct realtime small talk does not invoke that hook.
+audience. It also defines help for unfinished activities: one small clue and a
+pause for the child's attempt, without revealing the solution on the first help
+turn. Previously revealed hints inform the next step; an explicit explanation
+request or continued difficulty after a hint can receive a short worked example.
+Only the app records quiz progress. Direct realtime small talk does not invoke
+that hook.
 
 Private preparation context also carries each recent day's `scenePrompt`, the
 saved normal-scene creative plan (up to 3,000 characters). It preserves intended

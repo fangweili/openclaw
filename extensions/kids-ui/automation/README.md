@@ -23,6 +23,12 @@ as `preparationAgentId` when different from the child's tutor. No new agent is
 needed. The tool requires that exact agent and isolated `cron:<job>:run:<id>`
 context, together with current invocation authority.
 
+The preparation template runs
+`node scripts/kids-activity.mjs --days 30 --child <childId>` from the tutor
+workspace. Verify that existing read-only collector is installed there before
+activation. It reads only the creation-bound child; a failed or partial collection
+is reported as limited evidence, not inactivity.
+
 Add existing nightly and weekly job IDs to `activities.evidenceJobs`; retain their
 current schedules and delivery settings. Add `kids_activity` to their tool
 allowlists if an allowlist is present. Insert the instructions in
