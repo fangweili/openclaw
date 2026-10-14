@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { ActivityMutation } from "@openclaw/kids-activity-contract";
 import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import {
@@ -14,6 +15,7 @@ import {
   ACTIVITY_EXCITED_MS,
   ACTIVITY_SLEEP_MS,
   type DailyActivityBundle,
+  type ActivityGrade,
 } from "./activity-contract.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
 
@@ -36,6 +38,7 @@ function bundle(childId: string, date = "2026-10-13"): DailyActivityBundle {
       title: `Berry math ${index}`,
       subject: "Math",
       questions: [1, 2, 3].map((id) => ({
+        kind: "choice" as const,
         id: `q${id}`,
         prompt: `What is ${id} + 1?`,
         options: [
@@ -76,11 +79,12 @@ function mutate(
   now = timestamp,
   date = "2026-10-13",
   guard = () => {},
+  grade?: ActivityGrade,
 ) {
   return runSqliteWorkerStoreWrite(
     store,
     (scope) =>
-      scope.execute({ type: "mutate", input: { ...target(childId, now, date), mutation } }),
+      scope.execute({ type: "mutate", input: { ...target(childId, now, date), mutation, grade } }),
     guard,
     [databasePath],
   );
@@ -106,7 +110,7 @@ function answer(
       activityId: `${childId}-2026-10-13`,
       questionId: `q${question}`,
       requestId,
-      optionId,
+      answer: { kind: "choice", optionId },
     },
     now,
   );
@@ -135,6 +139,7 @@ describe("activity worker authority and progress", () => {
     const snapshot = await get("projection");
     expect(snapshot.activity?.currentQuestion).toEqual({
       id: "q1",
+      kind: "choice",
       prompt: "What is 1 + 1?",
       options: [
         { id: "yes", text: "2" },
@@ -185,7 +190,7 @@ describe("activity worker authority and progress", () => {
         expect.objectContaining({
           id: "a1",
           at: timestamp,
-          optionId: "yes",
+          answer: { kind: "choice", optionId: "yes" },
           hintUsed: true,
           ordinal: 1,
           independent: false,
@@ -209,7 +214,7 @@ describe("activity worker authority and progress", () => {
     expect(incorrect.snapshot.activity?.currentIndex).toBe(1);
     expect(incorrect.snapshot.pet.state).toBe("normal");
     const corrected = await answer("wrong", 2, "correction");
-    expect(corrected.feedback).toMatchObject({ correct: true, independent: false });
+    expect(corrected.feedback).toMatchObject({ outcome: "correct", independent: false });
     expect(corrected.snapshot.correctStreak).toBe(1);
   });
 
@@ -326,7 +331,7 @@ describe("activity worker authority and progress", () => {
           requestId: `${quiz.id}-${question.id}`,
           activityId: quiz.id,
           questionId: question.id,
-          optionId: "yes",
+          answer: { kind: "choice", optionId: "yes" },
         });
       }
       const completed = await get(childId);
@@ -340,7 +345,7 @@ describe("activity worker authority and progress", () => {
         requestId: `${quiz.id}-q3`,
         activityId: quiz.id,
         questionId: "q3",
-        optionId: "yes",
+        answer: { kind: "choice", optionId: "yes" },
       });
       expect(replay.feedback?.questionId).toBe("q3");
       expect(replay.snapshot).toEqual(completed);
@@ -368,7 +373,7 @@ describe("activity worker authority and progress", () => {
           requestId: `old-${questionId}`,
           activityId: `${childId}-2026-10-13`,
           questionId,
-          optionId: "yes",
+          answer: { kind: "choice", optionId: "yes" },
         },
         now,
         "2026-10-14",
@@ -396,12 +401,12 @@ describe("activity worker authority and progress", () => {
         requestId: "old-q3",
         activityId: `${childId}-2026-10-13`,
         questionId: "q3",
-        optionId: "yes",
+        answer: { kind: "choice", optionId: "yes" },
       },
       now,
       "2026-10-14",
     );
-    expect(replay.feedback?.correct).toBe(true);
+    expect(replay.feedback?.outcome).toBe("correct");
     expect(replay.snapshot).toEqual(current);
 
     await publish("unstarted");
@@ -454,7 +459,7 @@ describe("activity worker authority and progress", () => {
           requestId: `finish-${questionId}`,
           activityId: `${childId}-2026-10-13`,
           questionId,
-          optionId: "yes",
+          answer: { kind: "choice", optionId: "yes" },
         },
         future,
         "2027-02-01",
@@ -488,7 +493,7 @@ describe("activity worker authority and progress", () => {
           requestId: "revoked",
           activityId: "authority-2026-10-13",
           questionId: "q1",
-          optionId: "yes",
+          answer: { kind: "choice", optionId: "yes" },
         },
         timestamp,
         "2026-10-13",
@@ -498,6 +503,336 @@ describe("activity worker authority and progress", () => {
           }
         },
       );
+    }
+  });
+
+  it("keeps exact numeric and explanation evidence atomic without treating clarification as wrong", async () => {
+    const childId = "free";
+    const value = bundle(childId);
+    const questions = value.activities[0]!.questions;
+    questions[0] = {
+      kind: "numeric",
+      id: "q1",
+      prompt: "What is half as a decimal?",
+      answer: "1/2",
+      unit: null,
+      hint: "Use equal parts.",
+      explanation: "Half is 0.5.",
+    };
+    questions[1] = {
+      kind: "explanation",
+      id: "q2",
+      prompt: "Why do equal halves make a whole?",
+      rubric: "Both original equal pieces cover the whole.",
+      hint: "Think about covering.",
+      explanation: "They cover the original whole.",
+    };
+    questions[2] = { ...questions[1], id: "q3" };
+    await publishBundle(value);
+    await start(childId);
+    expect((await get(childId)).activity?.currentQuestion).toEqual({
+      kind: "numeric",
+      id: "q1",
+      prompt: questions[0].prompt,
+      unit: null,
+      hint: null,
+    });
+    const numeric: ActivityMutation = {
+      kind: "answer",
+      requestId: "numeric-invalid",
+      activityId: value.activities[0]!.id,
+      questionId: "q1",
+      answer: { kind: "numeric", text: "half" },
+    };
+    const invalid = await mutate(childId, numeric);
+    expect(invalid.feedback?.outcome).toBe("clarify");
+    const correct = await mutate(childId, {
+      ...numeric,
+      requestId: "numeric",
+      answer: { kind: "numeric", text: "2/4" },
+    });
+    expect(correct.feedback).toMatchObject({ outcome: "correct", independent: true });
+    expect(JSON.stringify(correct.snapshot)).not.toMatch(/rubric|Both original|correctOptionId/u);
+    const submission = {
+      kind: "answer" as const,
+      requestId: "clarify",
+      activityId: value.activities[0]!.id,
+      questionId: "q2",
+      answer: { kind: "explanation" as const, text: "Because it does" },
+    };
+    const plan = await store.execute({
+      type: "planAnswer",
+      input: { ...target(childId), mutation: submission },
+    });
+    expect(plan).toMatchObject({ kind: "grade", question: { rubric: questions[1].rubric } });
+    const clarify: ActivityGrade = {
+      outcome: "clarify",
+      explanation: "Can you explain what you mean by it?",
+    };
+    const clarified = await mutate(childId, submission, timestamp, "2026-10-13", () => {}, clarify);
+    expect(clarified.snapshot.correctStreak).toBe(1);
+    expect(clarified.snapshot.activity?.currentIndex).toBe(1);
+    expect(
+      await store.execute({
+        type: "planAnswer",
+        input: { ...target(childId), mutation: submission },
+      }),
+    ).toMatchObject({ kind: "replay", result: { feedback: { outcome: "clarify" } } });
+    const answered = await mutate(
+      childId,
+      {
+        ...submission,
+        requestId: "explain",
+        answer: { kind: "explanation", text: "Both pieces cover the same whole" },
+      },
+      timestamp,
+      "2026-10-13",
+      () => {},
+      { outcome: "correct", explanation: "You explained the equal pieces." },
+    );
+    expect(answered.feedback).toMatchObject({ outcome: "correct", independent: true });
+    const third = { ...submission, questionId: "q3", requestId: "third" };
+    await store.execute({ type: "planAnswer", input: { ...target(childId), mutation: third } });
+    await mutate(childId, {
+      kind: "hint",
+      requestId: "hint-after-plan",
+      activityId: submission.activityId,
+      questionId: "q3",
+    });
+    const hinted = await mutate(childId, third, timestamp, "2026-10-13", () => {}, {
+      outcome: "correct",
+      explanation: "You explained it.",
+    });
+    expect(hinted.feedback?.independent).toBe(false);
+    // A different request cannot commit the old plan after another answer advanced progress.
+    await expect(
+      mutate(childId, { ...third, requestId: "stale-grade" }, timestamp, "2026-10-13", () => {}, {
+        outcome: "correct",
+        explanation: "Late",
+      }),
+    ).rejects.toThrow("already complete");
+    const context = await store.execute({ type: "prepare", input: target(childId) });
+    const evidence = context.recentActivities.find((entry) => entry.id === submission.activityId)!;
+    expect(evidence.attempts).toHaveLength(5);
+    expect(evidence.attemptsOmitted).toBe(0);
+    expect(evidence.questions.map((entry) => entry.attempts)).toEqual([1, 1, 1]);
+    expect(evidence.attempts[2]).toMatchObject({
+      outcome: "clarify",
+      answerText: "Because it does",
+      ordinal: 0,
+    });
+  });
+
+  it("migrates version-one questions, evidence and receipts once while preserving saved progress", async () => {
+    const file = path.join(directory, "legacy.sqlite");
+    const fixture = new DatabaseSync(file);
+    const oldQuestion = {
+      id: "q1",
+      prompt: "One plus one?",
+      options: [
+        { id: "yes", text: "2" },
+        { id: "no", text: "3" },
+      ],
+      correctOptionId: "yes",
+      hint: "Count on.",
+      explanation: "One plus one is two.",
+    };
+    const oldDefinition = {
+      id: "legacy-activity",
+      title: "Adding",
+      subject: "Math",
+      questions: [oldQuestion, { ...oldQuestion, id: "q2" }, { ...oldQuestion, id: "q3" }],
+    };
+    const oldProgress = {
+      started: true,
+      completed: false,
+      completedAt: null,
+      index: 1,
+      questions: oldDefinition.questions.map((q, index) => ({
+        questionId: q.id,
+        prompt: q.prompt,
+        attempts: index === 0 ? 1 : 0,
+        hintUsed: false,
+        correct: index === 0,
+        independent: index === 0,
+      })),
+      attempts: [
+        {
+          id: "legacy-answer",
+          at: timestamp,
+          activityId: oldDefinition.id,
+          questionId: "q1",
+          optionId: "yes",
+          answerText: "2",
+          ordinal: 1,
+          hintUsed: false,
+          correct: true,
+          independent: true,
+        },
+      ],
+    };
+    const oldFeedback = {
+      questionId: "q1",
+      correct: true,
+      independent: true,
+      explanation: oldQuestion.explanation,
+    };
+    fixture.exec(`
+      CREATE TABLE kids_pet(child_id TEXT PRIMARY KEY,active_id TEXT,last_interaction INTEGER,excited_until INTEGER,streak INTEGER NOT NULL) STRICT;
+      CREATE TABLE kids_day(child_id TEXT NOT NULL,date TEXT NOT NULL,created_at INTEGER NOT NULL,content TEXT NOT NULL,PRIMARY KEY(child_id,date)) STRICT;
+      CREATE TABLE kids_activity(child_id TEXT NOT NULL,activity_id TEXT NOT NULL,date TEXT NOT NULL,ordinal INTEGER NOT NULL,updated_at INTEGER NOT NULL,definition TEXT NOT NULL,progress TEXT NOT NULL,PRIMARY KEY(child_id,activity_id),UNIQUE(child_id,date,ordinal),FOREIGN KEY(child_id,date) REFERENCES kids_day(child_id,date) ON DELETE CASCADE) STRICT;
+      CREATE TABLE kids_request(child_id TEXT NOT NULL,request_id TEXT NOT NULL,created_at INTEGER NOT NULL,input TEXT NOT NULL,feedback TEXT,PRIMARY KEY(child_id,request_id)) STRICT;
+      PRAGMA user_version = 1;
+    `);
+    try {
+      const daily = bundle("legacy");
+      fixture.prepare("INSERT INTO kids_day VALUES(?,?,?,?)").run(
+        "legacy",
+        daily.date,
+        timestamp,
+        JSON.stringify({
+          scene: daily.scene,
+          stateText: daily.stateText,
+          scenePrompt: daily.scenePrompt,
+        }),
+      );
+      fixture
+        .prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)")
+        .run(
+          "legacy",
+          oldDefinition.id,
+          daily.date,
+          0,
+          timestamp,
+          JSON.stringify(oldDefinition),
+          JSON.stringify(oldProgress),
+        );
+      fixture
+        .prepare("INSERT INTO kids_pet VALUES(?,?,?,?,?)")
+        .run("legacy", oldDefinition.id, timestamp, null, 1);
+      fixture.prepare("INSERT INTO kids_request VALUES(?,?,?,?,?)").run(
+        "legacy",
+        "legacy-answer",
+        timestamp,
+        JSON.stringify({
+          kind: "answer",
+          requestId: "legacy-answer",
+          activityId: oldDefinition.id,
+          questionId: "q1",
+          optionId: "yes",
+        }),
+        JSON.stringify(oldFeedback),
+      );
+    } finally {
+      fixture.close();
+    }
+    const migrated = await openSqliteWorkerStore<ActivityStoreOperations>({
+      moduleUrl,
+      databasePath: file,
+      input: undefined,
+    });
+    try {
+      const context = await migrated.execute({ type: "prepare", input: target("legacy") });
+      expect(context.snapshot).toMatchObject({
+        correctStreak: 1,
+        pet: { lastInteractionAt: timestamp },
+        activity: { started: true, currentIndex: 1, currentQuestion: { id: "q2", kind: "choice" } },
+      });
+      expect(context.recentActivities[0]?.questions).toEqual(oldProgress.questions);
+      expect(context.recentActivities[0]?.attempts[0]).toMatchObject({
+        answer: { kind: "choice", optionId: "yes" },
+        outcome: "correct",
+        at: timestamp,
+      });
+      const replay = await runSqliteWorkerStoreWrite(
+        migrated,
+        (scope) =>
+          scope.execute({
+            type: "mutate",
+            input: {
+              ...target("legacy"),
+              mutation: {
+                kind: "answer",
+                requestId: "legacy-answer",
+                activityId: oldDefinition.id,
+                questionId: "q1",
+                answer: { kind: "choice", optionId: "yes" },
+              },
+            },
+          }),
+        () => {},
+        [file],
+      );
+      expect(replay.feedback).toEqual({
+        questionId: "q1",
+        outcome: "correct",
+        independent: true,
+        explanation: oldQuestion.explanation,
+      });
+      expect(replay.snapshot.activity?.currentIndex).toBe(1);
+    } finally {
+      await migrated.close();
+    }
+    const check = new DatabaseSync(file);
+    try {
+      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
+    } finally {
+      check.close();
+    }
+    const reopened = await openSqliteWorkerStore<ActivityStoreOperations>({
+      moduleUrl,
+      databasePath: file,
+      input: undefined,
+    });
+    try {
+      expect((await reopened.execute({ type: "get", input: target("legacy") })).correctStreak).toBe(
+        1,
+      );
+    } finally {
+      await reopened.close();
+    }
+    // A malformed later row must not leave an earlier row half-migrated.
+    const damaged = new DatabaseSync(file);
+    try {
+      damaged
+        .prepare("UPDATE kids_activity SET definition = ?, progress = ?")
+        .run(JSON.stringify(oldDefinition), JSON.stringify(oldProgress));
+      damaged
+        .prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)")
+        .run(
+          "legacy",
+          "broken",
+          "2026-10-13",
+          1,
+          timestamp,
+          "not-json",
+          JSON.stringify(oldProgress),
+        );
+      damaged.exec("PRAGMA user_version = 1");
+    } finally {
+      damaged.close();
+    }
+    await expect(
+      openSqliteWorkerStore<ActivityStoreOperations>({
+        moduleUrl,
+        databasePath: file,
+        input: undefined,
+      }),
+    ).rejects.toThrow();
+    const rolledBack = new DatabaseSync(file);
+    try {
+      expect(rolledBack.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
+      expect(
+        JSON.parse(
+          String(
+            rolledBack
+              .prepare("SELECT definition FROM kids_activity WHERE activity_id = ?")
+              .get(oldDefinition.id)?.definition,
+          ),
+        ),
+      ).toEqual(oldDefinition);
+    } finally {
+      rolledBack.close();
     }
   });
 

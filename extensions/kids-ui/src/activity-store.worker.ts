@@ -38,9 +38,16 @@ import {
   type ActivityAttemptEvidence,
   type ActivityQuestionEvidence,
   type DailyActivityBundle,
+  type ActivityGrade,
 } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
-import type { ActivityStoreOperations, ActivityStoreTarget } from "./activity-store-contract.js";
+import { gradeActivityAnswer } from "./activity-grading.js";
+import { migrateActivityDatabase } from "./activity-migration.js";
+import {
+  encodeActivityMutation,
+  type ActivityStoreOperations,
+  type ActivityStoreTarget,
+} from "./activity-store-contract.js";
 import { validateDailyActivityBundle } from "./activity-validation.js";
 
 type PetRow = {
@@ -57,6 +64,7 @@ type Progress = {
   index: number;
   questions: ActivityQuestionEvidence[];
   attempts: ActivityAttemptEvidence[];
+  submissionCount: number;
 };
 type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText" | "restImages">;
 type DayRow = { child_id: string; date: string; created_at: number; content: string };
@@ -106,7 +114,7 @@ const SCHEMA = `
 `;
 
 function readDay(row: DayRow): DayContent {
-  // SAFETY: publish() validates schema-v1 day content before its sole immutable write.
+  // SAFETY: publish() validates day content before its sole immutable write.
   return JSON.parse(row.content) as DayContent;
 }
 function readActivity(row: ActivityRow): ActivityDefinition {
@@ -124,6 +132,7 @@ function initialProgress(activity: ActivityDefinition): Progress {
     completedAt: null,
     index: 0,
     attempts: [],
+    submissionCount: 0,
     questions: activity.questions.map((q) => ({
       questionId: q.id,
       prompt: q.prompt,
@@ -280,7 +289,11 @@ class ActivityDatabaseOwner {
           ? {
               id: question.id,
               prompt: question.prompt,
-              options: question.options,
+              ...(question.kind === "choice"
+                ? { kind: "choice" as const, options: question.options }
+                : question.kind === "numeric"
+                  ? { kind: "numeric" as const, unit: question.unit }
+                  : { kind: "explanation" as const }),
               hint: progress.questions[progress.index]?.hintUsed ? question.hint : null,
             }
           : null,
@@ -316,8 +329,7 @@ class ActivityDatabaseOwner {
         attempts: progress.attempts.slice(-32),
         attemptsOmitted: Math.max(
           0,
-          progress.questions.reduce((count, question) => count + question.attempts, 0) -
-            Math.min(32, progress.attempts.length),
+          progress.submissionCount - Math.min(32, progress.attempts.length),
         ),
       };
     });
@@ -425,100 +437,158 @@ class ActivityDatabaseOwner {
     });
   }
 
-  /** Commit grading and its receipt together; duplicate input replays only its feedback. */
-  mutate(target: ActivityStoreTarget, mutation: ActivityMutation): ActivityResult {
-    return this.transaction(() => {
-      const encoded = JSON.stringify(mutation);
-      const receipt = executeSqliteQueryTakeFirstSync(
-        this.db,
-        this.query
-          .selectFrom("kids_request")
-          .selectAll()
-          .where("child_id", "=", target.childId)
-          .where("request_id", "=", mutation.requestId),
+  /** A receipt is authoritative even after progress moves to a different question. */
+  private replay(
+    target: ActivityStoreTarget,
+    mutation: ActivityMutation,
+  ): ActivityResult | undefined {
+    const receipt = executeSqliteQueryTakeFirstSync(
+      this.db,
+      this.query
+        .selectFrom("kids_request")
+        .selectAll()
+        .where("child_id", "=", target.childId)
+        .where("request_id", "=", mutation.requestId),
+    );
+    if (!receipt) {
+      return undefined;
+    }
+    if (receipt.input !== encodeActivityMutation(mutation)) {
+      throw new ActivityInputError("This request ID was already used for another action.");
+    }
+    return {
+      snapshot: this.snapshot(target),
+      // SAFETY: admission migrates old feedback, then only mutate() writes this typed value.
+      ...(receipt.feedback ? { feedback: JSON.parse(receipt.feedback) as ActivityFeedback } : {}),
+    };
+  }
+
+  /** Resolve current mutable progress afresh; never carry a pre-inference snapshot into commit. */
+  private currentMutation(
+    target: ActivityStoreTarget,
+    mutation: Exclude<ActivityMutation, { kind: "touch" }>,
+    pet: PetRow,
+  ) {
+    const latest = this.latestDay(target);
+    const activities = latest ? this.dayActivities(target.childId, latest.date) : [];
+    const current = this.current(target, pet, activities);
+    const next = mutation.kind === "start" ? this.next(current, activities) : undefined;
+    const row = next?.activity_id === mutation.activityId ? next : current;
+    if (!row || row.activity_id !== mutation.activityId) {
+      throw new ActivityInputError(
+        "This activity changed. Refresh and continue the current activity.",
       );
-      if (receipt) {
-        if (receipt.input !== encoded) {
-          throw new ActivityInputError("This request ID was already used for another action.");
-        }
-        return {
-          snapshot: this.snapshot(target),
-          ...(receipt.feedback
-            ? {
-                // SAFETY: mutate() serializes its typed feedback atomically with progress.
-                feedback: JSON.parse(receipt.feedback) as ActivityFeedback,
-              }
-            : {}),
-        };
+    }
+    const activity = readActivity(row);
+    const progress = readProgress(row);
+    if (progress.completed) {
+      throw new ActivityInputError("This activity is already complete.");
+    }
+    const question = activity.questions[progress.index];
+    const evidence = progress.questions[progress.index];
+    if (!question || !evidence) {
+      throw new ActivityInputError("This activity cannot continue.");
+    }
+    if (mutation.kind !== "start" && question.id !== mutation.questionId) {
+      throw new ActivityInputError(
+        "This question was already answered. Continue the current question.",
+      );
+    }
+    if (mutation.kind !== "start" && !progress.started) {
+      throw new ActivityInputError("Start the activity first.");
+    }
+    if (mutation.kind === "answer" && mutation.answer.kind !== question.kind) {
+      throw new ActivityInputError("This answer does not match the current question.");
+    }
+    return { row, activity, progress, question, evidence };
+  }
+
+  /** Read-only inference admission. A completed retry never starts another model call. */
+  planAnswer(
+    target: ActivityStoreTarget,
+    mutation: Extract<ActivityMutation, { kind: "answer" }>,
+  ): ActivityStoreOperations["planAnswer"]["output"] {
+    const replay = this.replay(target, mutation);
+    if (replay) {
+      return { kind: "replay", result: replay };
+    }
+    const { question } = this.currentMutation(target, mutation, this.pet(target.childId));
+    if (question.kind !== "explanation") {
+      throw new ActivityInputError("This question does not need explanation grading.");
+    }
+    return { kind: "grade", question };
+  }
+
+  /** Commit a fresh grade, evidence, progress and receipt together after final host authority. */
+  mutate(
+    target: ActivityStoreTarget,
+    mutation: ActivityMutation,
+    preparedGrade?: ActivityGrade,
+  ): ActivityResult {
+    return this.transaction(() => {
+      const replay = this.replay(target, mutation);
+      if (replay) {
+        return replay;
       }
       const pet = this.pet(target.childId);
       let feedback: ActivityFeedback | undefined;
       if (mutation.kind !== "touch") {
-        const latest = this.latestDay(target);
-        const activities = latest ? this.dayActivities(target.childId, latest.date) : [];
-        const current = this.current(target, pet, activities);
-        const next = mutation.kind === "start" ? this.next(current, activities) : undefined;
-        const row = next?.activity_id === mutation.activityId ? next : current;
-        if (!row || row.activity_id !== mutation.activityId) {
-          throw new ActivityInputError(
-            "This activity changed. Refresh and continue the current activity.",
-          );
-        }
-        const activity = readActivity(row);
-        const progress = readProgress(row);
-        if (progress.completed) {
-          throw new ActivityInputError("This activity is already complete.");
-        }
-        const question = activity.questions[progress.index];
-        const evidence = progress.questions[progress.index];
-        if (!question || !evidence) {
-          throw new ActivityInputError("This activity cannot continue.");
-        }
-        if (mutation.kind !== "start" && question.id !== mutation.questionId) {
-          throw new ActivityInputError(
-            "This question was already answered. Continue the current question.",
-          );
-        }
-        if (mutation.kind !== "start" && !progress.started) {
-          throw new ActivityInputError("Start the activity first.");
-        }
+        const { row, activity, progress, question, evidence } = this.currentMutation(
+          target,
+          mutation,
+          pet,
+        );
         progress.started = true;
         pet.active_id = row.activity_id;
         if (mutation.kind === "hint") {
           evidence.hintUsed = true;
         }
         if (mutation.kind === "answer") {
-          if (!question.options.some((option) => option.id === mutation.optionId)) {
-            throw new ActivityInputError("Choose one of the answers shown.");
+          const answer = mutation.answer;
+          const grade =
+            question.kind === "explanation"
+              ? preparedGrade
+              : gradeActivityAnswer(question, mutation.answer);
+          if (!grade) {
+            throw new ActivityInputError("This answer has not been checked yet.");
           }
-          evidence.attempts += 1;
-          const correct = mutation.optionId === question.correctOptionId;
-          evidence.correct = correct;
-          evidence.independent = correct && evidence.attempts === 1 && !evidence.hintUsed;
+          const correct = grade.outcome === "correct";
+          if (grade.outcome !== "clarify") {
+            evidence.attempts += 1;
+            evidence.correct = correct;
+            evidence.independent = correct && evidence.attempts === 1 && !evidence.hintUsed;
+          }
+          progress.submissionCount += 1;
           progress.attempts.push({
             id: mutation.requestId,
             at: target.now,
             activityId: row.activity_id,
             questionId: question.id,
-            optionId: mutation.optionId,
-            answerText: question.options.find((option) => option.id === mutation.optionId)!.text,
+            answer: mutation.answer,
+            answerText:
+              answer.kind === "choice" && question.kind === "choice"
+                ? question.options.find((option) => option.id === answer.optionId)!.text
+                : answer.kind === "choice"
+                  ? ""
+                  : answer.text,
+            outcome: grade.outcome,
+            feedback: grade.explanation,
             ordinal: evidence.attempts,
             hintUsed: evidence.hintUsed,
-            correct,
-            independent: evidence.independent,
+            independent: correct && evidence.independent,
           });
           progress.attempts = progress.attempts.slice(-256);
           feedback = {
             questionId: question.id,
-            correct,
-            independent: evidence.independent,
-            explanation: correct
-              ? question.explanation
-              : "Not quite. Try again, or ask for a hint.",
+            outcome: grade.outcome,
+            independent: correct && evidence.independent,
+            explanation: grade.explanation,
           };
-          pet.streak = correct ? pet.streak + 1 : 0;
-          if (!correct) {
-            pet.excited_until = null;
+          if (grade.outcome !== "clarify") {
+            pet.streak = correct ? pet.streak + 1 : 0;
+            if (!correct) {
+              pet.excited_until = null;
+            }
           }
           if (correct) {
             progress.index += 1;
@@ -556,7 +626,7 @@ class ActivityDatabaseOwner {
           child_id: target.childId,
           request_id: mutation.requestId,
           created_at: target.now,
-          input: encoded,
+          input: encodeActivityMutation(mutation),
           feedback: feedback ? JSON.stringify(feedback) : null,
         }),
       );
@@ -620,11 +690,10 @@ export function createSqliteWorkerBackend(
       busyTimeoutMs: 5000,
     });
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (typeof version !== "number" || version > 1) {
+    if (typeof version !== "number" || version > 2) {
       throw new Error("Activities database needs a newer plugin version.");
     }
-    db.exec(SCHEMA);
-    db.exec("PRAGMA user_version = 1");
+    migrateActivityDatabase(db, version, SCHEMA);
     const owner = new ActivityDatabaseOwner(db);
     return {
       execute(command: SqliteWorkerCommand<ActivityStoreOperations>) {
@@ -635,8 +704,10 @@ export function createSqliteWorkerBackend(
             return owner.prepare(command.input);
           case "findDaily":
             return owner.findDaily(command.input.childId, command.input.date);
+          case "planAnswer":
+            return owner.planAnswer(command.input, command.input.mutation);
           case "mutate":
-            return owner.mutate(command.input, command.input.mutation);
+            return owner.mutate(command.input, command.input.mutation, command.input.grade);
           case "publish":
             return owner.publish(command.input, command.input.bundle);
           default:

@@ -108,6 +108,14 @@ export class KidsApp {
     });
     this.media = new KidsHistoryMedia(this.client);
     this.activity = new KidsActivity(this.client, (activity) => {
+      const target = this.snapshot.dictationQuestion;
+      if (
+        target &&
+        (target.activityId !== activity.snapshot?.activity?.id ||
+          target.questionId !== activity.snapshot.activity.currentQuestion?.id)
+      ) {
+        this.retireDictation();
+      }
       this.snapshot.activity = activity;
       this.paint();
     });
@@ -134,6 +142,7 @@ export class KidsApp {
       conversation: this.conversation.state,
       voice: idleVoice(),
       dictation: idleDictation(),
+      dictationQuestion: null,
       draft: "",
       draftReady: false,
       draftError: null,
@@ -410,31 +419,57 @@ export class KidsApp {
     }
   }
 
-  /** Dictation edits only the current draft; it never sends or creates a tutor turn. */
-  private async dictate(): Promise<void> {
+  /** Capture one chat or question draft. Speech edits that target only and never submits. */
+  private async dictate(destination: "chat" | "solve" = "chat"): Promise<void> {
     if (this.disposed || this.snapshot.dictation.finishing) {
       return;
     }
     if (this.dictation?.state.active) {
+      if (destination !== (this.snapshot.dictationQuestion ? "solve" : "chat")) {
+        return;
+      }
       await this.dictation.finish();
       return;
     }
     if (
       this.snapshot.conversation.status !== "ready" ||
-      !this.draft.state.ready ||
+      (destination === "chat" && !this.draft.state.ready) ||
       !this.snapshot.voiceAllowed ||
       this.voice?.state.active ||
       this.snapshot.voice.status === "stopping"
     ) {
       return;
     }
+    const activity = this.activity.state.snapshot?.activity;
+    const question = activity?.currentQuestion;
+    if (
+      destination === "solve" &&
+      (this.snapshot.page !== "solve" ||
+        !activity ||
+        !question ||
+        question.kind === "choice" ||
+        this.activity.state.busy ||
+        this.activity.state.canRetry ||
+        this.activity.state.error ||
+        this.activity.state.feedback?.outcome === "correct")
+    ) {
+      return;
+    }
     this.retireDictation();
-    const field = this.root.querySelector<HTMLTextAreaElement>("#kids-message");
+    const questionTarget =
+      destination === "solve" && activity && question
+        ? { activityId: activity.id, questionId: question.id }
+        : null;
+    this.snapshot.dictationQuestion = questionTarget;
+    const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      destination === "solve" ? "#kids-answer" : "#kids-message",
+    );
+    const value = destination === "solve" ? this.activity.state.answerDraft : this.snapshot.draft;
     const target = {
       binding: this.boundSession,
-      value: this.snapshot.draft,
-      start: field?.selectionStart ?? this.snapshot.draft.length,
-      end: field?.selectionEnd ?? this.snapshot.draft.length,
+      value,
+      start: field?.selectionStart ?? value.length,
+      end: field?.selectionEnd ?? value.length,
     };
     const generation = this.generation;
     const current = () =>
@@ -453,15 +488,27 @@ export class KidsApp {
         }
         // Preserve an edit made while transcription was pending; never replay
         // the captured draft over newer text.
-        const unchanged = this.snapshot.draft === target.value;
-        this.draft.update(
-          insertComposerDictation(
-            this.snapshot.draft,
-            transcript,
-            unchanged ? target.start : this.snapshot.draft.length,
-            unchanged ? target.end : this.snapshot.draft.length,
-          ).value,
-        );
+        const currentActivity = this.activity.state.snapshot?.activity;
+        if (
+          questionTarget &&
+          (currentActivity?.id !== questionTarget.activityId ||
+            currentActivity.currentQuestion?.id !== questionTarget.questionId)
+        ) {
+          return;
+        }
+        const currentValue = questionTarget ? this.activity.state.answerDraft : this.snapshot.draft;
+        const unchanged = currentValue === target.value;
+        const text = insertComposerDictation(
+          currentValue,
+          transcript,
+          unchanged ? target.start : currentValue.length,
+          unchanged ? target.end : currentValue.length,
+        ).value;
+        if (questionTarget) {
+          this.activity.updateAnswer(text);
+        } else {
+          this.draft.update(text);
+        }
       },
     );
     this.dictation = owner;
@@ -473,6 +520,7 @@ export class KidsApp {
     const owner = this.dictation;
     this.dictation = null;
     this.snapshot.dictation = idleDictation();
+    this.snapshot.dictationQuestion = null;
     if (owner) {
       this.capabilityRetirement = Promise.allSettled([this.capabilityRetirement, owner.dispose()]);
     }
@@ -488,8 +536,8 @@ export class KidsApp {
       this.snapshot.page === "chat" ||
       this.snapshot.voice.active ||
       this.snapshot.voice.status === "stopping" ||
-      this.snapshot.dictation.active ||
-      this.snapshot.dictation.finishing;
+      (!this.snapshot.dictationQuestion &&
+        (this.snapshot.dictation.active || this.snapshot.dictation.finishing));
     if (showingChat) {
       this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
     }
@@ -500,6 +548,13 @@ export class KidsApp {
         activity: {
           start: () => void this.activity.act("start"),
           answer: (optionId) => void this.activity.act("answer", optionId),
+          draft: (text) => this.activity.updateAnswer(text),
+          check: () => {
+            if (!this.snapshot.dictation.active && !this.snapshot.dictation.finishing) {
+              void this.activity.act("answer");
+            }
+          },
+          dictate: () => void this.dictate("solve"),
           hint: () => void this.activity.act("hint"),
           next: () => this.activity.continue(),
           retry: () => void this.activity.retry(),
@@ -588,11 +643,10 @@ export class KidsApp {
         ? "chat"
         : requested;
     if (
-      page !== "chat" &&
-      (this.snapshot.voice.active ||
-        this.snapshot.voice.status === "stopping" ||
-        this.snapshot.dictation.active ||
-        this.snapshot.dictation.finishing)
+      ((this.snapshot.voice.active || this.snapshot.voice.status === "stopping") &&
+        page !== "chat") ||
+      ((this.snapshot.dictation.active || this.snapshot.dictation.finishing) &&
+        page !== (this.snapshot.dictationQuestion ? "solve" : "chat"))
     ) {
       this.writeLocation();
       return;

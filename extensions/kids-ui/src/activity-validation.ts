@@ -1,6 +1,7 @@
 /** Publication admission shared by generation preflight and the durable owner.
  * Checks model-authored content once per boundary; no provider calls or state. */
 import type { DailyActivityBundle } from "./activity-contract.js";
+import { parseActivityNumber } from "./activity-grading.js";
 import type { ActivityStoreTarget } from "./activity-store-contract.js";
 
 /** Reject malformed model output once, before it becomes immutable trusted quiz content. */
@@ -45,23 +46,45 @@ export function validateDailyActivityBundle(
         ids.has(question.id) ||
         !bounded(question.prompt, 1200) ||
         !bounded(question.hint, 800) ||
-        !bounded(question.explanation, 1200) ||
-        !Array.isArray(question.options) ||
-        question.options.length < 2 ||
-        question.options.length > 5
+        !bounded(question.explanation, 1200)
       ) {
         throw new Error("An activity question is incomplete.");
       }
       ids.add(question.id);
-      const options = new Set<string>();
-      for (const option of question.options) {
-        if (!bounded(option.id, 80) || options.has(option.id) || !bounded(option.text, 500)) {
-          throw new Error("An activity option is invalid.");
+      if (question.kind === "choice") {
+        if (
+          !Array.isArray(question.options) ||
+          question.options.length < 2 ||
+          question.options.length > 5
+        ) {
+          throw new Error("A choice question needs two to five options.");
         }
-        options.add(option.id);
-      }
-      if (!options.has(question.correctOptionId)) {
-        throw new Error("The correct answer must name an option.");
+        const options = new Set<string>();
+        for (const option of question.options) {
+          if (!bounded(option.id, 80) || options.has(option.id) || !bounded(option.text, 500)) {
+            throw new Error("An activity option is invalid.");
+          }
+          options.add(option.id);
+        }
+        if (!options.has(question.correctOptionId)) {
+          throw new Error("The correct answer must name an option.");
+        }
+      } else if (question.kind === "numeric") {
+        if (
+          !bounded(question.answer, 40) ||
+          !parseActivityNumber(question.answer) ||
+          (question.unit !== null && !bounded(question.unit, 40))
+        ) {
+          throw new Error(
+            "A numeric question needs an exact decimal or fraction and an optional unit.",
+          );
+        }
+      } else if (question.kind === "explanation") {
+        if (!bounded(question.rubric, 1200)) {
+          throw new Error("An explanation question needs a bounded private rubric.");
+        }
+      } else {
+        throw new Error("The question format is unsupported.");
       }
     }
   }

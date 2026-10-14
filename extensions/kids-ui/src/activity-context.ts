@@ -43,8 +43,14 @@ export function registerKidsActivityContext(
         completed: activity.completed,
         completedAt: activity.completedAt,
         lastAttemptAt: activity.attempts.at(-1)?.at ?? null,
-        // Detailed attempt evidence belongs to the nightly/report reader. A
-        // tutor turn needs compact learning facts beside the full current quiz.
+        // Keep the most recent submitted reasoning beside compact counters;
+        // complete bounded attempt history belongs to the nightly/report reader.
+        lastAnswers: activity.attempts.slice(-2).map((attempt) => ({
+          questionId: attempt.questionId,
+          answer: attempt.answerText.slice(0, 600),
+          outcome: attempt.outcome,
+          feedback: attempt.feedback.slice(0, 400),
+        })),
         questions: activity.questions.map(({ prompt, ...question }) => ({
           ...question,
           prompt: prompt.slice(0, 160),
@@ -56,7 +62,7 @@ export function registerKidsActivityContext(
           "Authoritative saved activity facts for this child's tutor. Use these to continue the current question and recall learning.",
           "For help with an unfinished challenge, start with one small hint or diagnostic question, then stop and wait for the child to try. A generic help request is not a request for the solution: do not give the final answer, choose an option, or complete the reasoning on the first help turn.",
           "Use the displayed question and any hint already revealed; offer the next small step instead of repeating the same clue. After the child tries, respond to their reasoning. If they explicitly ask for a worked explanation or remain stuck after a hint, explain briefly, then let them try a similar step. Follow requests to change topic or stop.",
-          "Daily counts cover only the latest batch; an older started challenge may also need finishing. After completion offer another challenge only when nextActivity exists, otherwise chat. Quiz progress changes only through the activity app; do not claim a chat answer was scored. When ready, the child chooses their answer in Today. Independent means correct on the first attempt without a hint. Pet rest is friendly; never blame the child for time away.",
+          "Daily counts cover only the latest batch; an older started challenge may also need finishing. After completion offer another challenge only when nextActivity exists, otherwise chat. Quiz progress changes only through the activity app; do not claim a chat answer was scored. When ready, the child submits their answer in Solve. Clarify is ungraded and never means a wrong answer; explanation feedback is a model assessment, not proof of mastery. Independent means correct on the first graded attempt without a hint. Pet rest is friendly; never blame the child for time away.",
           JSON.stringify({
             pet: { state: snapshot.pet.state, caption: snapshot.pet.image?.caption },
             activity: snapshot.activity,

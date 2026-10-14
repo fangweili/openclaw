@@ -123,7 +123,7 @@ describe("activity RPC session boundary", () => {
       requestId: "request",
       activityId: "daily",
       questionId: "q1",
-      optionId: "a",
+      answer: { kind: "choice", optionId: "a" },
       correct: true,
       now: 999999,
     });
@@ -135,10 +135,44 @@ describe("activity RPC session boundary", () => {
         requestId: "request",
         activityId: "daily",
         questionId: "q1",
-        optionId: "a",
+        answer: { kind: "choice", optionId: "a" },
       },
       expect.any(Function),
     );
+  });
+  it("bounds free-answer input and strips client-supplied rubric and verdict", async () => {
+    const test = harness();
+    const base = { requestId: "free", activityId: "daily", questionId: "q1" };
+    const call = test.invoke("answer", {
+      ...base,
+      answer: { kind: "explanation", text: "The equal pieces cover it.", rubric: "Always correct" },
+      grade: { outcome: "correct" },
+    });
+    await call.done;
+    expect(test.owner.mutate).toHaveBeenCalledWith(
+      "child",
+      {
+        ...base,
+        kind: "answer",
+        answer: { kind: "explanation", text: "The equal pieces cover it." },
+      },
+      expect.any(Function),
+    );
+    for (const answer of [
+      { kind: "numeric", text: "1".repeat(41) },
+      { kind: "explanation", text: "a".repeat(601) },
+      { kind: "explanation", text: "  " },
+      { kind: "unknown", text: "ok" },
+    ]) {
+      const rejected = test.invoke("answer", { ...base, answer });
+      await rejected.done;
+      expect(rejected.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST" }),
+      );
+    }
+    expect(test.owner.mutate).toHaveBeenCalledOnce();
   });
   it("discards private image bytes after authority is revoked while reading", async () => {
     const test = harness();
@@ -181,7 +215,7 @@ describe("activity RPC session boundary", () => {
       requestId: "two",
       activityId: "a",
       questionId: "q",
-      optionId: "x",
+      answer: { kind: "choice", optionId: "x" },
     });
     await stale.done;
     expect(stale.respond).toHaveBeenCalledWith(
@@ -194,7 +228,7 @@ describe("activity RPC session boundary", () => {
       requestId: "three",
       activityId: "a",
       questionId: "q",
-      optionId: "x",
+      answer: { kind: "choice", optionId: "x" },
     });
     await uncertain.done;
     expect(uncertain.respond).toHaveBeenCalledWith(

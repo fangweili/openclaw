@@ -30,17 +30,36 @@ export type ActivityToolsOptions = {
 
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
 const option = Type.Object({ id: text(80), text: text(500) }, { additionalProperties: false });
-const question = Type.Object(
-  {
-    id: text(80),
-    prompt: text(1200),
-    options: Type.Array(option, { minItems: 2, maxItems: 5 }),
-    correctOptionId: text(80),
-    hint: text(800),
-    explanation: text(1200),
-  },
-  { additionalProperties: false },
-);
+const questionFields = {
+  id: text(80),
+  prompt: text(1200),
+  hint: text(800),
+  explanation: text(1200),
+};
+const question = Type.Union([
+  Type.Object(
+    {
+      ...questionFields,
+      kind: Type.Literal("choice"),
+      options: Type.Array(option, { minItems: 2, maxItems: 5 }),
+      correctOptionId: text(80),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...questionFields,
+      kind: Type.Literal("numeric"),
+      answer: text(40),
+      unit: Type.Union([text(40), Type.Null()]),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...questionFields, kind: Type.Literal("explanation"), rubric: text(1200) },
+    { additionalProperties: false },
+  ),
+]);
 const preparationFields = {
   date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
   activities: Type.Array(

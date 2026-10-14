@@ -36,6 +36,7 @@ const input: ActivityDailyPreparation = {
     title: "A tiny boat",
     subject: "science",
     questions: [1, 2, 3].map((n) => ({
+      kind: "choice" as const,
       id: `q${n}`,
       prompt: "Which object floats?",
       options: [
@@ -123,7 +124,10 @@ describe("daily pet artwork owner", () => {
   it("rejects a malformed quiz before spending on image generation", async () => {
     const h = await harness();
     const malformed = structuredClone(input);
-    malformed.activities[0]!.questions[0]!.correctOptionId = "missing-option";
+    const question = malformed.activities[0]!.questions[0]!;
+    if (question.kind === "choice") {
+      question.correctOptionId = "missing-option";
+    }
     await expect(
       h.owner.prepareDaily(child.childId, malformed, { assertCurrent() {} }),
     ).rejects.toThrow("correct answer");

@@ -101,6 +101,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         currentIndex: 0,
         total: 3,
         currentQuestion: {
+          kind: "choice",
           id: "q1",
           prompt: "Which leaf would make the steadiest little boat?",
           hint: null,
@@ -255,6 +256,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     answered.correctStreak = 1;
     answered.activity!.currentIndex = 1;
     answered.activity!.currentQuestion = {
+      kind: "choice",
       id: "q2",
       prompt: "What might help your leaf boat stay balanced?",
       hint: null,
@@ -267,7 +269,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       snapshot: answered,
       feedback: {
         questionId: "q1",
-        correct: true,
+        outcome: "correct",
         independent: false,
         explanation: "A wide leaf spreads its weight across the water.",
       },
@@ -298,7 +300,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       snapshot: answered,
       feedback: {
         questionId: "q2",
-        correct: false,
+        outcome: "revise",
         independent: true,
         explanation: "An uneven load can tip a boat. Let's try another arrangement.",
       },
@@ -377,7 +379,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           snapshot: selected,
           feedback: {
             questionId: submitted.id,
-            correct: true,
+            outcome: "correct",
             independent: true,
             explanation: "A wide leaf spreads its weight across the water.",
           },
@@ -422,7 +424,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       snapshot: nextDay,
       feedback: {
         questionId: "q1",
-        correct: true,
+        outcome: "correct",
         independent: false,
         explanation: "A wide leaf spreads its weight across the water.",
       },

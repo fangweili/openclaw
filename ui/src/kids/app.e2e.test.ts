@@ -536,7 +536,7 @@ it("records dictation into an editable draft and sends only on request", async (
     const today = page.getByRole("button", { name: "Today", exact: true });
     const finish = page.getByRole("button", { name: "Finish dictation", exact: true });
     expect(await today.isDisabled()).toBe(true);
-    expect(await today.getAttribute("title")).toBe("Finish dictation before leaving Chat.");
+    expect(await today.getAttribute("title")).toBe("Finish dictation before leaving this page.");
     expect(await page.locator(".kids-thread-area").isVisible()).toBe(true);
     expect(await finish.isVisible()).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new Event("kids-fixture-grant-microphone")));
@@ -558,7 +558,7 @@ it("records dictation into an editable draft and sends only on request", async (
     expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
     expect(await today.isDisabled()).toBe(true);
     expect(await today.getAttribute("title")).toBe(
-      "Wait for your words to appear before leaving Chat.",
+      "Wait for your words to appear before leaving this page.",
     );
     expect(await page.locator(".kids-thread-area").isVisible()).toBe(true);
     expect(await page.locator(".kids-footer").isVisible()).toBe(true);

@@ -8,7 +8,9 @@ Keep the deployed plugin and these files on the same reviewed release.
 ## Ownership and activation
 
 The activity plugin owns saved quizzes, answers, attempts, pet clocks and complete
-scene publication. Two isolated daily cron jobs ask the existing agents to plan
+scene publication. It checks choice/numeric answers directly and checks short
+explanations through the child's configured model in an isolated, tool-free
+completion. Two isolated daily cron jobs ask the existing agents to plan
 their child's three three-question challenges and four daily mood pictures.
 Cron owns scheduling, run cancellation and retries. The
 plugin's `kids_activity` tool owns image generation through the configured image
@@ -67,6 +69,14 @@ existing tutor without changing that child's permissions:
 Each child, tutor agent, session key, and preparation job must be unique. Leaving
 `activities` unset keeps the existing chat/dictation service and creates no
 activity database. Never copy production identifiers into these templates.
+
+Enable the existing host capability
+`plugins.entries.kids-ui.llm.allowAgentIdOverride: true` for explanation checks.
+The plugin takes the agent ID only from the installed child binding, never from
+browser input, and uses that agent's configured default at low reasoning. No model
+or auth-profile override is needed. Verify the chosen runtime supports isolated
+completions before activation. Failed or timed-out checks retain the answer for
+retry and never count it wrong. There is no grading chat session or extra agent.
 
 Keep the current-session invitation job IDs, creation-bound session targets,
 Slack backup and push settings. Replace their invitation instructions with
@@ -160,8 +170,13 @@ a duplicate preparation returns without generating again. Required-art or storag
 failure preserves the previous complete activities. Optional render/encoding failures
 use original fixed poses without blocking publication. Daily resting art is shown
 only on its own local date; old batches and missing variants use fixed originals.
-The optional `restImages` field is a backward-readable schema-1 JSON extension;
-there is no migration or browser protocol change. Artwork
+The optional `restImages` field remains optional day content; old days use fixed
+resting poses. Free-answer support separately migrates the existing activity
+database to version 2, preserving saved choice questions, progress, and receipts.
+Take a verified SQLite backup before activation. An older plugin refuses version
+2; rollback requires the matching pre-upgrade database backup, not just switching
+the installation link. Never discard work accepted after the upgrade silently.
+Artwork
 that loses a confirmed publication race is removed. A publication error with an
 unknown commit outcome retains the image files; retry checks the saved day before
 spending again. Files left by an interrupted/uncertain publication are retained

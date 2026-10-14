@@ -9,6 +9,9 @@ Report quiz attempts/completions separately from child-message counts. Overall
 active days may union chat/voice and quiz dates in the child's timezone. Do not add
 the two day counts or call generated days completed activities. Mention one useful
 learning outcome, distinguishing independent first answers from hints/retries.
+Clarification submissions are ungraded; do not count them as incorrect answers.
+Use the submitted reasoning alongside the model's feedback, and describe narrow
+observations rather than treating a model verdict as proof of broad mastery.
 There are three optional challenges per prepared day; report actual per-challenge
 completions, including carried-over work completed this week. Remaining optional
 challenges are not missed homework, and one daily artwork pair is not three

@@ -1067,3 +1067,99 @@ html[data-kids] body,
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* Solve keeps typed and dictated answers visible through review. Focus makes
+   room for the software keyboard without another viewport or scroll owner. */
+.kids-answer-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kids-answer-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--kids-border);
+  border-radius: 15px;
+  background: var(--kids-background);
+  color: var(--kids-ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.kids-answer-input:focus-visible {
+  outline: 2px solid var(--kids-accent);
+  outline-offset: 2px;
+}
+
+.kids-answer-number {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.kids-answer-number input {
+  width: 150px;
+  min-width: 0;
+  min-height: 58px;
+  font-size: 23px;
+}
+
+.kids-answer-note {
+  margin: 6px 0 0;
+  color: var(--kids-muted);
+  font-size: 12px;
+}
+
+.kids-answer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.kids-answer-actions .kids-activity-primary {
+  margin-left: auto;
+}
+
+.kids-shell .kids-answer-dictate {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 5px;
+  background: transparent;
+  color: var(--kids-muted);
+  font-size: 14px;
+}
+
+.kids-answer-result:not(:empty) {
+  margin-top: 15px;
+  padding: 15px 17px;
+  border-radius: 15px;
+  background: var(--kids-tint);
+  line-height: 1.6;
+}
+
+.kids-answer-result strong,
+.kids-answer-result span {
+  display: block;
+}
+
+.kids-solve:has(.kids-answer-input:focus) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.kids-solve:has(.kids-answer-input:focus) .kids-pet {
+  display: none;
+}
+
+.kids-solve:has(.kids-answer-input:focus) .kids-activity-card {
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+}

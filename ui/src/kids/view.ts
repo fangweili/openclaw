@@ -32,6 +32,7 @@ export type KidsViewState = {
   conversation: KidsConversationState;
   voice: KidsVoiceState;
   dictation: { active: boolean; finishing: boolean; detail: string | null };
+  dictationQuestion: { activityId: string; questionId: string } | null;
   draft: string;
   draftReady: boolean;
   draftError: string | null;
@@ -137,7 +138,14 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
-  const page = ready && state.activityEnabled && !calling && !dictating ? state.page : "chat";
+  const page =
+    !ready || !state.activityEnabled || calling
+      ? "chat"
+      : dictating
+        ? state.dictationQuestion
+          ? "solve"
+          : "chat"
+        : state.page;
   const todayUnavailable = calling
     ? t("kids.activity.finishCall")
     : state.dictation.finishing
@@ -217,7 +225,20 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
         ready && state.activityEnabled
           ? html`
               ${renderKidsHome(state.activity, actions.navigate, actions.activity.retry, page !== "today")}
-              ${renderKidsActivity(state.activity, actions.activity, page !== "solve")}
+              ${renderKidsActivity(
+                state.activity,
+                actions.activity,
+                {
+                  dictation: state.dictationQuestion
+                    ? state.dictation
+                    : { active: false, finishing: false, detail: null },
+                  allowed:
+                    state.voiceAllowed &&
+                    !calling &&
+                    (!dictating || state.dictationQuestion !== null),
+                },
+                page !== "solve",
+              )}
             `
           : nothing
       }
@@ -371,7 +392,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                   }
                   ${ready && state.attachments.error ? html`<p class="kids-attachment-error" role="alert">${state.attachments.error}</p>` : nothing}
                   ${ready && dictating ? html`<p class="kids-dictation-status" role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
-                  ${ready && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
+                  ${ready && !state.dictationQuestion && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
                   <form
                     class="kids-composer"
                     @submit=${(event: SubmitEvent) => {

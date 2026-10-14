@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
   close: vi.fn(),
   write: vi.fn(),
+  complete: vi.fn(),
 }));
 vi.mock("openclaw/plugin-sdk/sqlite-runtime", () => ({
   openSqliteWorkerStore: mocks.open,
@@ -43,6 +44,7 @@ function harness(
   let service!: OpenClawPluginServiceV2;
   const lifetime = new AbortController();
   const api = {
+    runtime: { llm: { complete: mocks.complete } },
     registerService: (value: OpenClawPluginServiceV2) => {
       service = value;
     },
@@ -70,6 +72,9 @@ beforeEach(() => {
   mocks.open.mockResolvedValue({ execute: mocks.execute, close: mocks.close });
   mocks.execute.mockResolvedValue(snapshot);
   mocks.close.mockResolvedValue(undefined);
+  mocks.complete.mockResolvedValue({
+    text: '{"outcome":"correct","explanation":"You explained the equal pieces."}',
+  });
   mocks.write.mockImplementation(async (store, run, guard) => {
     guard();
     return run(store);
@@ -147,5 +152,121 @@ describe("activity service lifetime", () => {
     pending.resolve(snapshot);
     await expect(read).rejects.toThrow("revoked");
     await service.stop();
+  });
+});
+
+const question = {
+  kind: "explanation" as const,
+  id: "q",
+  prompt: "Why are two halves one whole?",
+  rubric: "Two equal parts cover the original whole.",
+  hint: "Think of equal pieces.",
+  explanation: "They cover the whole.",
+};
+const mutation = {
+  kind: "answer" as const,
+  requestId: "answer",
+  activityId: "a",
+  questionId: "q",
+  answer: { kind: "explanation" as const, text: "The pieces cover the whole." },
+};
+function gradingStore() {
+  mocks.execute.mockImplementation(async (command) =>
+    command.type === "planAnswer"
+      ? { kind: "grade", question }
+      : {
+          snapshot,
+          feedback: {
+            questionId: "q",
+            outcome: "correct",
+            independent: true,
+            explanation: "You explained it.",
+          },
+        },
+  );
+}
+
+describe("activity explanation lifetime", () => {
+  it("deduplicates in-flight requests, bounds a child's grading, and uses their agent", async () => {
+    const service = harness();
+    await service.start();
+    gradingStore();
+    const called = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<{ text: string }>();
+    mocks.complete.mockImplementation(() => {
+      called.resolve();
+      return pending.promise;
+    });
+    const first = service.owner.mutate("child", mutation, () => {});
+    await called.promise;
+    const duplicate = service.owner.mutate("child", mutation, () => {});
+    await expect(
+      service.owner.mutate("child", { ...mutation, requestId: "other" }, () => {}),
+    ).rejects.toThrow("still being checked");
+    expect(mocks.complete).toHaveBeenCalledOnce();
+    expect(mocks.complete.mock.calls[0]![0].agentId).toBe("tutor");
+    pending.resolve({ text: '{"outcome":"correct","explanation":"You explained the pieces."}' });
+    expect(await duplicate).toEqual(await first);
+    expect(mocks.write).toHaveBeenCalledOnce();
+    await service.stop();
+  });
+
+  it("replays committed receipts before inference and rejects failed grading without a write", async () => {
+    const service = harness();
+    await service.start();
+    mocks.execute.mockResolvedValue({ kind: "replay", result: { snapshot } });
+    expect(await service.owner.mutate("child", mutation, () => {})).toEqual({ snapshot });
+    expect(mocks.complete).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+    gradingStore();
+    mocks.complete.mockRejectedValue(new Error("timeout"));
+    await expect(service.owner.mutate("child", mutation, () => {})).rejects.toThrow(
+      "could not be checked",
+    );
+    expect(mocks.write).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it("rechecks caller authority after inference before starting a commit", async () => {
+    const service = harness();
+    await service.start();
+    gradingStore();
+    let authorized = true;
+    mocks.complete.mockImplementation(async () => {
+      authorized = false;
+      return { text: '{"outcome":"correct","explanation":"Yes."}' };
+    });
+    await expect(
+      service.owner.mutate("child", mutation, () => {
+        if (!authorized) {
+          throw new Error("revoked");
+        }
+      }),
+    ).rejects.toThrow("revoked");
+    expect(mocks.write).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it("aborts and joins inference before closing its worker and discards late grades", async () => {
+    const service = harness();
+    await service.start();
+    gradingStore();
+    const called = Promise.withResolvers<AbortSignal>();
+    const pending = Promise.withResolvers<{ text: string }>();
+    mocks.complete.mockImplementation((request) => {
+      called.resolve(request.signal);
+      return pending.promise;
+    });
+    const answer = service.owner.mutate("child", mutation, () => {});
+    const rejected = expect(answer).rejects.toThrow();
+    const signal = await called.promise;
+    const stopped = service.stop();
+    expect(signal.aborted).toBe(true);
+    expect(mocks.close).not.toHaveBeenCalled();
+    pending.resolve({ text: '{"outcome":"correct","explanation":"Yes."}' });
+    await rejected;
+    await stopped;
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.close).toHaveBeenCalledOnce();
   });
 });

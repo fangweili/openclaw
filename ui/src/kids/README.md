@@ -5,9 +5,8 @@ text, photos, short videos, voice dictation, live voice, and private notificatio
 **Today** is the home screen: Rocky, **Chat with Rocky**, and a two-by-two grid
 of **Solve**, **Practice**, **Create**, and **Finish**. Chat and Solve are active;
 the other three are native disabled choices labeled **Coming later**. The home
-heading is **What shall we do?**, with no subtitle. Solve uses the existing saved
-multiple-choice challenges; this navigation change introduces no new grading or
-content-generation behavior. Landscape tablets place Rocky left of the choices
+heading is **What shall we do?**, with no subtitle. Solve offers saved choice,
+numeric and short explanation questions. The server alone grades them. Landscape tablets place Rocky left of the choices
 or challenge; portrait and small screens stack them.
 
 **Today** returns home from Chat or Solve. **Talk it through** records the current
@@ -18,9 +17,9 @@ scroll owner preserves the Chat reading position. The old tabs and header flight
 animation are removed. The pet's gentle mood animation still respects reduced motion.
 
 During a live or finishing voice call, or dictation awaiting microphone permission,
-recording, or finishing transcription, Chat controls remain visible and navigation
-away is disabled with an accessible explanation. There is no separate microphone
-state. Useful connection, reply and voice status remains in a persistent live
+recording, or finishing transcription, the originating Chat or Solve controls
+remain visible and navigation away is disabled with an accessible explanation.
+One dictation owner serves both surfaces, and live voice cannot overlap it. Useful connection, reply and voice status remains in a persistent live
 region; the child's name and notification control remain unobtrusive in the header.
 
 The URL fragment is the only page preference: **#today**, **#solve**, or **#chat**.
@@ -44,7 +43,7 @@ to screen readers.
   It starts and disposes the document's touch-gesture owner with the app.
   It also owns the URL page projection and hash/worker-message listeners. Known
   fragments pass the same parser for reload, hash navigation and same-origin
-  worker messages. Microphone guards reject leaving Chat and restore its URL.
+  worker messages. Microphone guards reject leaving the recording surface and restore its URL.
   Disposal removes these listeners before retiring conversation resources.
   It also binds the activity projection to the admitted physical conversation.
   Today and activity requests are enabled only when the current connection
@@ -58,8 +57,8 @@ to screen readers.
   device even when Tailscale authenticates the person. The Control UI's Tailscale
   pairing bypass cannot establish the durable device authority used by Web Push.
 - `activity.ts` owns a bounded memory-only copy of the plugin's current activity,
-  one submitted-question feedback panel with its original heading, one uncertain
-  operation, and one pet
+  one bounded answer draft, one submitted-question context with its answer and
+  original heading, one uncertain operation, and one pet
   object URL. The plugin alone owns durable progress, grading, clocks and streaks.
   Quiz operations serialize with reads; ambiguous failures retain their exact
   request ID for an explicit retry. Reconnect clears all private presentation and
@@ -76,7 +75,22 @@ to screen readers.
   and Solve without another request, URL owner, or interaction write. Both panels
   stay mounted but hidden when inactive, preserving their native scroll positions;
   loss of conversation admission removes both private panels immediately.
-- `activity-view.ts` renders the existing server-selected quiz and feedback.
+- `activity-view.ts` renders the server-selected quiz and feedback.
+  `answer-view.ts` renders numeric or explanation input with an explicit **Check
+  answer** action. Numeric text input allows negative values and fractions, with
+  units outside the field; explanation input accepts up to 600 characters. Numeric
+  input accepts up to 40. Both use the shared server admission bounds. Oversized
+  dictated text shows a visible error and preserves the previous answer.
+  **Say it** edits the captured question draft and never submits it. The app
+  cancels that recording if its activity/question changes; late callbacks cannot
+  populate Chat or the next question. Keyboard focus hides Rocky to leave room.
+  Drafts survive navigation and ordinary polling in the same binding, but are
+  memory-only and clear on question changes, disconnect and reload. An uncertain
+  submitted answer retains its original ID and text through same-session reconnect.
+  The answer stays visible during checking, transport errors and feedback.
+  Clarify/revise results keep it editable; editing retires that feedback and the
+  next explicit submission gets a new ID. Correct feedback waits for Continue.
+  Neither the view nor the draft owner evaluates correctness or advances progress.
   Hints and answers never grade locally, and reads contain no unearned answer keys.
   Feedback keeps the submitted question's heading until **Continue**, including
   when finishing yesterday's quiz reveals today's invitation on the server.

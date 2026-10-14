@@ -26,6 +26,7 @@ function readyState(): KidsViewState {
     },
     voice: { status: "idle", active: false, detail: null, entries: [] },
     dictation: { active: false, finishing: false, detail: null },
+    dictationQuestion: null,
     awayFromLatest: false,
     draft: privateDraft,
     draftReady: true,
@@ -67,6 +68,9 @@ function viewActions(): KidsViewActions {
     activity: {
       start: vi.fn(),
       answer: vi.fn(),
+      draft: vi.fn(),
+      check: vi.fn(),
+      dictate: vi.fn(),
       hint: vi.fn(),
       next: vi.fn(),
       help: vi.fn(),
@@ -176,8 +180,8 @@ it.each([false, true])(
       expect(root.querySelector<HTMLButtonElement>(".kids-dictate")!.disabled).toBe(finishing);
       expect(root.querySelector("#kids-navigation-help")?.textContent).toBe(
         finishing
-          ? "Wait for your words to appear before leaving Chat."
-          : "Finish dictation before leaving Chat.",
+          ? "Wait for your words to appear before leaving this page."
+          : "Finish dictation before leaving this page.",
       );
       today!.click();
       expect(actions.navigate).not.toHaveBeenCalled();
@@ -322,6 +326,147 @@ it("keeps filtered empty history traversable and offers Latest without changing 
     expect(root.querySelector<HTMLButtonElement>(".kids-history-status button")!.disabled).toBe(
       true,
     );
+  } finally {
+    render(null, root);
+  }
+});
+
+it("keeps the submitted free answer and live result mounted while checking and receiving clarification", () => {
+  const root = document.createElement("div");
+  const state = readyState();
+  state.page = "solve";
+  const question = {
+    kind: "explanation" as const,
+    id: "q1",
+    prompt: "Do equal borders always enclose equal areas?",
+    hint: null,
+  };
+  state.activity.snapshot = {
+    now: 1,
+    date: "2026-10-14",
+    correctStreak: 0,
+    daily: null,
+    nextActivity: null,
+    pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
+    activity: {
+      id: "shapes",
+      date: "2026-10-14",
+      title: "Compare the spaces",
+      subject: "Math",
+      started: true,
+      completed: false,
+      currentIndex: 0,
+      total: 3,
+      currentQuestion: question,
+    },
+  };
+  state.activity.answerDraft = "No. The areas are different.";
+  const actions = viewActions();
+  const paint = () => render(renderKidsView(state, actions), root);
+  try {
+    paint();
+    const field = root.querySelector<HTMLTextAreaElement>("#kids-answer")!;
+    const live = root.querySelector(".kids-answer-result")!;
+    expect(field.value).toBe(state.activity.answerDraft);
+    expect(live.textContent?.trim()).toBe("");
+    root
+      .querySelector<HTMLFormElement>(".kids-answer")!
+      .dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(actions.activity.check).toHaveBeenCalledOnce();
+    expect(actions.send).not.toHaveBeenCalled();
+    state.activity.busy = true;
+    state.activity.checking = true;
+    state.activity.submission = {
+      question,
+      answer: { kind: "explanation", text: field.value },
+      activity: { id: "shapes", title: "Compare the spaces", subject: "Math" },
+    };
+    paint();
+    expect(root.querySelector("#kids-answer")).toBe(field);
+    expect(root.querySelector(".kids-answer-result")).toBe(live);
+    expect(field.readOnly).toBe(true);
+    expect(live.textContent).toContain("Rocky is checking");
+    state.activity.busy = false;
+    state.activity.checking = false;
+    state.activity.feedback = {
+      questionId: "q1",
+      outcome: "clarify",
+      independent: true,
+      explanation: "How did you compare them?",
+    };
+    paint();
+    expect(field.readOnly).toBe(false);
+    expect(field.value).toBe("No. The areas are different.");
+    expect(live.textContent).toContain("Tell me a little more.");
+    field.value = "No. Their areas are 9 and 24.";
+    field.dispatchEvent(new InputEvent("input"));
+    expect(actions.activity.draft).toHaveBeenCalledWith(field.value);
+    state.activity.answerDraft = field.value;
+    state.activity.submission.answer = { kind: "explanation", text: field.value };
+    state.activity.feedback.outcome = "correct";
+    state.activity.snapshot.activity!.currentQuestion = {
+      id: "q2",
+      kind: "numeric",
+      prompt: "Half of one?",
+      unit: "cm",
+      hint: null,
+    };
+    state.activity.answerDraft = "";
+    paint();
+    expect(field.value).toBe("No. Their areas are 9 and 24.");
+    expect(field.readOnly).toBe(true);
+    expect(root.querySelector(".kids-solve")?.textContent).not.toContain("Half of one?");
+  } finally {
+    render(null, root);
+  }
+});
+
+it("keeps Solve recording controls visible through microphone permission and transcription", () => {
+  const root = document.createElement("div");
+  const state = readyState();
+  state.page = "solve";
+  state.dictationQuestion = { activityId: "fractions", questionId: "q1" };
+  state.activity.snapshot = {
+    now: 1,
+    date: "2026-10-14",
+    correctStreak: 0,
+    daily: null,
+    nextActivity: null,
+    pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
+    activity: {
+      id: "fractions",
+      date: "2026-10-14",
+      title: "A fraction",
+      subject: "Math",
+      started: true,
+      completed: false,
+      currentIndex: 0,
+      total: 3,
+      currentQuestion: {
+        id: "q1",
+        kind: "numeric",
+        prompt: "Half of one?",
+        unit: null,
+        hint: null,
+      },
+    },
+  };
+  const actions = viewActions();
+  try {
+    for (const finishing of [false, true]) {
+      state.dictation = { active: !finishing, finishing, detail: null };
+      render(renderKidsView(state, actions), root);
+      expect(root.querySelector<HTMLElement>(".kids-solve")!.hidden).toBe(false);
+      expect(root.querySelector<HTMLElement>(".kids-footer")!.hidden).toBe(true);
+      expect(root.querySelector<HTMLInputElement>("#kids-answer")!.inputMode).toBe("text");
+      expect(root.querySelector<HTMLInputElement>("#kids-answer")!.readOnly).toBe(true);
+      expect(root.querySelector<HTMLButtonElement>(".kids-page-navigation button")!.disabled).toBe(
+        true,
+      );
+      const stop = root.querySelector<HTMLButtonElement>(".kids-answer-dictate")!;
+      expect(stop.disabled).toBe(finishing);
+      expect(stop.getAttribute("aria-label")).toBe("Finish dictation");
+    }
   } finally {
     render(null, root);
   }

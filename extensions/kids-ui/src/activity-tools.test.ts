@@ -75,6 +75,7 @@ const daily: ActivityDailyPreparation = {
     title: "Equal pieces",
     subject: "fractions",
     questions: [1, 2, 3].map((n) => ({
+      kind: "choice" as const,
       id: `q${n}`,
       prompt: "One of two equal pieces is called what?",
       options: [
