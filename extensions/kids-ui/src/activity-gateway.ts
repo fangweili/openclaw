@@ -10,9 +10,11 @@ import {
  * and private image bytes are discarded after disconnect/revocation.
  */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { Check } from "typebox/value";
 import type { ActivityChildBinding } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import type { ActivityOwner } from "./activity-service.js";
+import { activityPracticeOfferSchema } from "./activity-validation.js";
 
 type GatewayOptions = Parameters<Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1]>[0];
 type ImageReader = (
@@ -20,7 +22,7 @@ type ImageReader = (
   imageId: string,
   assertCurrent: () => void,
 ) => Promise<{ mimeType: string; base64: string }>;
-const METHODS = ["get", "start", "answer", "hint", "touch", "image"] as const;
+const METHODS = ["get", "start", "answer", "hint", "touch", "image", "offerPractice"] as const;
 type Method = (typeof METHODS)[number];
 
 function text(value: unknown): string {
@@ -31,7 +33,7 @@ function text(value: unknown): string {
 }
 
 function parseMutation(
-  method: Exclude<Method, "get" | "image">,
+  method: Exclude<Method, "get" | "image" | "offerPractice">,
   params: Record<string, unknown>,
 ): ActivityMutation {
   const requestId = text(params.requestId);
@@ -110,7 +112,7 @@ function admitChild(options: GatewayOptions, children: readonly ActivityChildBin
   return { child, assertCurrent };
 }
 
-/** Methods require the existing own-session write scope, without granting broad read access. */
+/** Child methods accept own-session write scope; extra practice requires admin plus session admission. */
 export function registerKidsActivityGateway(
   api: OpenClawPluginApi,
   owner: ActivityOwner,
@@ -125,12 +127,21 @@ export function registerKidsActivityGateway(
           const { child, assertCurrent } = admitChild(request, options.children);
           admitted = true;
           const params = request.params;
-          const result =
-            method === "get"
-              ? await owner.get(child.childId, assertCurrent)
-              : method === "image"
-                ? await options.readImage(child.childId, text(params.imageId), assertCurrent)
-                : await owner.mutate(child.childId, parseMutation(method, params), assertCurrent);
+          let result;
+          if (method === "offerPractice") {
+            const offer = { date: params.date, activity: params.activity };
+            if (!Check(activityPracticeOfferSchema, offer)) {
+              throw new ActivityInputError("Provide a date and one complete practice question.");
+            }
+            result = await owner.offerPractice(child.childId, offer, assertCurrent);
+          } else {
+            result =
+              method === "get"
+                ? await owner.get(child.childId, assertCurrent)
+                : method === "image"
+                  ? await options.readImage(child.childId, text(params.imageId), assertCurrent)
+                  : await owner.mutate(child.childId, parseMutation(method, params), assertCurrent);
+          }
           assertCurrent();
           request.respond(true, result);
         } catch (error) {
@@ -146,7 +157,9 @@ export function registerKidsActivityGateway(
           });
         }
       },
-      { scope: "operator.write", sessionAccess: { mode: "write", allowOwnSessionScope: true } },
+      method === "offerPractice"
+        ? { scope: "operator.admin", sessionAccess: { mode: "write" } }
+        : { scope: "operator.write", sessionAccess: { mode: "write", allowOwnSessionScope: true } },
     );
   }
 }

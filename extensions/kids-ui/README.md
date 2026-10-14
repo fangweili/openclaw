@@ -134,7 +134,7 @@ versions. A committed write may outlive its response; callers retry the same
 request ID to retrieve its outcome. The newest 512 request receipts per child are
 retained, and a solved question cannot award progress again under a fresh ID.
 
-The six `kids.activity.*` methods are `get`, `start`, `answer`, `hint`, `touch`,
+The six child-facing `kids.activity.*` methods are `get`, `start`, `answer`, `hint`, `touch`,
 and `image`. All accept the existing app `sessionKey`; Gateway session admission
 selects the configured child. Snapshot responses contain only the current
 question/options, a requested hint, progress, and opaque image references. Answer
@@ -197,7 +197,7 @@ Normal and excited are required; either resting picture can fall back to its fix
 original when rendering, encoding, or the optional deadline fails. Publication is atomic;
 retries reuse the saved batch. The app shows one challenge. Completing it keeps
 the result visible and offers `nextActivity`; only an explicit `start` advances.
-After all three, `nextActivity` is null. A started incomplete challenge remains
+After all three, `nextActivity` is null unless a parent has explicitly offered extra practice. A started incomplete challenge remains
 resumable across midnight. Once it is finished, the first challenge of the newest
 batch appears; yesterday's unstarted extras are no longer offered. `daily` counts
 always describe the newest batch, so completing a carryover does not count toward
@@ -247,9 +247,31 @@ coordinated database backup before deployment. Downgrade requires restoring that
 backup along with the old release and loses activity changes made afterward.
 Migration failure leaves version 1 intact and prevents service activation.
 
+A parent can call `kids.activity.offerPractice` with `{sessionKey,date,activity}`
+for one optional, one-question practice activity after today's three challenges
+are complete. It requires `operator.admin` **and** prepared session write access
+for the configured child; the child's own-session scope cannot call it. `activity`
+uses the same bounded private definition schema (including the grading answer or
+rubric) as daily preparation, with exactly one question. The store admits at most
+one extra per child/local date in its existing transaction, returns
+`{published,snapshot}`, and leaves all previous rows, artwork, receipts, selected
+activity and pet clocks untouched. The activity appears through the existing
+`nextActivity`/explicit start flow; foreground app polling refreshes within 15
+seconds. It sends no chat or push notification.
+
+Retry an uncertain offer with the same ID, date and complete definition. Exact
+replays return `published:false` with current state, even after the question has
+been answered or the local day changes; changed content under that ID is rejected.
+A fresh offer for any date except the child's current local date is rejected.
+Optional practice uses normal grading, evidence, carryover and retention: a started
+unfinished question carries over; an unstarted one stops being offered when a newer
+daily batch appears. The preparation lookup still returns only the original three
+activities, while snapshots and learning evidence include practice. This adds no
+schema version, migration, timer, worker or privileged browser capability.
+
 The store retains 90 days by last activity update. It prunes whole day bundles
 and protects a day containing the current unfinished challenge, keeping scene
-metadata and all three immutable definitions together. Each activity retains full question counters and the latest
+metadata and every immutable definition together. Each activity retains full question counters and the latest
 256 detailed attempts. Preparation reads at most 14 activities and 32 detailed
 attempts each, reporting `activitiesOmitted` and `attemptsOmitted` explicitly.
 Attempt IDs, actual attempt timestamps, selected answer text, hint status, and

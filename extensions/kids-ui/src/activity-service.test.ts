@@ -112,6 +112,39 @@ describe("activity service lifetime", () => {
     expect(mocks.close).toHaveBeenCalledOnce();
   });
 
+  it("keeps practice publication under the live write guard and joins it before shutdown", async () => {
+    const service = harness();
+    await service.start();
+    const pending = Promise.withResolvers<{ published: boolean; snapshot: ActivitySnapshot }>();
+    mocks.execute.mockReturnValue(pending.promise);
+    const offer = {
+      date: "2026-10-13",
+      activity: { id: "practice", title: "Explain", subject: "Math", questions: [question] },
+    };
+    const caller = vi.fn();
+    const operation = service.owner.offerPractice("child", offer, caller);
+    const rejected = expect(operation).rejects.toThrow();
+    expect(mocks.write).toHaveBeenCalledOnce();
+    expect(mocks.execute).toHaveBeenCalledWith({
+      type: "offerPractice",
+      input: {
+        childId: "child",
+        date: "2026-10-13",
+        now: Date.parse("2026-10-14T02:00:00Z"),
+        offer,
+      },
+    });
+    const guard = mocks.write.mock.calls[0]![2] as () => void;
+    const stopped = service.stop();
+    expect(mocks.close).not.toHaveBeenCalled();
+    expect(guard).toThrow();
+    pending.resolve({ published: true, snapshot });
+    await rejected;
+    await stopped;
+    expect(caller).toHaveBeenCalled();
+    expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
   it("joins an opening worker and closes it when stop races startup", async () => {
     const opening = Promise.withResolvers<unknown>();
     mocks.open.mockReturnValue(opening.promise);

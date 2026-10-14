@@ -16,6 +16,7 @@ import {
   ACTIVITY_SLEEP_MS,
   type DailyActivityBundle,
   type ActivityGrade,
+  type ActivityPracticeOffer,
 } from "./activity-contract.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
 
@@ -119,6 +120,81 @@ function get(childId: string, now = timestamp, date = "2026-10-13") {
   return store.execute({ type: "get", input: target(childId, now, date) });
 }
 
+function practice(childId: string): ActivityPracticeOffer {
+  return {
+    date: "2026-10-13",
+    activity: {
+      id: `${childId}-practice`,
+      title: "Explain your idea",
+      subject: "Math",
+      questions: [
+        {
+          kind: "explanation",
+          id: "why",
+          prompt: "Why is 2 + 3 equal to 3 + 2?",
+          hint: "Think about the same five counters.",
+          explanation: "The same two groups are still there.",
+          rubric: "Correct if the same groups are counted in a different order.",
+        },
+      ],
+    },
+  };
+}
+function offerPractice(
+  childId: string,
+  offer = practice(childId),
+  guard = () => {},
+  date = "2026-10-13",
+) {
+  return runSqliteWorkerStoreWrite(
+    store,
+    (scope) =>
+      scope.execute({
+        type: "offerPractice",
+        input: { ...target(childId, timestamp, date), offer },
+      }),
+    guard,
+    [databasePath],
+  );
+}
+/** Exercise the real sequential child flow, including explicit starts between challenges. */
+async function completeDay(childId: string) {
+  for (const activity of bundle(childId).activities) {
+    await mutate(childId, {
+      kind: "start",
+      activityId: activity.id,
+      requestId: `start-${activity.id}`,
+    });
+    for (const question of activity.questions) {
+      await mutate(childId, {
+        kind: "answer",
+        activityId: activity.id,
+        questionId: question.id,
+        requestId: `answer-${activity.id}-${question.id}`,
+        answer: { kind: "choice", optionId: "yes" },
+      });
+    }
+  }
+}
+/** Byte-level inspection of only this synthetic fixture, proving existing rows stay untouched. */
+function savedRows(childId: string) {
+  const db = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    return {
+      pet: db.prepare("SELECT * FROM kids_pet WHERE child_id = ?").all(childId),
+      day: db.prepare("SELECT * FROM kids_day WHERE child_id = ?").all(childId),
+      activities: db
+        .prepare("SELECT * FROM kids_activity WHERE child_id = ? ORDER BY ordinal")
+        .all(childId),
+      receipts: db
+        .prepare("SELECT * FROM kids_request WHERE child_id = ? ORDER BY request_id")
+        .all(childId),
+    };
+  } finally {
+    db.close();
+  }
+}
+
 beforeAll(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "kids-activity-proof-"));
   databasePath = path.join(directory, "activities.sqlite");
@@ -134,6 +210,159 @@ afterAll(async () => {
 });
 
 describe("activity worker authority and progress", () => {
+  it("offers one optional question without changing any completed work, artwork or pet clocks", async () => {
+    const childId = "practice-preservation";
+    await publish(childId);
+    await completeDay(childId);
+    const before = savedRows(childId);
+    const offered = await offerPractice(childId);
+    expect(offered.published).toBe(true);
+    expect(offered.snapshot.daily).toEqual({ date: "2026-10-13", total: 4, completed: 3 });
+    expect(offered.snapshot.nextActivity).toEqual({
+      id: `${childId}-practice`,
+      title: "Explain your idea",
+    });
+    expect(offered.snapshot.activity?.id).toBe(bundle(childId).activities[2]?.id);
+    expect(JSON.stringify(offered.snapshot)).not.toContain("rubric");
+    const after = savedRows(childId);
+    expect({ ...after, activities: after.activities.slice(0, 3) }).toEqual(before);
+    expect(after.activities).toHaveLength(4);
+    const originalBatch = await store.execute({
+      type: "findDaily",
+      input: { childId, date: "2026-10-13" },
+    });
+    expect(originalBatch).toEqual(bundle(childId));
+    expect(await publish(childId)).toEqual({ published: false });
+    const opened = await mutate(childId, {
+      kind: "start",
+      activityId: `${childId}-practice`,
+      requestId: "open-practice",
+    });
+    expect(opened.snapshot.activity).toMatchObject({
+      total: 1,
+      started: true,
+      currentQuestion: { kind: "explanation", id: "why", hint: null },
+    });
+    const answered = await mutate(
+      childId,
+      {
+        kind: "answer",
+        activityId: `${childId}-practice`,
+        questionId: "why",
+        requestId: "explain",
+        answer: { kind: "explanation", text: "The same groups are counted in another order." },
+      },
+      timestamp,
+      "2026-10-13",
+      () => {},
+      { outcome: "correct", explanation: "Exactly: the same groups." },
+    );
+    expect(answered.snapshot.daily?.completed).toBe(4);
+    const complete = savedRows(childId);
+    const offer = practice(childId);
+    // Equivalent JSON objects may arrive with a different property order.
+    const retry = {
+      date: offer.date,
+      activity: {
+        questions: offer.activity.questions,
+        subject: offer.activity.subject,
+        title: offer.activity.title,
+        id: offer.activity.id,
+      },
+    };
+    expect((await offerPractice(childId, retry)).published).toBe(false);
+    expect((await offerPractice(childId, retry, () => {}, "2026-10-14")).published).toBe(false);
+    expect(savedRows(childId)).toEqual(complete);
+    const evidence = await store.execute({ type: "prepare", input: target(childId) });
+    expect(
+      evidence.recentActivities.find((activity) => activity.id === offer.activity.id)?.attempts,
+    ).toEqual([
+      expect.objectContaining({
+        answerText: "The same groups are counted in another order.",
+        outcome: "correct",
+        independent: true,
+      }),
+    ]);
+  });
+
+  it("refuses missing, incomplete, stale, malformed or conflicting practice offers atomically", async () => {
+    const childId = "practice-refusal";
+    await expect(offerPractice(childId)).rejects.toThrow("three challenges");
+    await publish(childId);
+    const initial = savedRows(childId);
+    await expect(offerPractice(childId)).rejects.toThrow("three challenges");
+    expect(savedRows(childId)).toEqual(initial);
+    await completeDay(childId);
+    const completed = savedRows(childId);
+    const offer = practice(childId);
+    await expect(offerPractice(childId, { ...offer, date: "2026-10-14" })).rejects.toThrow(
+      "current local date",
+    );
+    await expect(
+      offerPractice(childId, { ...offer, activity: { ...offer.activity, questions: [] } }),
+    ).rejects.toThrow("complete questions");
+    await expect(
+      offerPractice(childId, {
+        ...offer,
+        activity: {
+          ...offer.activity,
+          questions: [
+            {
+              id: "number",
+              kind: "numeric",
+              prompt: "What is one half?",
+              answer: "about half",
+              unit: null,
+              hint: "Try a fraction.",
+              explanation: "One half is 1/2.",
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow("exact decimal or fraction");
+    expect(savedRows(childId)).toEqual(completed);
+    await offerPractice(childId);
+    const saved = savedRows(childId);
+    await expect(
+      offerPractice(childId, { ...offer, activity: { ...offer.activity, title: "Changed" } }),
+    ).rejects.toThrow("different content");
+    await expect(
+      offerPractice(childId, { ...offer, activity: { ...offer.activity, id: "another-extra" } }),
+    ).rejects.toThrow("one extra");
+    expect(savedRows(childId)).toEqual(saved);
+  });
+
+  it("serializes competing offers and rechecks authority before committing", async () => {
+    const childId = "practice-race";
+    await publish(childId);
+    await completeDay(childId);
+    const before = savedRows(childId);
+    let current = true;
+    const rejected = offerPractice(childId, practice(childId), () => {
+      if (!current) {
+        throw new Error("revoked");
+      }
+    });
+    current = false;
+    await expect(rejected).rejects.toThrow();
+    expect(savedRows(childId)).toEqual(before);
+    const offer = practice(childId);
+    const results = await Promise.allSettled([
+      offerPractice(childId, offer),
+      offerPractice(childId, offer),
+      offerPractice(childId, { ...offer, activity: { ...offer.activity, id: "competing-extra" } }),
+    ]);
+    expect(
+      results
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value.published)
+        .toSorted(),
+    ).toEqual([false, true]);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect((await get(childId)).daily).toEqual({ date: "2026-10-13", total: 4, completed: 3 });
+    expect(savedRows(childId).activities).toHaveLength(4);
+  });
+
   it("keeps child projections separate and never exposes answer keys or unopened hints", async () => {
     await publish("projection");
     const snapshot = await get("projection");

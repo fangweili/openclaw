@@ -23,6 +23,7 @@ import {
 import type {
   ActivityChildBinding,
   ActivityPreparationContext,
+  ActivityPracticeOffer,
   DailyActivityBundle,
 } from "./activity-contract.js";
 import { gradeActivityExplanation } from "./activity-grading.js";
@@ -39,7 +40,7 @@ export type ActivityOwner = {
     childId: string,
     assertCurrent: () => void,
   ): Promise<ActivityPreparationContext>;
-  /** Private preparation lookup includes grading keys; callers must hold job authority. */
+  /** Private lookup of the original three-challenge batch, excluding extra practice; requires job authority. */
   findDaily(
     childId: string,
     date: string,
@@ -56,6 +57,18 @@ export type ActivityOwner = {
     mutation: ActivityMutation,
     assertCurrent: () => void,
   ): Promise<ActivityResult>;
+  /**
+   * Offer at most one extra one-question activity after today's three are complete.
+   * The existing definition is immutable: exact ID/date/content retries are no-ops,
+   * even after progress or the date changes. Does not start it or change pet clocks.
+   * Requires parent authority, rechecked at commit; retry the exact offer after an
+   * uncertain result. New offers for another local date or unfinished days fail.
+   */
+  offerPractice(
+    childId: string,
+    offer: ActivityPracticeOffer,
+    assertCurrent: () => void,
+  ): Promise<{ published: boolean; snapshot: ActivitySnapshot }>;
   /** Atomically accepts three challenges and their mood art for a date; later calls return published:false. */
   publish(bundle: DailyActivityBundle, assertCurrent: () => void): Promise<{ published: boolean }>;
 };
@@ -276,6 +289,8 @@ export function registerKidsActivityService(
     findDaily: (childId, date, assertCurrent) =>
       run(childId, "findDaily", () => ({ childId, date }), assertCurrent),
     mutate,
+    offerPractice: (childId, offer, assertCurrent) =>
+      run(childId, "offerPractice", (target) => ({ ...target, offer }), assertCurrent, true),
     publish: (bundle, assertCurrent) =>
       run(bundle.childId, "publish", (target) => ({ ...target, bundle }), assertCurrent, true),
   };

@@ -2,15 +2,17 @@
  * Sole SQLite owner for published quizzes, grading evidence, idempotency receipts,
  * and pet clocks. Runs only in the SQLite broker worker. Admission creates schema
  * once; all state changes use one synchronous transaction with host authority at
- * BEGIN/COMMIT. Each immutable day owns three quizzes and its mood artwork; quiz
- * progress is independent. Completing a quiz offers an explicit next start. An
- * unfinished quiz survives newer days; unstarted old extras cease being offered.
+ * BEGIN/COMMIT. Each day owns three daily quizzes, at most one parent-requested
+ * practice question, and immutable mood artwork; quiz progress is independent.
+ * Completing a quiz offers an explicit next start. An unfinished quiz survives
+ * newer days; unstarted old extras cease being offered.
  * Ninety-day history and the newest 512 receipts are retained. Day-level pruning
  * keeps all definitions while any evidence is recent or a quiz is unfinished.
  */
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import type {
   ActivityFeedback,
   ActivityMutation,
@@ -34,6 +36,7 @@ import {
   ACTIVITY_SLEEP_MS,
   ACTIVITY_STREAK_TARGET,
   type ActivityDefinition,
+  type ActivityPracticeOffer,
   type ActivityEvidence,
   type ActivityAttemptEvidence,
   type ActivityQuestionEvidence,
@@ -42,21 +45,17 @@ import {
 } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import { gradeActivityAnswer } from "./activity-grading.js";
-import { migrateActivityDatabase } from "./activity-migration.js";
+import { migrateActivityDatabase, type ActivityDatabase } from "./activity-migration.js";
 import {
   encodeActivityMutation,
   type ActivityStoreOperations,
   type ActivityStoreTarget,
 } from "./activity-store-contract.js";
-import { validateDailyActivityBundle } from "./activity-validation.js";
+import { validateActivityDefinition, validateDailyActivityBundle } from "./activity-validation.js";
 
-type PetRow = {
-  child_id: string;
-  active_id: string | null;
-  last_interaction: number | null;
-  excited_until: number | null;
-  streak: number;
-};
+type PetRow = ActivityDatabase["kids_pet"];
+type DayRow = ActivityDatabase["kids_day"];
+type ActivityRow = ActivityDatabase["kids_activity"];
 type Progress = {
   started: boolean;
   completed: boolean;
@@ -67,58 +66,14 @@ type Progress = {
   submissionCount: number;
 };
 type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText" | "restImages">;
-type DayRow = { child_id: string; date: string; created_at: number; content: string };
-type ActivityRow = {
-  child_id: string;
-  activity_id: string;
-  date: string;
-  ordinal: number;
-  updated_at: number;
-  definition: string;
-  progress: string;
-};
-type ReceiptRow = {
-  child_id: string;
-  request_id: string;
-  created_at: number;
-  input: string;
-  feedback: string | null;
-};
-type ActivityDatabase = {
-  kids_pet: PetRow;
-  kids_day: DayRow;
-  kids_activity: ActivityRow;
-  kids_request: ReceiptRow;
-};
 const HISTORY_MS = 90 * 24 * 60 * 60_000;
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS kids_pet (
-    child_id TEXT PRIMARY KEY, active_id TEXT, last_interaction INTEGER,
-    excited_until INTEGER, streak INTEGER NOT NULL
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS kids_day (
-    child_id TEXT NOT NULL, date TEXT NOT NULL, created_at INTEGER NOT NULL, content TEXT NOT NULL,
-    PRIMARY KEY(child_id,date)
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS kids_activity (
-    child_id TEXT NOT NULL, activity_id TEXT NOT NULL, date TEXT NOT NULL, ordinal INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL, definition TEXT NOT NULL, progress TEXT NOT NULL,
-    PRIMARY KEY(child_id, activity_id), UNIQUE(child_id,date,ordinal),
-    FOREIGN KEY(child_id,date) REFERENCES kids_day(child_id,date) ON DELETE CASCADE
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS kids_request (
-    child_id TEXT NOT NULL, request_id TEXT NOT NULL, created_at INTEGER NOT NULL,
-    input TEXT NOT NULL, feedback TEXT, PRIMARY KEY(child_id,request_id)
-  ) STRICT;
-  CREATE INDEX IF NOT EXISTS kids_request_age ON kids_request(child_id,created_at);
-`;
 
 function readDay(row: DayRow): DayContent {
   // SAFETY: publish() validates day content before its sole immutable write.
   return JSON.parse(row.content) as DayContent;
 }
 function readActivity(row: ActivityRow): ActivityDefinition {
-  // SAFETY: publish() validates all three definitions before atomically writing them.
+  // SAFETY: publication paths validate each definition before its immutable write.
   return JSON.parse(row.definition) as ActivityDefinition;
 }
 function readProgress(row: ActivityRow): Progress {
@@ -382,7 +337,9 @@ class ActivityDatabaseOwner {
           childId,
           date,
           ...readDay(row),
-          activities: this.dayActivities(childId, date).map(readActivity),
+          activities: this.dayActivities(childId, date)
+            .filter((activity) => activity.ordinal < 3)
+            .map(readActivity),
         }
       : null;
   }
@@ -434,6 +391,54 @@ class ActivityDatabaseOwner {
       );
       this.prune(target);
       return { published: true };
+    });
+  }
+
+  /**
+   * Append one optional question only to a completed current day. The transaction
+   * owns both admission and the single remaining ordinal, so concurrent offers
+   * cannot exceed the limit. Identical retries never reset progress or selection.
+   * Existing rows, receipts, scene art and pet clocks are untouched; no pruning.
+   */
+  offerPractice(
+    target: ActivityStoreTarget,
+    offer: ActivityPracticeOffer,
+  ): { published: boolean; snapshot: ActivitySnapshot } {
+    validateActivityDefinition(offer.activity, 1);
+    return this.transaction(() => {
+      const existing = this.byId(target.childId, offer.activity.id);
+      if (existing) {
+        if (
+          existing.ordinal !== 3 ||
+          existing.date !== offer.date ||
+          !isDeepStrictEqual(readActivity(existing), offer.activity)
+        ) {
+          throw new ActivityInputError("This activity ID is already used for different content.");
+        }
+        return { published: false, snapshot: this.snapshot(target) };
+      }
+      if (offer.date !== target.date) {
+        throw new ActivityInputError("Offer practice only for the child's current local date.");
+      }
+      const activities = this.dayActivities(target.childId, offer.date);
+      if (activities.length !== 3 || activities.some((row) => !readProgress(row).completed)) {
+        throw new ActivityInputError(
+          "Finish today's three challenges before offering its one extra practice question.",
+        );
+      }
+      executeSqliteQuerySync(
+        this.db,
+        this.query.insertInto("kids_activity").values({
+          child_id: target.childId,
+          activity_id: offer.activity.id,
+          date: offer.date,
+          ordinal: 3,
+          updated_at: target.now,
+          definition: JSON.stringify(offer.activity),
+          progress: JSON.stringify(initialProgress(offer.activity)),
+        }),
+      );
+      return { published: true, snapshot: this.snapshot(target) };
     });
   }
 
@@ -693,7 +698,7 @@ export function createSqliteWorkerBackend(
     if (typeof version !== "number" || version > 2) {
       throw new Error("Activities database needs a newer plugin version.");
     }
-    migrateActivityDatabase(db, version, SCHEMA);
+    migrateActivityDatabase(db, version);
     const owner = new ActivityDatabaseOwner(db);
     return {
       execute(command: SqliteWorkerCommand<ActivityStoreOperations>) {
@@ -710,6 +715,8 @@ export function createSqliteWorkerBackend(
             return owner.mutate(command.input, command.input.mutation, command.input.grade);
           case "publish":
             return owner.publish(command.input, command.input.bundle);
+          case "offerPractice":
+            return owner.offerPractice(command.input, command.input.offer);
           default:
             throw new Error("Unsupported activity operation.");
         }

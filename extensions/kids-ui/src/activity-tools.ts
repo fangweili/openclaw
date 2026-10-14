@@ -15,6 +15,7 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ActivityPreparationContext } from "./activity-contract.js";
 import type { ActivityGeneration, ActivityGenerationChild } from "./activity-generation.js";
+import { activityDefinitionSchema } from "./activity-validation.js";
 
 type ActivityEvidenceJob = { agentId: string; jobId: string };
 type ActivityToolRuntime = {
@@ -29,51 +30,9 @@ export type ActivityToolsOptions = {
 };
 
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
-const option = Type.Object({ id: text(80), text: text(500) }, { additionalProperties: false });
-const questionFields = {
-  id: text(80),
-  prompt: text(1200),
-  hint: text(800),
-  explanation: text(1200),
-};
-const question = Type.Union([
-  Type.Object(
-    {
-      ...questionFields,
-      kind: Type.Literal("choice"),
-      options: Type.Array(option, { minItems: 2, maxItems: 5 }),
-      correctOptionId: text(80),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      ...questionFields,
-      kind: Type.Literal("numeric"),
-      answer: text(40),
-      unit: Type.Union([text(40), Type.Null()]),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { ...questionFields, kind: Type.Literal("explanation"), rubric: text(1200) },
-    { additionalProperties: false },
-  ),
-]);
 const preparationFields = {
   date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
-  activities: Type.Array(
-    Type.Object(
-      {
-        id: text(160),
-        title: text(160),
-        subject: text(80),
-        questions: Type.Array(question, { minItems: 3, maxItems: 3 }),
-      },
-      { additionalProperties: false },
-    ),
-    { minItems: 3, maxItems: 3 },
-  ),
+  activities: Type.Array(activityDefinitionSchema(3), { minItems: 3, maxItems: 3 }),
   normalPrompt: text(3000),
   excitedPrompt: text(1500),
   boredPrompt: text(1500),

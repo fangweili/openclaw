@@ -6,6 +6,7 @@ import type {
 import type {
   ActivityGrade,
   ActivityPreparationContext,
+  ActivityPracticeOffer,
   ActivityQuestionDefinition,
   DailyActivityBundle,
 } from "./activity-contract.js";
@@ -25,6 +26,10 @@ export type ActivityStoreOperations = {
   mutate: {
     input: ActivityStoreTarget & { mutation: ActivityMutation; grade?: ActivityGrade };
     output: ActivityResult;
+  };
+  offerPractice: {
+    input: ActivityStoreTarget & { offer: ActivityPracticeOffer };
+    output: { published: boolean; snapshot: ActivitySnapshot };
   };
   publish: {
     input: ActivityStoreTarget & { bundle: DailyActivityBundle };

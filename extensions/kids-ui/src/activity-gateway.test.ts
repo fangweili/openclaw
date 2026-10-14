@@ -35,6 +35,7 @@ function harness() {
   const owner = {
     get: vi.fn(async () => ({ child: "private" })),
     mutate: vi.fn(async () => ({ saved: true })),
+    offerPractice: vi.fn(async () => ({ published: true, snapshot: {} })),
   };
   const readImage = vi.fn(async () => ({ mimeType: "image/webp", base64: "aW1hZ2U=" }));
   const api = {
@@ -84,8 +85,12 @@ function harness() {
 describe("activity RPC session boundary", () => {
   it("registers every operation with existing own-session participation policy", () => {
     const { methods } = harness();
-    expect(methods.size).toBe(6);
-    for (const { options } of methods.values()) {
+    expect(methods.size).toBe(7);
+    for (const [name, { options }] of methods) {
+      if (name === "kids.activity.offerPractice") {
+        expect(options).toEqual({ scope: "operator.admin", sessionAccess: { mode: "write" } });
+        continue;
+      }
       expect(options).toEqual({
         scope: "operator.write",
         sessionAccess: { mode: "write", allowOwnSessionScope: true },
@@ -117,6 +122,65 @@ describe("activity RPC session boundary", () => {
     }
     expect(test.owner.get).toHaveBeenCalledOnce();
   });
+  it("offers parent practice only for the admitted child with a bounded complete definition", async () => {
+    const test = harness();
+    const offer = {
+      date: "2026-10-13",
+      activity: {
+        id: "extra",
+        title: "Explain your idea",
+        subject: "Math",
+        questions: [
+          {
+            id: "why",
+            kind: "explanation",
+            prompt: "Why is 2 + 3 equal to 3 + 2?",
+            hint: "Think about the same five counters.",
+            explanation: "The same two groups are still there.",
+            rubric: "Correct if the same groups are counted in a different order.",
+          },
+        ],
+      },
+    };
+    const call = test.invoke("offerPractice", { ...offer, childId: "sibling" });
+    await call.done;
+    expect(test.owner.offerPractice).toHaveBeenCalledWith("child", offer, expect.any(Function));
+    for (const admission of [
+      undefined,
+      sessionAuthority({
+        agentId: "sibling",
+        sessionKey: "agent:sibling:main",
+        sessionId: "other",
+      }),
+    ]) {
+      const denied = test.invoke("offerPractice", offer, { sessionAccessAuthority: admission });
+      await denied.done;
+      expect(denied.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN" }),
+      );
+    }
+    for (const activity of [
+      { ...offer.activity, questions: [] },
+      { ...offer.activity, privatePayload: "ignored?" },
+      { ...offer.activity, title: " " },
+      {
+        ...offer.activity,
+        questions: [{ ...offer.activity.questions[0], rubric: "x".repeat(1201) }],
+      },
+    ]) {
+      const denied = test.invoke("offerPractice", { ...offer, activity });
+      await denied.done;
+      expect(denied.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST" }),
+      );
+    }
+    expect(test.owner.offerPractice).toHaveBeenCalledOnce();
+  });
+
   it("normalizes a mutation without trusting client clocks or grading claims", async () => {
     const test = harness();
     const call = test.invoke("answer", {

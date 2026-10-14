@@ -18,13 +18,15 @@ export type ActivityQuestionDefinition = {
 );
 /** Private grading verdict; never supplied by the browser. */
 export type ActivityGrade = Pick<ActivityFeedback, "outcome" | "explanation">;
-/** An immutable three-question challenge, distinct from its day's shared artwork. */
+/** An immutable challenge: three daily questions, or one parent-requested practice question. */
 export type ActivityDefinition = {
   id: string;
   title: string;
   subject: string;
   questions: ActivityQuestionDefinition[];
 };
+/** One optional extra question for an existing completed local day; never replaces daily work. */
+export type ActivityPracticeOffer = { date: string; activity: ActivityDefinition };
 /** Atomic publication: three challenges, required normal/excited art, optional daily rest art. */
 export type DailyActivityBundle = {
   childId: string;
