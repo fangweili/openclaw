@@ -92,7 +92,11 @@ function parseMutation(
 }
 
 /** The returned assertion is request-bound and must never be saved for background work. */
-function admitChild(options: GatewayOptions, children: readonly ActivityChildBinding[]) {
+function admitChild(
+  options: GatewayOptions,
+  children: readonly ActivityChildBinding[],
+  requireAdmin: boolean,
+) {
   const authority = options.sessionAccessAuthority;
   const admitted = authority?.target;
   const child =
@@ -107,6 +111,9 @@ function admitChild(options: GatewayOptions, children: readonly ActivityChildBin
   const assertCurrent = () => {
     options.signal?.throwIfAborted();
     authority.assertCurrent();
+    if (requireAdmin && !options.client?.connect.scopes?.includes("operator.admin")) {
+      throw new Error("Offering practice requires a current administrator connection.");
+    }
   };
   assertCurrent();
   return { child, assertCurrent };
@@ -124,7 +131,11 @@ export function registerKidsActivityGateway(
       async (request) => {
         let admitted = false;
         try {
-          const { child, assertCurrent } = admitChild(request, options.children);
+          const { child, assertCurrent } = admitChild(
+            request,
+            options.children,
+            method === "offerPractice",
+          );
           admitted = true;
           const params = request.params;
           let result;
@@ -158,7 +169,9 @@ export function registerKidsActivityGateway(
         }
       },
       method === "offerPractice"
-        ? { scope: "operator.admin", sessionAccess: { mode: "write" } }
+        ? // The host only permits sessionAccess on operator.write methods. The
+          // retained admission guard above additionally requires admin for offers.
+          { scope: "operator.write", sessionAccess: { mode: "write" } }
         : { scope: "operator.write", sessionAccess: { mode: "write", allowOwnSessionScope: true } },
     );
   }

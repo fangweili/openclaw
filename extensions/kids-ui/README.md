@@ -250,7 +250,10 @@ Migration failure leaves version 1 intact and prevents service activation.
 A parent can call `kids.activity.offerPractice` with `{sessionKey,date,activity}`
 for one optional, one-question practice activity after today's three challenges
 are complete. It requires `operator.admin` **and** prepared session write access
-for the configured child; the child's own-session scope cannot call it. `activity`
+for the configured child; the child's own-session scope cannot call it. The host
+requires all session-resource descriptors to declare `operator.write`, so the
+request-bound assertion additionally checks the authenticated connection's admin
+scope at entry, after awaits and at worker commit. `activity`
 uses the same bounded private definition schema (including the grading answer or
 rubric) as daily preparation, with exactly one question. The store admits at most
 one extra per child/local date in its existing transaction, returns

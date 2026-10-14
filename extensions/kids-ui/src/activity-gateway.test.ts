@@ -1,5 +1,9 @@
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  createPluginRegistryFixture,
+  registerVirtualTestPlugin,
+} from "openclaw/plugin-sdk/plugin-test-contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityChildBinding } from "./activity-contract.js";
 import { registerKidsActivityGateway } from "./activity-gateway.js";
@@ -35,7 +39,10 @@ function harness() {
   const owner = {
     get: vi.fn(async () => ({ child: "private" })),
     mutate: vi.fn(async () => ({ saved: true })),
-    offerPractice: vi.fn(async () => ({ published: true, snapshot: {} })),
+    offerPractice: vi.fn(async (_child: string, _offer: unknown, _assertCurrent: () => void) => ({
+      published: true,
+      snapshot: {},
+    })),
   };
   const readImage = vi.fn(async () => ({ mimeType: "image/webp", base64: "aW1hZ2U=" }));
   const api = {
@@ -66,7 +73,7 @@ function harness() {
           minProtocol: 3,
           maxProtocol: 3,
           role: "operator",
-          scopes: ["operator.sessions.write"],
+          scopes: method === "offerPractice" ? ["operator.admin"] : ["operator.sessions.write"],
           client: { id: "openclaw-control-ui", version: "test", platform: "web", mode: "webchat" },
         },
       },
@@ -83,18 +90,33 @@ function harness() {
   return { methods, owner, readImage, invoke };
 }
 describe("activity RPC session boundary", () => {
-  it("registers every operation with existing own-session participation policy", () => {
-    const { methods } = harness();
-    expect(methods.size).toBe(7);
-    for (const [name, { options }] of methods) {
-      if (name === "kids.activity.offerPractice") {
-        expect(options).toEqual({ scope: "operator.admin", sessionAccess: { mode: "write" } });
-        continue;
-      }
-      expect(options).toEqual({
-        scope: "operator.write",
-        sessionAccess: { mode: "write", allowOwnSessionScope: true },
-      });
+  it("registers supported session descriptors through the real plugin registrar", () => {
+    const { owner, readImage } = harness();
+    const { registry, config } = createPluginRegistryFixture();
+    registerVirtualTestPlugin({
+      registry,
+      config,
+      id: "kids-ui",
+      name: "Kids activities",
+      register(api) {
+        registerKidsActivityGateway(api, owner as unknown as ActivityOwner, {
+          children: [child],
+          readImage,
+        });
+      },
+    });
+    const descriptors = registry.registry.gatewayMethodDescriptors;
+    expect(descriptors).toHaveLength(7);
+    for (const descriptor of descriptors) {
+      // The final Gateway registry permits sessionAccess only with this exact
+      // scope/profile pair. Parent-only practice adds its live admin guard.
+      expect(descriptor).toMatchObject({ scope: "operator.write", profileAccess: "required" });
+      expect(descriptor.sessionAccess).toEqual(
+        descriptor.name === "kids.activity.offerPractice"
+          ? { mode: "write" }
+          : { mode: "write", allowOwnSessionScope: true },
+      );
+      expect(registry.registry.gatewayHandlers[descriptor.name]).toBeTypeOf("function");
     }
   });
   it("uses the host-admitted child and rejects a sibling target or missing admission", async () => {
@@ -179,6 +201,39 @@ describe("activity RPC session boundary", () => {
       );
     }
     expect(test.owner.offerPractice).toHaveBeenCalledOnce();
+    for (const scopes of [[], ["operator.write"], ["operator.sessions.write"]]) {
+      const denied = test.invoke("offerPractice", offer, {
+        client: { ...call.request.client!, connect: { ...call.request.client!.connect, scopes } },
+      });
+      await denied.done;
+      expect(denied.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN" }),
+      );
+    }
+    const anonymous = test.invoke("offerPractice", offer, { client: null });
+    await anonymous.done;
+    expect(anonymous.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "FORBIDDEN" }),
+    );
+    expect(test.owner.offerPractice).toHaveBeenCalledOnce();
+
+    const pending = Promise.withResolvers<{ published: boolean; snapshot: object }>();
+    test.owner.offerPractice.mockReturnValueOnce(pending.promise);
+    const revoked = test.invoke("offerPractice", offer);
+    const guard = test.owner.offerPractice.mock.calls[1]![2];
+    revoked.request.client!.connect.scopes = ["operator.write"];
+    expect(guard).toThrow("administrator");
+    pending.resolve({ published: true, snapshot: {} });
+    await revoked.done;
+    expect(revoked.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "UNAVAILABLE" }),
+    );
   });
 
   it("normalizes a mutation without trusting client clocks or grading claims", async () => {
