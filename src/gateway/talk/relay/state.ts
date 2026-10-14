@@ -19,6 +19,7 @@ import type { RealtimeVoiceBridgeSession } from "../../../talk/session-runtime.j
 import type { TalkEvent } from "../../../talk/talk-session-controller.js";
 import type { GatewayRequestContext } from "../../server-methods/shared-types.js";
 import type { TalkAgentConsultAuthority } from "../client-gateway-control.js";
+import type { TalkParticipant } from "../participant.js";
 import type { PreparedTalkSessionTarget } from "../session-target.types.js";
 import type { RelayToolCallLedger } from "./tool-call-ledger.js";
 
@@ -250,6 +251,8 @@ export class TalkRealtimeRelayOutputOwnership {
 }
 
 export type RelaySession = {
+  /** Optional controller/child selection owned until close, independent of transcript draining. */
+  participant?: TalkParticipant;
   getToolAuthorityOverlay?: (
     authority?: TalkAgentConsultAuthority,
     source?: "reply" | "attempt",
@@ -262,7 +265,7 @@ export type RelaySession = {
   capabilities?: InternalRealtimeVoiceProviderCapabilities;
   outputOwnership: TalkRealtimeRelayOutputOwnership;
   sessionTarget: PreparedTalkSessionTarget;
-  /** Authenticated caller captured at call admission; never inferred from the target. */
+  /** Admitted participant captured at call admission; never inferred from the target. */
   transcriptSender?: UserTurnInput["sender"];
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;
@@ -297,6 +300,8 @@ export type CreateTalkRealtimeRelaySessionParams = {
   connId: string;
   cfg?: OpenClawConfig;
   consultAuthority?: TalkAgentConsultAuthority;
+  /** Selected identity lease transfers to the relay only after successful construction. */
+  participant?: TalkParticipant;
   /** Immutable trusted context captured before admission yields; not an authority grant. */
   sessionContext: string;
   provider: RealtimeVoiceProviderPlugin;
@@ -311,7 +316,7 @@ export type CreateTalkRealtimeRelaySessionParams = {
   tools: RealtimeVoiceTool[];
   model?: string;
   sessionTarget: PreparedTalkSessionTarget;
-  /** Authenticated caller captured at call admission; never inferred from the target. */
+  /** Admitted participant captured at call admission; never inferred from the target. */
   transcriptSender?: UserTurnInput["sender"];
   voice?: string;
   language?: string;

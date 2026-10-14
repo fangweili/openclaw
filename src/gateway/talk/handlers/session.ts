@@ -31,6 +31,7 @@ import { withPreparedSessionResolve } from "../../sessions-resolve.js";
 import { formatForLog } from "../../ws-log.js";
 import { resolveTalkAgentConsultAuthority } from "../client-gateway-control.js";
 import { createTalkHandoff, getTalkHandoff, revokeTalkHandoff } from "../handoff.js";
+import { prepareTalkParticipant, type TalkParticipant } from "../participant.js";
 import {
   cancelTalkRealtimeRelayTurn,
   createTalkRealtimeRelaySession,
@@ -110,10 +111,26 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
       client,
       sessionMutationAuthorization,
       sessionMutationCommitGuard,
+      hasCurrentClientAuthority,
     }) => {
       const mode = normalizeTalkSessionMode(params);
       const transport = normalizeTalkSessionTransport({ mode, transport: params.transport });
       const brain = normalizeTalkSessionBrain({ mode, brain: params.brain });
+
+      if (
+        params.participantProfileId !== undefined &&
+        (mode !== "realtime" ||
+          transport !== "gateway-relay" ||
+          brain !== "agent-consult" ||
+          params.voiceChangeId !== undefined ||
+          params.capabilities?.includes("voice-selection"))
+      ) {
+        respondInvalidRequest(
+          respond,
+          "A selected participant requires a realtime gateway-relay agent-consult call without voice replacement.",
+        );
+        return;
+      }
 
       if (transport === "webrtc" || transport === "provider-websocket") {
         respondInvalidRequest(
@@ -122,6 +139,8 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      let participant: TalkParticipant | undefined;
+      let participantAdopted = false;
       try {
         sessionMutationAuthorization?.assertCurrent();
         if (params.voiceChangeId && (mode !== "realtime" || transport !== "gateway-relay")) {
@@ -237,6 +256,19 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
                 voice: replacement.voice,
               }
             : params;
+          const target = requirePreparedTalkSessionTarget(
+            sessionMutationAuthorization?.talkSessionTarget,
+          );
+          participant =
+            params.participantProfileId !== undefined
+              ? await prepareTalkParticipant({
+                  profileId: params.participantProfileId,
+                  target,
+                  controller: client ?? null,
+                  context,
+                  hasCurrentClientAuthority,
+                })
+              : undefined;
           const runtimeConfig = context.getRuntimeConfig();
           const realtimeConfig = buildTalkRealtimeConfig(
             runtimeConfig,
@@ -247,15 +279,13 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             requested,
             defaults: realtimeConfig,
           });
-          const target = requirePreparedTalkSessionTarget(
-            sessionMutationAuthorization?.talkSessionTarget,
-          );
           replacement?.assertCurrent(target);
           const { agentId } = target;
           const assertCommitAllowed = () => {
             sessionMutationCommitGuard?.();
             sessionMutationAuthorization?.assertCurrent();
             replacement?.assertCurrent(target);
+            participant?.assertCurrent();
           };
           assertCommitAllowed();
           assertSecretOwnerAvailable("capability", "talk:realtime");
@@ -282,11 +312,13 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           const capabilities = resolution.capabilities;
           const controlSource =
             capabilities?.handlesAgentConsult === true ? "delegation" : "transcript";
-          const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
+          const transcriptSender =
+            participant?.transcriptSender ?? gatewayClientSenderFields(client ?? null).sender;
           const sessionContext = buildTalkSessionContext({
             config: runtimeConfig,
             agentId,
             sender: transcriptSender,
+            ...(participant ? { selectedParticipant: true as const } : {}),
           });
           const providerInstructions = await resolveTalkRealtimeProviderInstructions({
             config: runtimeConfig,
@@ -302,10 +334,12 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             sessionKey: target.canonicalKey,
             storePath: target.storePath,
             creation:
+              participant?.creation ??
               resolveSandboxedSessionCreation(client, runtimeConfig) ??
               resolveOperatorSessionCreation(client),
             assertCommitAllowed,
           });
+          await participant?.bindSession(ensuredSessionId);
           const assertEnsuredTargetCurrent = () => {
             sessionMutationCommitGuard?.();
             sessionMutationAuthorization?.assertTargetCurrent({
@@ -314,6 +348,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
               ensuredSessionId,
             });
             replacement?.assertCurrent(target);
+            participant?.assertCurrent();
           };
           const initialItems = replacement
             ? await readTalkRealtimeInitialItems(target, assertEnsuredTargetCurrent)
@@ -334,7 +369,10 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             context,
             connId,
             cfg: runtimeConfig,
-            consultAuthority: resolveTalkAgentConsultAuthority(client?.connect?.scopes, client),
+            consultAuthority:
+              participant?.consultAuthority ??
+              resolveTalkAgentConsultAuthority(client?.connect?.scopes, client),
+            participant,
             provider: resolution.provider,
             providerConfig: relayLaunch.providerConfig,
             controlSource,
@@ -358,6 +396,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             language: normalizeOptionalLowercaseString(params.language),
             forceAgentConsultOnFinalTranscript: relayLaunch.forceAgentConsultOnFinalTranscript,
           });
+          participantAdopted = true;
           rememberUnifiedTalkSession(session.relaySessionId, {
             kind: "realtime-relay",
             connId,
@@ -375,6 +414,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             voiceSessionId: session.relaySessionId,
             mode,
             brain,
+            ...(participant ? { participant: participant.metadata } : {}),
           });
         }
 
@@ -424,6 +464,10 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
         );
       } catch (err) {
         respond(false, undefined, talkSessionError(err));
+      } finally {
+        if (!participantAdopted) {
+          participant?.close();
+        }
       }
     },
   ),

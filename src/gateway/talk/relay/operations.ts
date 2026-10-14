@@ -79,21 +79,6 @@ export function adoptTalkRealtimeRelaySession(
   }
 }
 
-/** Ensure a gateway-relay call has its durable record before transcript-free RPCs. */
-export function ensureTalkRealtimeRelayVoiceSession(params: {
-  relaySessionId: string;
-  connId: string;
-  sessionKey: string;
-}): void {
-  const session = getRelaySession(params.relaySessionId, params.connId);
-  if (session.sessionTarget.sessionKey !== params.sessionKey.trim()) {
-    throw new Error("Realtime relay session belongs to another agent session");
-  }
-  if (!ensureRelayVoiceSession(session)) {
-    throw new Error("Realtime relay voice session could not be created");
-  }
-}
-
 /** Omitting the abort reason releases relay correlation while accepted work continues. */
 function retireRelayAgentRuns(session: RelaySession, reason?: string): void {
   if (reason !== undefined) {
@@ -136,6 +121,7 @@ export function closeRelaySession(
   }
   const closing: NonNullable<RelaySession["closing"]> = { reason };
   session.closing = closing;
+  session.participant?.close();
   const disposition =
     options?.disposition ??
     (isTalkVoiceSessionReplacing(session.id, session.connId, session.sessionTarget.agentId)
@@ -196,7 +182,11 @@ function closeTalkRealtimeRelaySessionsForConnection(connId: string): Promise<vo
   });
 }
 
-function getRelaySession(relaySessionId: string, connId: string): RelaySession {
+/**
+ * Borrows a connection-owned relay, retiring expired calls through normal teardown.
+ * Throws for unknown or expired calls; callers must revalidate after yielding.
+ */
+export function getRelaySession(relaySessionId: string, connId: string): RelaySession {
   return requireActiveTalkRelaySession({
     sessions: relaySessions,
     sessionId: relaySessionId,
@@ -216,6 +206,7 @@ export function sendTalkRealtimeRelayAudio(params: {
     throw new Error("Realtime relay audio frame is too large");
   }
   const session = getRelaySession(params.relaySessionId, params.connId);
+  session.participant?.assertCurrent();
   if (session.outputOwnership.phase === "cancelling") {
     return session.outputOwnership.drain!.promise.then(() => sendTalkRealtimeRelayAudio(params));
   }
@@ -253,6 +244,7 @@ export function submitTalkRealtimeRelayToolResult(params: {
   options?: RealtimeVoiceToolResultOptions;
 }): void | Promise<void> {
   const session = getRelaySession(params.relaySessionId, params.connId);
+  session.participant?.assertCurrent();
   if (session.toolCalls.isAgentCompleted(params.callId)) {
     return;
   }
@@ -383,6 +375,7 @@ export function registerTalkRealtimeRelayAgentRun(params: {
   callId?: string;
 }): void {
   const session = getRelaySession(params.relaySessionId, params.connId);
+  session.participant?.assertCurrent();
   const callId = params.callId?.trim();
   if (
     callId &&
@@ -495,6 +488,7 @@ export function prepareTalkRealtimeRelayAgentControl(
   params: Parameters<typeof steerTalkRealtimeRelayAgentRun>[0],
 ): () => Promise<RealtimeVoiceAgentControlResult> {
   const session = getRelaySession(params.relaySessionId, params.connId);
+  session.participant?.assertCurrent();
   const { sessionKey, canonicalKey } = session.sessionTarget;
   const requestedSessionKey = params.sessionKey?.trim();
   if (requestedSessionKey && requestedSessionKey !== sessionKey) {
@@ -506,6 +500,7 @@ export function prepareTalkRealtimeRelayAgentControl(
     sessionTarget: session.sessionTarget,
     scope: { kind: "voice-session", voiceSessionId: session.id },
     assertCurrent: () => {
+      session.participant?.assertCurrent();
       params.assertCurrent?.();
       if (relaySessions.get(session.id) !== session) {
         throw new Error("Realtime relay session closed while steering the agent run");
@@ -513,6 +508,7 @@ export function prepareTalkRealtimeRelayAgentControl(
     },
   });
   return async () => {
+    session.participant?.assertCurrent();
     params.assertCurrent?.();
     if (relaySessions.get(session.id) !== session) {
       throw new Error("Realtime relay session closed while steering the agent run");
@@ -524,7 +520,10 @@ export function prepareTalkRealtimeRelayAgentControl(
         if (!session.getToolAuthorityOverlay) {
           throw new Error("Relay steering caller authority is unavailable");
         }
-        return session.getToolAuthorityOverlay(params.authority, runTarget?.toolAuthoritySource);
+        return session.getToolAuthorityOverlay(
+          session.participant?.consultAuthority ?? params.authority,
+          runTarget?.toolAuthoritySource,
+        );
       },
       text: params.text,
       mode: params.mode,

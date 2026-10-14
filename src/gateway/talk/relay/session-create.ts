@@ -167,6 +167,7 @@ export function createTalkRealtimeRelaySession(
     sessionTarget: params.sessionTarget,
     ownerConnId: params.connId,
     authority: params.consultAuthority,
+    assertCurrent: params.participant?.assertCurrent,
     sessionContext: params.sessionContext,
     getVoiceSessionId: () => relaySessionId,
     initialItems: params.initialItems ?? [],
@@ -616,6 +617,7 @@ export function createTalkRealtimeRelaySession(
     void closeRelaySession(active, "error");
   };
   const relay: RelaySession = {
+    participant: params.participant,
     getToolAuthorityOverlay: consultRunner.getToolAuthorityOverlay,
     id: relaySessionId,
     connId: params.connId,

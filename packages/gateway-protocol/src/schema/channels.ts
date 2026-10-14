@@ -272,6 +272,8 @@ export const TalkAgentControlResultSchema = closedObject({
 
 export const TalkSessionCreateParamsSchema = closedObject({
   sessionKey: Type.Optional(Type.String()),
+  /** An administrator's explicit child selection for one realtime relay call. */
+  participantProfileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   voiceChangeId: Type.Optional(NonEmptyString),
   capabilities: Type.Optional(Type.Array(Type.Literal("voice-selection"), { uniqueItems: true })),
   spawnedBy: Type.Optional(NonEmptyString),
@@ -392,6 +394,13 @@ const BrowserRealtimeAudioContractSchema = closedObject({
 
 export const TalkSessionCreateResultSchema = closedObject({
   sessionId: NonEmptyString,
+  participant: Type.Optional(
+    closedObject({
+      profileId: NonEmptyString,
+      agentId: NonEmptyString,
+      sessionKey: NonEmptyString,
+    }),
+  ),
   provider: Type.Optional(Type.String()),
   mode: TalkModeSchema,
   transport: TalkTransportSchema,
