@@ -27,6 +27,7 @@ import { KidsDictation } from "./dictation.ts";
 import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
 import { KidsNotifications } from "./notifications.ts";
+import { KidsPetTransition } from "./pet-transition.ts";
 import { KidsTouchGestures } from "./touch-gestures.ts";
 import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
@@ -53,6 +54,7 @@ export class KidsApp {
   private readonly media: KidsHistoryMedia;
   private readonly transcript: KidsTranscriptScroll;
   private readonly touchGestures: KidsTouchGestures;
+  private readonly petTransition: KidsPetTransition;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -69,6 +71,7 @@ export class KidsApp {
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
     this.touchGestures = new KidsTouchGestures(root);
+    this.petTransition = new KidsPetTransition(root);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -161,6 +164,7 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
+    this.petTransition.dispose();
     this.touchGestures.dispose();
     this.transcript.dispose();
     this.generation += 1;
@@ -196,7 +200,7 @@ export class KidsApp {
     this.snapshot.connectionError = null;
     this.snapshot.activityEnabled =
       isGatewayMethodAdvertised({ hello }, "kids.activity.get") === true;
-    this.activity.setVisible(this.snapshot.activityEnabled && this.snapshot.tab === "today");
+    this.activity.setVisible(this.snapshot.activityEnabled);
     this.snapshot.voice = idleVoice();
     this.snapshot.voiceAllowed = roleScopesAllow({
       role: "operator",
@@ -216,6 +220,7 @@ export class KidsApp {
   }
 
   private retireCapabilities(): void {
+    this.petTransition.cancel();
     this.snapshot.activityEnabled = false;
     this.activity.setVisible(false);
     this.activity.disconnect();
@@ -523,6 +528,7 @@ export class KidsApp {
       }),
       this.root,
     );
+    this.petTransition.reconcile();
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
     const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
     if (current && content && showingChat) {
@@ -533,8 +539,11 @@ export class KidsApp {
     }
   }
 
-  /** Tab changes preserve context; microphone work must finish before Today can poll. */
+  /** Preserve context while moving Rocky; microphone work must finish before leaving Chat. */
   private selectTab(tab: "chat" | "today"): void {
+    if (this.disposed || tab === this.snapshot.tab) {
+      return;
+    }
     if (
       tab === "today" &&
       (!this.snapshot.activityEnabled ||
@@ -548,9 +557,13 @@ export class KidsApp {
     if (tab === "today") {
       this.transcript.suspend();
     }
-    this.snapshot.tab = tab;
-    this.activity.setVisible(tab === "today");
-    this.paint();
+    this.petTransition.move(() => {
+      this.snapshot.tab = tab;
+      this.paint();
+    });
+    if (tab === "today") {
+      void this.activity.refresh();
+    }
   }
 
   /** Record assistance, then draft the same question only if its conversation is still current. */

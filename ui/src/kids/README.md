@@ -11,7 +11,10 @@ awaits microphone permission, records, or finishes transcription, keeping its
 Stop control and progress visible. It uses the dictation owner's existing active
 and finishing states; completing or cancelling dictation makes Today available again.
 Only useful connection, reply, or voice status
-appears beneath the switch; there is no header mascot, wordmark, or idle subtitle.
+appears beneath the switch; there is no wordmark or idle subtitle.
+The Today button includes a small image of Rocky in both modes, using the same
+private scene as the Today hero. Switching moves that image between its header
+and hero positions; reduced motion switches immediately.
 The child's name and notification control remain on the right.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
@@ -44,11 +47,23 @@ to screen readers.
   Quiz operations serialize with reads; ambiguous failures retain their exact
   request ID for an explicit retry. Reconnect clears all private presentation and
   can recover that retry only after the same backing session is verified. A new
-  backing session discards it. Today polls every 15 seconds while foregrounded;
-  hiding the page, switching to Chat, disconnecting, or disposing stops its timer.
+  backing session discards it. The app polls every 15 seconds while foregrounded
+  in either mode so header Rocky stays current; hiding the page, disconnecting,
+  or disposing stops its timer. Opening Chat or Today never wakes the pet.
+  Entering Today also requests fresh progress through that same serialized owner.
   Media bytes use the authenticated `kids.activity.image` RPC, never public paths.
   State and image completions are generation-fenced; disposal revokes the URL and
   joins admitted requests before the app closes its transport.
+- `pet-transition.ts` owns one short animation on the real destination image,
+  borrowing the activity owner's URL without copying media or creating a second
+  cache. The app brackets each tab render with it. A fixed-size header wrapper
+  and Today picture preserve layout while the image temporarily uses fixed
+  positioning to cross the scroller without clipping. Completion restores styles
+  and listeners. A new tab change, changed image, Today scroll, resize, page visibility,
+  or reduced-motion change cancels immediately; ordinary same-image renders do
+  not. Disconnect and disposal cancel before activity media is revoked. Retired
+  completion callbacks cannot affect a later transition. The app retains its
+  existing microphone restrictions, draft and transcript-scroll owners.
 - `activity-view.ts` renders server-selected mood, caption, quiz and feedback.
   Hints and answers never grade locally, and reads contain no unearned answer keys.
   Feedback keeps the submitted question's heading until **Continue**, including

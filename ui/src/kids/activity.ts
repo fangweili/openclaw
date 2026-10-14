@@ -3,7 +3,7 @@
  * conversation. The plugin owns grading, clocks, streaks, and durable progress.
  * Reads and mutations serialize; one uncertain mutation retains its exact ID for
  * explicit retry. A reconnect may recover it only for the same physical session.
- * Foreground Today polls stop on hide, disconnect, or disposal. Every completion
+ * Foreground pet/activity polls stop on hide, disconnect, or disposal. Every completion
  * is generation-fenced; disposal joins admitted RPCs and releases the pet URL.
  */
 import { isGatewayProtocolResponseError } from "@openclaw/gateway-client/browser";
@@ -98,7 +98,7 @@ export class KidsActivity {
     }
   }
 
-  /** Tab selection only controls polling; opening Today never records interaction. */
+  /** Admit polling while the pet is shown in either mode; visibility never records interaction. */
   setVisible(visible: boolean): void {
     if (this.visible === visible || this.disposed) {
       return;

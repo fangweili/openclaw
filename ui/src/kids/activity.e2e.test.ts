@@ -109,6 +109,62 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     const composer = page.getByLabel("Message Rocky", { exact: true });
     await composer.fill("I found a leaf in the garden.");
     const modes = page.getByRole("navigation", { name: "Chat and today's challenges" });
+    const headerPet = modes.locator('img[src^="blob:"]');
+    await headerPet.waitFor();
+    await headerPet.evaluate((element: HTMLImageElement) => element.decode());
+    const currentPet = await headerPet.getAttribute("src");
+    expect((await gateway.getRequests("kids.activity.get")).length).toBe(1);
+    expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
+    const switchWithPetMotion = async (name: "Chat" | "Today") => {
+      const sample = await modes
+        .getByRole("button", { name, exact: true })
+        .evaluate((button: HTMLButtonElement, destination) => {
+          button.click();
+          const pet = document.querySelector<HTMLImageElement>(".kids-pet-in-transit");
+          const animation = pet?.getAnimations()[0];
+          if (!pet || !animation) {
+            throw new Error("The page switch did not animate Rocky");
+          }
+          animation.pause();
+          animation.currentTime = 110;
+          const bounds = pet.getBoundingClientRect();
+          const boundary = document
+            .querySelector(destination === "Today" ? ".kids-today" : ".kids-header")!
+            .getBoundingClientRect();
+          const x = bounds.left + bounds.width / 2;
+          const y = destination === "Today" ? bounds.top + 2 : bounds.bottom - 2;
+          // The animation is deliberately noninteractive. Temporarily admit this
+          // hit test to prove the image paints beyond its scroller/header bounds.
+          pet.style.pointerEvents = "auto";
+          const visibleAtSample = document.elementFromPoint(x, y) === pet;
+          pet.style.removeProperty("pointer-events");
+          return {
+            position: getComputedStyle(pet).position,
+            visibleAtSample,
+            crossesBoundary: destination === "Today" ? y < boundary.top : y > boundary.bottom,
+          };
+        }, name);
+      expect(sample).toEqual({ position: "fixed", visibleAtSample: true, crossesBoundary: true });
+      // Scroll restoration dispatches at the next render step. It must not cancel
+      // the reverse flight after Chat reattaches its existing transcript owner.
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+          }),
+      );
+      const movingPet = page.locator(".kids-pet-in-transit");
+      expect(await movingPet.count()).toBe(1);
+      expect(await movingPet.evaluate((element) => element.getAnimations()[0]?.playState)).toBe(
+        "paused",
+      );
+      const id = `rocky-to-${name.toLowerCase()}-motion-ipad`;
+      // Full-page capture resizes the viewport, correctly cancelling the flight.
+      await page.screenshot({ path: path.join(proof, `${id}.png`) });
+      examples.push({ id, label: `iPad — Rocky moving to ${name} (animation paused)` });
+      await movingPet.evaluate((element) => element.getAnimations()[0]!.play());
+      await movingPet.waitFor({ state: "detached" });
+    };
     const modeBounds = await modes.boundingBox();
     expect(
       await modes.getByRole("button", { name: "Chat", exact: true }).getAttribute("aria-current"),
@@ -133,15 +189,17 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       id: "header-chat-ipad",
       label: "iPad — Chat header while reading earlier messages",
     });
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await switchWithPetMotion("Today");
     await page.getByRole("heading", { name: today.activity!.title }).waitFor();
     await page.locator(".kids-pet-picture img[src^='blob:']").waitFor();
+    expect(await page.locator(".kids-pet-picture img").getAttribute("src")).toBe(currentPet);
+    await page.locator(".kids-pet-in-transit").waitFor({ state: "detached" });
     await capture("today-ready-ipad", "iPad — daily scene and saved invitation");
     expect(await modes.boundingBox()).toEqual(modeBounds);
     expect(
       await modes.getByRole("button", { name: "Today", exact: true }).getAttribute("aria-current"),
     ).toBe("page");
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await switchWithPetMotion("Chat");
     await composer.waitFor({ state: "visible" });
     expect(await thread.evaluate((element) => element.scrollTop)).toBeCloseTo(readingPosition, 0);
     expect(await composer.inputValue()).toBe("I found a leaf in the garden.");

@@ -168,6 +168,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       ${t("kids.activity.chat")}
                     </button>
                     <button
+                      class="kids-today-mode"
                       type="button"
                       aria-current=${today ? "page" : nothing}
                       aria-describedby=${todayUnavailable ? "kids-today-voice-help" : nothing}
@@ -175,7 +176,14 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       ?disabled=${!ready || calling || dictating}
                       @click=${() => actions.tab("today")}
                     >
-                      ${t("kids.activity.today")}
+                      <span class="kids-mode-pet" aria-hidden="true">
+                        <img
+                          data-kids-pet="header"
+                          src=${ready && state.activity.imageUrl ? state.activity.imageUrl : "/kids/rocky.svg"}
+                          alt=""
+                        />
+                      </span>
+                      <span>${t("kids.activity.today")}</span>
                     </button>
                   </nav>
                   ${todayUnavailable ? html`<span id="kids-today-voice-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`

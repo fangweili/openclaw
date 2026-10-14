@@ -75,14 +75,17 @@ function viewActions(): KidsViewActions {
   };
 }
 
-it("keeps useful header status and a stable switch without idle branding or interrupting calls", () => {
+it("keeps Rocky in a stable mode switch without idle copy or interrupting calls", () => {
   const root = document.createElement("div");
   const state = readyState();
   const actions = viewActions();
   const paint = () => render(renderKidsView(state, actions), root);
   try {
     paint();
-    expect(root.querySelector("header img")).toBeNull();
+    expect(root.querySelector("header img")?.getAttribute("src")).toBe("/kids/rocky.svg");
+    state.activity.imageUrl = "blob:private-current-pet";
+    paint();
+    expect(root.querySelector("header img")?.getAttribute("src")).toBe("blob:private-current-pet");
     const statusRegion = root.querySelector(".kids-status")!;
     expect(statusRegion.textContent?.trim()).toBe("");
     const modes = root.querySelector("header nav")!;
@@ -94,6 +97,9 @@ it("keeps useful header status and a stable switch without idle branding or inte
     paint();
     expect(root.querySelector("header nav")).toBe(modes);
     expect(today!.getAttribute("aria-current")).toBe("page");
+    expect(root.querySelector(".kids-pet-picture img")?.getAttribute("src")).toBe(
+      "blob:private-current-pet",
+    );
     for (const status of ["listening", "stopping"] as const) {
       state.voice = { status, active: status === "listening", detail: null, entries: [] };
       paint();
@@ -171,6 +177,7 @@ describe("kids draft privacy", () => {
     (status) => {
       const root = document.createElement("div");
       const state = readyState();
+      state.activity.imageUrl = "blob:private-current-pet";
       const actions = viewActions();
       try {
         render(renderKidsView(state, actions), root);
@@ -199,6 +206,7 @@ describe("kids draft privacy", () => {
         expect(composer.disabled).toBe(true);
         expect(root.textContent).not.toContain(privateDraft);
         expect(root.querySelector(".kids-attachment")).toBeNull();
+        expect(root.querySelector("header img")?.getAttribute("src")).toBe("/kids/rocky.svg");
         expect(root.querySelector("openclaw-toast-host")).toBeNull();
         expect(root.textContent).not.toContain("Private diagram.png");
         expect(state.draft).toBe(privateDraft);

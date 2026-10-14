@@ -1,5 +1,6 @@
 /** Browser boundary proof with a synthetic Gateway; no live conversations or providers. */
 import path from "node:path";
+import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
 import type { Browser } from "playwright";
 import { afterAll, assert, beforeAll, expect, it } from "vitest";
 import type { MockGatewayWindow } from "../test-helpers/control-ui-e2e-contract.ts";
@@ -491,6 +492,21 @@ it("records dictation into an editable draft and sends only on request", async (
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    const activity: ActivitySnapshot = {
+      now: 1000,
+      date: "2026-10-13",
+      correctStreak: 0,
+      daily: null,
+      nextActivity: null,
+      activity: null,
+      pet: {
+        state: "normal",
+        scene: null,
+        image: null,
+        lastInteractionAt: 1000,
+        excitedUntil: null,
+      },
+    };
     const gateway = await installMockGateway(page, {
       awaitInitialRoster: false,
       featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
@@ -507,23 +523,8 @@ it("records dictation into an editable draft and sends only on request", async (
           messages: [],
         },
         "kids.transcribe": { text: "Can we practice fractions?" },
-        "kids.activity.touch": {
-          snapshot: {
-            now: 1000,
-            date: "2026-10-13",
-            correctStreak: 0,
-            daily: null,
-            nextActivity: null,
-            activity: null,
-            pet: {
-              state: "normal",
-              scene: null,
-              image: null,
-              lastInteractionAt: 1000,
-              excitedUntil: null,
-            },
-          },
-        },
+        "kids.activity.get": activity,
+        "kids.activity.touch": { snapshot: activity },
       },
     });
     await page.goto(baseUrl);

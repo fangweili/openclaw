@@ -25,11 +25,12 @@ export function renderKidsActivity(state: KidsActivityState, actions: KidsActivi
   return html`<main class="kids-today" aria-label=${t("kids.activity.today")}>
     <section class=${`kids-pet kids-pet--${mood}`} aria-label=${t("kids.activity.pet")}>
       <div class="kids-pet-picture">
-        ${
-          state.imageUrl
-            ? html`<img src=${state.imageUrl} alt=${t(`kids.activity.mood.${mood}`)} />`
-            : html`<img class="kids-pet-placeholder" src="/kids/rocky.svg" alt="" />`
-        }
+        <img
+          data-kids-pet="hero"
+          class=${state.imageUrl ? "" : "kids-pet-placeholder"}
+          src=${state.imageUrl ?? "/kids/rocky.svg"}
+          alt=${state.imageUrl ? t(`kids.activity.mood.${mood}`) : ""}
+        />
       </div>
       <p class="kids-pet-caption" role="status">
         ${data?.pet.image?.caption ?? t("kids.activity.gettingReady")}

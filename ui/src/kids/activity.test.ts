@@ -190,7 +190,7 @@ describe("kids activity ownership", () => {
     expect(owner.state.canRetry).toBe(false);
   });
 
-  it("polls only visible Today and never treats opening or polling as interaction", async () => {
+  it("polls only while the app is visible and never treats opening or polling as interaction", async () => {
     vi.useFakeTimers();
     const { owner, request } = setup();
     expect(request).not.toHaveBeenCalled();

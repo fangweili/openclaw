@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { GatewayBrowserClientOptions } from "../api/gateway.ts";
@@ -110,6 +111,22 @@ beforeEach(() => {
         };
       case "chat.send":
         return { runId: params.idempotencyKey, status: "started" };
+      case "kids.activity.get":
+        return {
+          now: 1000,
+          date: "2026-10-14",
+          correctStreak: 0,
+          daily: null,
+          nextActivity: null,
+          activity: null,
+          pet: {
+            state: "normal",
+            lastInteractionAt: null,
+            excitedUntil: null,
+            scene: null,
+            image: null,
+          },
+        } satisfies ActivitySnapshot;
       default:
         throw new Error(`Unexpected request: ${method}`);
     }
@@ -125,6 +142,8 @@ it("rejects Today intents until admitted microphone work has finished", async ()
     await vi.advanceTimersByTimeAsync(0);
     await drafts.settle();
     expect(fixture.state!.activityEnabled).toBe(true);
+    const reads = fixture.request.mock.calls.filter(([method]) => method === "kids.activity.get");
+    expect(reads).toHaveLength(1);
     fixture.actions!.dictate();
     await vi.advanceTimersByTimeAsync(0);
     fixture.actions!.tab("today");
@@ -132,9 +151,9 @@ it("rejects Today intents until admitted microphone work has finished", async ()
     fixture.recorders[0]!.publish({ active: false, finishing: true, detail: null });
     fixture.actions!.tab("today");
     expect(fixture.state!.tab).toBe("chat");
-    expect(fixture.request.mock.calls.some(([method]) => method === "kids.activity.get")).toBe(
-      false,
-    );
+    expect(
+      fixture.request.mock.calls.filter(([method]) => method === "kids.activity.get"),
+    ).toHaveLength(reads.length);
   } finally {
     await app.dispose();
   }
