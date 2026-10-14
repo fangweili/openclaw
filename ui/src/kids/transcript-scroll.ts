@@ -120,6 +120,11 @@ export class KidsTranscriptScroll {
     this.restorePosition();
   }
 
+  /** Preserve reading position while another tab hides the transcript; reattach afterRender. */
+  suspend(): void {
+    this.detach();
+  }
+
   /** Idempotently remove listeners and observer; later calls have no effects. */
   dispose(): void {
     if (this.disposed) {

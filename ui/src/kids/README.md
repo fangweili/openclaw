@@ -2,6 +2,13 @@
 
 This separate frontend opens one child's verified tutor conversation. V1 includes
 text, photos, short videos, voice dictation, live voice, and private notifications.
+**Today** offers three short, saved daily challenges and Rocky; **Chat** retains
+the same tutor conversation. Switching tabs preserves unsent text and attachments.
+The header's labeled **Chat / Today** switch stays in the same place in both modes.
+During a live or finishing voice call, Chat stays selected and Today is disabled
+with an accessible explanation. Only useful connection, reply, or voice status
+appears beneath the switch; there is no header mascot, wordmark, or idle subtitle.
+The child's name and notification control remain on the right.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
@@ -15,11 +22,48 @@ to screen readers.
   lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
   It starts and disposes the document's touch-gesture owner with the app.
+  It also binds the activity projection to the admitted physical conversation.
+  Today and activity requests are enabled only when the current connection
+  advertises the optional `kids.activity.get` capability; otherwise the app stays
+  chat-only. Reconnect clears and re-evaluates this capability.
+  Only accepted text and final user voice turns record pet interaction; opening
+  the page, tab changes, scrolling, and assistant messages do not.
   A retained draft stays hidden until that conversation is ready again; binding a
   different verified profile or backing session binds a separate draft.
   It identifies as the canonical WebChat UI, requiring an approved signed browser
   device even when Tailscale authenticates the person. The Control UI's Tailscale
   pairing bypass cannot establish the durable device authority used by Web Push.
+- `activity.ts` owns a bounded memory-only copy of the plugin's current activity,
+  one submitted-question feedback panel with its original heading, one uncertain
+  operation, and one pet
+  object URL. The plugin alone owns durable progress, grading, clocks and streaks.
+  Quiz operations serialize with reads; ambiguous failures retain their exact
+  request ID for an explicit retry. Reconnect clears all private presentation and
+  can recover that retry only after the same backing session is verified. A new
+  backing session discards it. Today polls every 15 seconds while foregrounded;
+  hiding the page, switching to Chat, disconnecting, or disposing stops its timer.
+  Media bytes use the authenticated `kids.activity.image` RPC, never public paths.
+  State and image completions are generation-fenced; disposal revokes the URL and
+  joins admitted requests before the app closes its transport.
+- `activity-view.ts` renders server-selected mood, caption, quiz and feedback.
+  Hints and answers never grade locally, and reads contain no unearned answer keys.
+  Feedback keeps the submitted question's heading until **Continue**, including
+  when finishing yesterday's quiz reveals today's invitation on the server.
+  Progress is hidden during feedback; Continue displays the latest server snapshot.
+  Daily counts describe the latest prepared batch, separately from question progress.
+  Completing a challenge offers **Another challenge** or **Chat with Rocky**;
+  all three finished shows **All done for today**. Extra challenges are optional.
+  Reading never advances the selected challenge: starting the advertised next ID
+  uses the same serialized, idempotent start operation. A started unfinished
+  challenge carries into the next day, while unopened extras are replaced by the
+  new daily batch. The plugin owns selection and carryover; the UI renders its facts.
+  A wrong answer offers a friendly retry. **Help me, Rocky** first records a hint
+  so future correctness is accurately marked assisted, then appends that same
+  question to the existing draft for review. It never sends automatically or
+  starts another session. A failed or retired assistance request cannot switch
+  conversations or alter a newer draft. The plugin supplies authoritative activity context to
+  the tutor. Gentle CSS motion respects reduced-motion preferences. Polling can
+  display a time-based mood change up to 15 seconds after the server's threshold.
 - `conversation.ts` asks `users.self` and the access-filtered `agents.list`. Only a
   verified non-shared profile with exactly one accessible agent is admitted. It
   derives one stable key from those server facts and asks the Gateway to create or
@@ -158,8 +202,8 @@ pnpm build
 pnpm --dir ui exec vite build --config vite.kids.config.ts
 mkdir -p dist/extensions/kids-ui/assets
 cp -R extensions/kids-ui/assets/. dist/extensions/kids-ui/assets/
-node scripts/run-vitest.mjs run --config test/vitest/vitest.ui.config.ts ui/src/kids/conversation.test.ts ui/src/kids/voice.test.ts ui/src/kids/notifications.test.ts
-node scripts/run-vitest.mjs run --config test/vitest/vitest.ui-e2e.config.ts --configLoader runner ui/src/kids/app.e2e.test.ts
+node scripts/run-vitest.mjs run --config test/vitest/vitest.ui.config.ts ui/src/kids/conversation.test.ts ui/src/kids/voice.test.ts ui/src/kids/notifications.test.ts ui/src/kids/activity.test.ts
+node scripts/run-vitest.mjs run --config test/vitest/vitest.ui-e2e.config.ts --configLoader runner ui/src/kids/app.e2e.test.ts ui/src/kids/activity.e2e.test.ts
 ```
 
 Build the Gateway before the kids bundle. Its `dist/build-info.json` supplies the

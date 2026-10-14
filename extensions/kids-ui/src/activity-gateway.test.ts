@@ -1,0 +1,206 @@
+import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { describe, expect, it, vi } from "vitest";
+import type { ActivityChildBinding } from "./activity-contract.js";
+import { registerKidsActivityGateway } from "./activity-gateway.js";
+import type { ActivityOwner } from "./activity-service.js";
+
+type Handler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
+type Request = GatewayRequestHandlerOptions;
+const child: ActivityChildBinding = {
+  childId: "child",
+  agentId: "tutor",
+  sessionKey: "agent:tutor:main",
+  timeZone: "America/Chicago",
+};
+function sessionAuthority(
+  target = { agentId: child.agentId, sessionKey: child.sessionKey, sessionId: "session" },
+  assertCurrent = () => {},
+): NonNullable<Request["sessionAccessAuthority"]> {
+  const retained = () => ({ signal: new AbortController().signal, assertCurrent, release() {} });
+  return {
+    target,
+    sandboxRequired: false,
+    assertCurrent,
+    retain: retained,
+    retainSession: retained,
+    release() {},
+  };
+}
+function harness() {
+  const methods = new Map<
+    string,
+    { handler: Handler; options: Parameters<OpenClawPluginApi["registerGatewayMethod"]>[2] }
+  >();
+  const owner = {
+    get: vi.fn(async () => ({ child: "private" })),
+    mutate: vi.fn(async () => ({ saved: true })),
+  };
+  const readImage = vi.fn(async () => ({ mimeType: "image/webp", base64: "aW1hZ2U=" }));
+  const api = {
+    registerGatewayMethod: (
+      name: string,
+      handler: Handler,
+      options: Parameters<OpenClawPluginApi["registerGatewayMethod"]>[2],
+    ) => methods.set(name, { handler, options }),
+  } as unknown as OpenClawPluginApi;
+  registerKidsActivityGateway(api, owner as unknown as ActivityOwner, {
+    children: [child],
+    readImage,
+  });
+  function invoke(
+    method: string,
+    params: Record<string, unknown>,
+    overrides: Partial<Request> = {},
+  ) {
+    const registered = methods.get(`kids.activity.${method}`)!;
+    const respond = vi.fn();
+    const assertCurrent = vi.fn();
+    const request: Request = {
+      req: { type: "req", id: "request", method: `kids.activity.${method}` },
+      params: { sessionKey: child.sessionKey, ...params },
+      client: {
+        connId: "connection",
+        connect: {
+          minProtocol: 3,
+          maxProtocol: 3,
+          role: "operator",
+          scopes: ["operator.sessions.write"],
+          client: { id: "openclaw-control-ui", version: "test", platform: "web", mode: "webchat" },
+        },
+      },
+      respond,
+      context: {} as Request["context"],
+      isWebchatConnect: () => true,
+      // Plugin sessionAccess methods receive this capability, not the core
+      // chat/lifecycle mutation authorization (request-authorization.ts).
+      sessionAccessAuthority: sessionAuthority(undefined, assertCurrent),
+      ...overrides,
+    };
+    return { done: registered.handler(request), respond, assertCurrent, request };
+  }
+  return { methods, owner, readImage, invoke };
+}
+describe("activity RPC session boundary", () => {
+  it("registers every operation with existing own-session participation policy", () => {
+    const { methods } = harness();
+    expect(methods.size).toBe(6);
+    for (const { options } of methods.values()) {
+      expect(options).toEqual({
+        scope: "operator.write",
+        sessionAccess: { mode: "write", allowOwnSessionScope: true },
+      });
+    }
+  });
+  it("uses the host-admitted child and rejects a sibling target or missing admission", async () => {
+    const test = harness();
+    const admitted = test.invoke("get", { childId: "sibling" });
+    await admitted.done;
+    expect(admitted.request.sessionMutationAuthorization).toBeUndefined();
+    expect(admitted.respond).toHaveBeenCalledWith(true, { child: "private" });
+    expect(test.owner.get).toHaveBeenCalledWith("child", expect.any(Function));
+    for (const authorization of [
+      undefined,
+      sessionAuthority({
+        agentId: "sibling",
+        sessionKey: "agent:sibling:main",
+        sessionId: "other",
+      }),
+    ]) {
+      const denied = test.invoke("get", {}, { sessionAccessAuthority: authorization });
+      await denied.done;
+      expect(denied.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN" }),
+      );
+    }
+    expect(test.owner.get).toHaveBeenCalledOnce();
+  });
+  it("normalizes a mutation without trusting client clocks or grading claims", async () => {
+    const test = harness();
+    const call = test.invoke("answer", {
+      requestId: "request",
+      activityId: "daily",
+      questionId: "q1",
+      optionId: "a",
+      correct: true,
+      now: 999999,
+    });
+    await call.done;
+    expect(test.owner.mutate).toHaveBeenCalledWith(
+      "child",
+      {
+        kind: "answer",
+        requestId: "request",
+        activityId: "daily",
+        questionId: "q1",
+        optionId: "a",
+      },
+      expect.any(Function),
+    );
+  });
+  it("discards private image bytes after authority is revoked while reading", async () => {
+    const test = harness();
+    const pending = Promise.withResolvers<{ mimeType: string; base64: string }>();
+    test.readImage.mockReturnValue(pending.promise);
+    let current = true;
+    const call = test.invoke(
+      "image",
+      { imageId: "secret-image" },
+      {
+        sessionAccessAuthority: sessionAuthority(undefined, () => {
+          if (!current) {
+            throw new Error("revoked");
+          }
+        }),
+      },
+    );
+    current = false;
+    pending.resolve({ mimeType: "image/webp", base64: "private" });
+    await call.done;
+    expect(call.respond).toHaveBeenCalledWith(false, undefined, expect.anything());
+    expect(JSON.stringify(call.respond.mock.calls)).not.toContain("private");
+  });
+
+  it("distinguishes rejected input from an uncertain write outcome", async () => {
+    const test = harness();
+    const malformed = test.invoke("answer", { requestId: "one" });
+    await malformed.done;
+    expect(malformed.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "INVALID_REQUEST" }),
+    );
+    test.owner.mutate.mockRejectedValueOnce(
+      Object.assign(new Error("This question was already answered."), {
+        code: "KIDS_ACTIVITY_INVALID",
+      }),
+    );
+    const stale = test.invoke("answer", {
+      requestId: "two",
+      activityId: "a",
+      questionId: "q",
+      optionId: "x",
+    });
+    await stale.done;
+    expect(stale.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "INVALID_REQUEST" }),
+    );
+    test.owner.mutate.mockRejectedValueOnce(new Error("Worker response lost after COMMIT"));
+    const uncertain = test.invoke("answer", {
+      requestId: "three",
+      activityId: "a",
+      questionId: "q",
+      optionId: "x",
+    });
+    await uncertain.done;
+    expect(uncertain.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "UNAVAILABLE" }),
+    );
+  });
+});

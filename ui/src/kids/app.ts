@@ -18,7 +18,9 @@ import { createApplicationConfigCapability } from "../app/config.ts";
 import { CONTROL_UI_BUILD_INFO } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
 import { registerKidsEnglish } from "../i18n/locales/en-kids.ts";
+import { isGatewayMethodAdvertised } from "../lib/gateway-methods.ts";
 import { insertComposerDictation } from "../pages/chat/composer-dictation.ts";
+import { KidsActivity, emptyKidsActivity } from "./activity.ts";
 import { KidsAttachments } from "./attachments.ts";
 import { KidsConversation, type KidsConversationState } from "./conversation.ts";
 import { KidsDictation } from "./dictation.ts";
@@ -44,6 +46,7 @@ const idleVoice = (): KidsVoiceState => ({
 export class KidsApp {
   private readonly client: GatewayBrowserClient;
   private readonly conversation: KidsConversation;
+  private readonly activity: KidsActivity;
   private readonly uploads = createApplicationConfigCapability({ resourceBasePath: "" });
   private readonly attachments: KidsAttachments;
   private readonly draft: KidsDraft;
@@ -103,6 +106,10 @@ export class KidsApp {
       onGap: () => void this.conversation.refresh(),
     });
     this.media = new KidsHistoryMedia(this.client);
+    this.activity = new KidsActivity(this.client, (activity) => {
+      this.snapshot.activity = activity;
+      this.paint();
+    });
     this.conversation = new KidsConversation(
       this.client,
       (conversation) => this.onConversation(conversation),
@@ -119,6 +126,9 @@ export class KidsApp {
       () => void this.conversation.loadNewer(),
     );
     this.snapshot = {
+      tab: "chat",
+      activityEnabled: false,
+      activity: emptyKidsActivity(),
       conversation: this.conversation.state,
       voice: idleVoice(),
       dictation: idleDictation(),
@@ -161,6 +171,7 @@ export class KidsApp {
       this.conversation.dispose(),
       this.draft.dispose(),
       this.media.dispose(),
+      this.activity.dispose(),
     ]).then(() => {
       this.client.stop();
     });
@@ -183,17 +194,31 @@ export class KidsApp {
       }
     });
     this.snapshot.connectionError = null;
+    this.snapshot.activityEnabled =
+      isGatewayMethodAdvertised({ hello }, "kids.activity.get") === true;
+    this.activity.setVisible(this.snapshot.activityEnabled && this.snapshot.tab === "today");
     this.snapshot.voice = idleVoice();
     this.snapshot.voiceAllowed = roleScopesAllow({
       role: "operator",
       requestedScopes: ["operator.talk"],
       allowedScopes: hello.auth?.scopes ?? [],
     });
-    this.voice = new KidsVoice(this.client, (voice) => void this.onVoice(voice, generation));
+    this.voice = new KidsVoice(
+      this.client,
+      (voice) => void this.onVoice(voice, generation),
+      () => {
+        if (!this.disposed && generation === this.generation && this.snapshot.activityEnabled) {
+          this.activity.touch("voice");
+        }
+      },
+    );
     await this.conversation.connect(hello);
   }
 
   private retireCapabilities(): void {
+    this.snapshot.activityEnabled = false;
+    this.activity.setVisible(false);
+    this.activity.disconnect();
     this.retireDictation();
     this.configAbort?.abort();
     this.configAbort = null;
@@ -258,6 +283,12 @@ export class KidsApp {
         this.boundSession = binding;
       }
       if (conversation.status === "ready") {
+        if (this.snapshot.activityEnabled) {
+          this.activity.bind({
+            sessionKey: conversation.sessionKey,
+            sessionId: conversation.sessionId,
+          });
+        }
         this.media.bind({
           agentId: conversation.agentId,
           sessionKey: conversation.sessionKey,
@@ -338,6 +369,9 @@ export class KidsApp {
       return;
     }
     this.attachments.accepted(ids);
+    if (this.snapshot.activityEnabled) {
+      this.activity.touch("chat");
+    }
     // Conversation publishes its verified binding before acknowledging. The
     // draft owner retains this clear even if storage finishes after disconnect.
     this.draft.accepted(text);
@@ -438,10 +472,27 @@ export class KidsApp {
       return;
     }
     const chat = this.snapshot.conversation;
-    this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+    const showingChat =
+      !this.snapshot.activityEnabled ||
+      this.snapshot.tab === "chat" ||
+      this.snapshot.voice.active ||
+      this.snapshot.voice.status === "stopping";
+    if (showingChat) {
+      this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+    }
     this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
       renderKidsView(this.snapshot, {
+        tab: (tab) => this.selectTab(tab),
+        activity: {
+          start: () => void this.activity.act("start"),
+          answer: (optionId) => void this.activity.act("answer", optionId),
+          hint: () => void this.activity.act("hint"),
+          next: () => this.activity.continue(),
+          retry: () => void this.activity.retry(),
+          help: () => void this.activityHelp(),
+          chat: () => this.selectTab("chat"),
+        },
         draft: (value) => {
           this.draft.update(value);
         },
@@ -472,11 +523,58 @@ export class KidsApp {
     );
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
     const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
-    if (current && content) {
+    if (current && content && showingChat) {
       this.transcript.afterRender(current, content);
       if (forceScroll) {
         this.transcript.jumpToLatest();
       }
     }
+  }
+
+  /** Tab changes preserve the existing composer and conversation; only Today polls. */
+  private selectTab(tab: "chat" | "today"): void {
+    if (tab === "today" && !this.snapshot.activityEnabled) {
+      return;
+    }
+    if (tab === "today") {
+      this.transcript.suspend();
+    }
+    this.snapshot.tab = tab;
+    this.activity.setVisible(tab === "today");
+    this.paint();
+  }
+
+  /** Record assistance, then draft the same question only if its conversation is still current. */
+  private async activityHelp(): Promise<void> {
+    const activity = this.activity.state.snapshot?.activity;
+    const question = activity?.currentQuestion;
+    if (!activity || !question || !this.draft.state.ready) {
+      return;
+    }
+    const generation = this.generation;
+    const binding = this.boundSession;
+    await this.activity.act("hint");
+    const current = this.activity.state;
+    if (
+      this.disposed ||
+      generation !== this.generation ||
+      binding !== this.boundSession ||
+      this.snapshot.tab !== "today" ||
+      !this.draft.state.ready ||
+      current.error ||
+      current.canRetry ||
+      current.snapshot?.activity?.id !== activity.id ||
+      current.snapshot.activity.currentQuestion?.id !== question.id ||
+      current.snapshot.activity.currentQuestion.hint === null
+    ) {
+      return;
+    }
+    const message = t("kids.activity.helpMessage", {
+      title: activity.title,
+      question: question.prompt,
+    });
+    this.draft.update([this.snapshot.draft.trim(), message].filter(Boolean).join("\n\n"));
+    this.selectTab("chat");
+    this.root.querySelector<HTMLTextAreaElement>("#kids-message")?.focus();
   }
 }

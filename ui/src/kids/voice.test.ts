@@ -8,7 +8,7 @@ import { createTestGatewayClient } from "../test-helpers/gateway-client.ts";
 const transport = vi.hoisted(() => ({
   contexts: [] as RealtimeTalkTransportContext[],
   start: vi.fn(async () => "ready" as const),
-  stop: vi.fn(async () => undefined),
+  stop: vi.fn<() => Promise<void>>(async () => undefined),
 }));
 
 vi.mock("../pages/chat/talk/transport.runtime.ts", () => ({
@@ -47,7 +47,8 @@ describe("kids voice owner", () => {
     const request = vi.fn(async (method: string) =>
       method === "talk.client.create" ? allocation : { ok: true },
     );
-    const voice = new KidsVoice(createTestGatewayClient(request), vi.fn());
+    const userTurn = vi.fn();
+    const voice = new KidsVoice(createTestGatewayClient(request), vi.fn(), userTurn);
     try {
       await voice.start(sessionKey);
       expect(request).toHaveBeenCalledWith(
@@ -56,8 +57,33 @@ describe("kids voice owner", () => {
         { timeoutMs: 30_000 },
       );
       const callbacks = transport.contexts[0]!.callbacks;
-      callbacks.onTranscript?.({ role: "user", text: "Help me with fractions", final: true });
+      callbacks.onTranscriptItem?.({
+        type: "created",
+        itemId: "utterance-one",
+        previousItemId: null,
+        role: "user",
+      });
+      callbacks.onTranscript?.({
+        role: "user",
+        text: "Help me",
+        final: false,
+        itemId: "utterance-one",
+      });
+      expect(userTurn).not.toHaveBeenCalled();
+      callbacks.onTranscript?.({
+        role: "user",
+        text: "Help me with fractions",
+        final: true,
+        itemId: "utterance-one",
+      });
+      callbacks.onTranscript?.({
+        role: "user",
+        text: "Help me with fractions",
+        final: true,
+        itemId: "utterance-one",
+      });
       callbacks.onTranscript?.({ role: "assistant", text: "Let's try one together.", final: true });
+      expect(userTurn).toHaveBeenCalledTimes(1);
       expect(voice.state).toMatchObject({ active: true, status: "listening" });
       expect(voice.state.entries.map((entry) => entry.text)).toEqual([
         "Help me with fractions",
@@ -73,6 +99,25 @@ describe("kids voice owner", () => {
         expect.objectContaining({ timeoutMs: 30_000 }),
       );
       expect(voice.state).toMatchObject({ active: false, status: "idle" });
+    } finally {
+      await voice.dispose();
+    }
+  });
+
+  it("reports a final user turn even when an assistant caption closed its provisional row", async () => {
+    const request = vi.fn(async (method: string) =>
+      method === "talk.client.create" ? allocation : { ok: true },
+    );
+    const userTurn = vi.fn();
+    const voice = new KidsVoice(createTestGatewayClient(request), vi.fn(), userTurn);
+    try {
+      await voice.start(sessionKey);
+      const callbacks = transport.contexts[0]!.callbacks;
+      callbacks.onTranscript?.({ role: "user", text: "Two", final: false });
+      callbacks.onTranscript?.({ role: "assistant", text: "Let's explore", final: false });
+      expect(userTurn).not.toHaveBeenCalled();
+      callbacks.onTranscript?.({ role: "user", text: "Two plus two", final: true });
+      expect(userTurn).toHaveBeenCalledTimes(1);
     } finally {
       await voice.dispose();
     }

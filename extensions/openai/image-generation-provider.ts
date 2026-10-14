@@ -38,7 +38,6 @@ const DEFAULT_OPENAI_CODEX_IMAGE_RESPONSES_MODEL = OPENAI_CODEX_DEFAULT_MODEL.sl
   OPENAI_MODEL_REF_PREFIX.length,
 );
 const OPENAI_CODEX_IMAGE_INSTRUCTIONS = "You are an image generation assistant.";
-const OPENAI_TRANSPARENT_BACKGROUND_IMAGE_MODEL = "gpt-image-1.5";
 const DEFAULT_OPENAI_IMAGE_TIMEOUT_MS = 180_000;
 const DEFAULT_AZURE_OPENAI_IMAGE_TIMEOUT_MS = 600_000;
 const DEFAULT_OUTPUT_MIME = "image/png";
@@ -65,7 +64,7 @@ const OPENAI_IMAGE_25_QUALITIES = ["low", "medium", "high", "xhigh", "max", "aut
 const OPENAI_IMAGE_MODELS = [
   DEFAULT_OPENAI_IMAGE_MODEL,
   ...OPENAI_IMAGE_25_MODELS,
-  OPENAI_TRANSPARENT_BACKGROUND_IMAGE_MODEL,
+  "gpt-image-1.5",
   "gpt-image-1",
   "gpt-image-1-mini",
 ] as const;
@@ -185,21 +184,6 @@ function resolveOpenAIImageOptions(req: OpenAIImageRequest): Record<string, unkn
     ...(openai?.moderation !== undefined ? { moderation: openai.moderation } : {}),
     ...(outputCompression !== undefined ? { output_compression: outputCompression } : {}),
   };
-}
-
-function resolveOpenAIImageRequestModel(
-  req: Parameters<ImageGenerationProvider["generateImage"]>[0],
-  options?: { allowTransparentDefaultReroute?: boolean },
-): string {
-  const model = req.model || DEFAULT_OPENAI_IMAGE_MODEL;
-  if (
-    options?.allowTransparentDefaultReroute === true &&
-    model === DEFAULT_OPENAI_IMAGE_MODEL &&
-    (req.providerOptions?.openai?.background ?? req.background) === "transparent"
-  ) {
-    return OPENAI_TRANSPARENT_BACKGROUND_IMAGE_MODEL;
-  }
-  return model;
 }
 
 function resolveNativeOpenAIImageSizesForModel(model: string): readonly string[] {
@@ -478,9 +462,7 @@ async function logCodexImageAuthSelected(params: {
 }) {
   const { createSubsystemLogger } = await import("openclaw/plugin-sdk/logging-core");
   const log = createSubsystemLogger("image-generation/openai");
-  const model = resolveOpenAIImageRequestModel(params.req, {
-    allowTransparentDefaultReroute: true,
-  });
+  const model = params.req.model || DEFAULT_OPENAI_IMAGE_MODEL;
   log.info(
     `image auth selected: provider=openai mode=${sanitizeLogValue(
       params.authMode,
@@ -549,9 +531,8 @@ async function generateOpenAICodexImage(params: {
       transport: "http",
     });
 
-  const model = resolveOpenAIImageRequestModel(req, {
-    allowTransparentDefaultReroute: true,
-  });
+  // Background requests preserve the configured model, including preview support.
+  const model = req.model || DEFAULT_OPENAI_IMAGE_MODEL;
   const count = resolveIntegerOption(req.count, 1, { min: 1, max: OPENAI_MAX_IMAGE_RESULTS });
   const sizeResolution = resolveOpenAIImageRequestSize(
     {
@@ -827,9 +808,7 @@ export function buildOpenAIImageGenerationProvider(
           transport: "http",
         });
 
-      const model = resolveOpenAIImageRequestModel(req, {
-        allowTransparentDefaultReroute: publicOpenAIBaseUrl,
-      });
+      const model = req.model || DEFAULT_OPENAI_IMAGE_MODEL;
       const count = resolveIntegerOption(req.count, 1, { min: 1, max: OPENAI_MAX_IMAGE_RESULTS });
       const timeoutMs = resolveOpenAIImageTimeoutMs(req.timeoutMs, { isAzure });
       const sizeResolution = isValidFlexibleOpenAIImageSize(model, req.size)

@@ -1,14 +1,104 @@
 {
   "id": "kids-ui",
   "name": "Kids Tutor",
-  "description": "Serves a minimal tutor interface at /kids/ with private recorded dictation",
-  "categories": ["infrastructure"],
+  "description": "A private tutor interface with saved daily activities and pet scenes",
+  "categories": [
+    "infrastructure"
+  ],
   "activation": {
     "onStartup": true
   },
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "activities": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "childId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "agentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "sessionKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "timeZone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "preparationJobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "preparationAgentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                }
+              },
+              "required": [
+                "childId",
+                "agentId",
+                "sessionKey",
+                "timeZone",
+                "preparationJobId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "evidenceJobs": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "agentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                }
+              },
+              "required": [
+                "agentId",
+                "jobId"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "children"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
   }
 }

@@ -1,0 +1,660 @@
+/**
+ * Sole SQLite owner for published quizzes, grading evidence, idempotency receipts,
+ * and pet clocks. Runs only in the SQLite broker worker. Admission creates schema
+ * once; all state changes use one synchronous transaction with host authority at
+ * BEGIN/COMMIT. Each immutable day owns three quizzes and one scene pair; quiz
+ * progress is independent. Completing a quiz offers an explicit next start. An
+ * unfinished quiz survives newer days; unstarted old extras cease being offered.
+ * Ninety-day history and the newest 512 receipts are retained. Day-level pruning
+ * keeps all definitions while any evidence is recent or a quiz is unfinished.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
+import type {
+  ActivityFeedback,
+  ActivityMutation,
+  ActivityResult,
+  ActivitySnapshot,
+} from "@openclaw/kids-activity-contract";
+import { configureSqliteConnectionPragmas } from "openclaw/plugin-sdk/plugin-state-runtime";
+import {
+  executeSqliteQuerySync,
+  executeSqliteQueryTakeFirstSync,
+  getNodeSqliteKysely,
+  openNodeSqliteDatabase,
+  requestSqliteWorkerOperationAdmission,
+  runSqliteImmediateTransactionSync,
+  type SqliteWorkerBackend,
+  type SqliteWorkerCommand,
+} from "openclaw/plugin-sdk/sqlite-worker-runtime";
+import {
+  ACTIVITY_BORED_MS,
+  ACTIVITY_EXCITED_MS,
+  ACTIVITY_SLEEP_MS,
+  ACTIVITY_STREAK_TARGET,
+  type ActivityDefinition,
+  type ActivityEvidence,
+  type ActivityAttemptEvidence,
+  type ActivityQuestionEvidence,
+  type DailyActivityBundle,
+} from "./activity-contract.js";
+import { ActivityInputError } from "./activity-error.js";
+import type { ActivityStoreOperations, ActivityStoreTarget } from "./activity-store-contract.js";
+import { validateDailyActivityBundle } from "./activity-validation.js";
+
+type PetRow = {
+  child_id: string;
+  active_id: string | null;
+  last_interaction: number | null;
+  excited_until: number | null;
+  streak: number;
+};
+type Progress = {
+  started: boolean;
+  completed: boolean;
+  completedAt: number | null;
+  index: number;
+  questions: ActivityQuestionEvidence[];
+  attempts: ActivityAttemptEvidence[];
+};
+type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText">;
+type DayRow = { child_id: string; date: string; created_at: number; content: string };
+type ActivityRow = {
+  child_id: string;
+  activity_id: string;
+  date: string;
+  ordinal: number;
+  updated_at: number;
+  definition: string;
+  progress: string;
+};
+type ReceiptRow = {
+  child_id: string;
+  request_id: string;
+  created_at: number;
+  input: string;
+  feedback: string | null;
+};
+type ActivityDatabase = {
+  kids_pet: PetRow;
+  kids_day: DayRow;
+  kids_activity: ActivityRow;
+  kids_request: ReceiptRow;
+};
+const HISTORY_MS = 90 * 24 * 60 * 60_000;
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS kids_pet (
+    child_id TEXT PRIMARY KEY, active_id TEXT, last_interaction INTEGER,
+    excited_until INTEGER, streak INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS kids_day (
+    child_id TEXT NOT NULL, date TEXT NOT NULL, created_at INTEGER NOT NULL, content TEXT NOT NULL,
+    PRIMARY KEY(child_id,date)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS kids_activity (
+    child_id TEXT NOT NULL, activity_id TEXT NOT NULL, date TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL, definition TEXT NOT NULL, progress TEXT NOT NULL,
+    PRIMARY KEY(child_id, activity_id), UNIQUE(child_id,date,ordinal),
+    FOREIGN KEY(child_id,date) REFERENCES kids_day(child_id,date) ON DELETE CASCADE
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS kids_request (
+    child_id TEXT NOT NULL, request_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    input TEXT NOT NULL, feedback TEXT, PRIMARY KEY(child_id,request_id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS kids_request_age ON kids_request(child_id,created_at);
+`;
+
+function readDay(row: DayRow): DayContent {
+  // SAFETY: publish() validates schema-v1 day content before its sole immutable write.
+  return JSON.parse(row.content) as DayContent;
+}
+function readActivity(row: ActivityRow): ActivityDefinition {
+  // SAFETY: publish() validates all three definitions before atomically writing them.
+  return JSON.parse(row.definition) as ActivityDefinition;
+}
+function readProgress(row: ActivityRow): Progress {
+  // SAFETY: only this worker writes progress, through typed initialProgress() and mutate().
+  return JSON.parse(row.progress) as Progress;
+}
+function initialProgress(activity: ActivityDefinition): Progress {
+  return {
+    started: false,
+    completed: false,
+    completedAt: null,
+    index: 0,
+    attempts: [],
+    questions: activity.questions.map((q) => ({
+      questionId: q.id,
+      prompt: q.prompt,
+      attempts: 0,
+      hintUsed: false,
+      correct: false,
+      independent: false,
+    })),
+  };
+}
+
+class ActivityDatabaseOwner {
+  private readonly query;
+  constructor(private readonly db: DatabaseSync) {
+    this.query = getNodeSqliteKysely<ActivityDatabase>(db);
+  }
+
+  private pet(childId: string): PetRow {
+    return (
+      executeSqliteQueryTakeFirstSync(
+        this.db,
+        this.query.selectFrom("kids_pet").selectAll().where("child_id", "=", childId),
+      ) ?? {
+        child_id: childId,
+        active_id: null,
+        last_interaction: null,
+        excited_until: null,
+        streak: 0,
+      }
+    );
+  }
+  private byId(childId: string, id: string): ActivityRow | undefined {
+    return executeSqliteQueryTakeFirstSync(
+      this.db,
+      this.query
+        .selectFrom("kids_activity")
+        .selectAll()
+        .where("child_id", "=", childId)
+        .where("activity_id", "=", id),
+    );
+  }
+  private dayActivities(childId: string, date: string): ActivityRow[] {
+    return executeSqliteQuerySync(
+      this.db,
+      this.query
+        .selectFrom("kids_activity")
+        .selectAll()
+        .where("child_id", "=", childId)
+        .where("date", "=", date)
+        .orderBy("ordinal"),
+    ).rows;
+  }
+  private latestDay(target: ActivityStoreTarget): DayRow | undefined {
+    return executeSqliteQueryTakeFirstSync(
+      this.db,
+      this.query
+        .selectFrom("kids_day")
+        .selectAll()
+        .where("child_id", "=", target.childId)
+        .where("date", "<=", target.date)
+        .orderBy("date", "desc")
+        .limit(1),
+    );
+  }
+  private current(
+    target: ActivityStoreTarget,
+    pet: PetRow,
+    latest: ActivityRow[],
+  ): ActivityRow | undefined {
+    const active = pet.active_id ? this.byId(target.childId, pet.active_id) : undefined;
+    if (active && (!readProgress(active).completed || active.date === latest[0]?.date)) {
+      return active;
+    }
+    return latest[0];
+  }
+  private next(current: ActivityRow | undefined, latest: ActivityRow[]): ActivityRow | undefined {
+    if (!current || !readProgress(current).completed || current.date !== latest[0]?.date) {
+      return undefined;
+    }
+    return latest.find((row) => row.ordinal > current.ordinal && !readProgress(row).started);
+  }
+
+  /** Read projections never reveal grading keys or hints not yet requested. */
+  snapshot(target: ActivityStoreTarget): ActivitySnapshot {
+    const pet = this.pet(target.childId);
+    const latest = this.latestDay(target);
+    const activities = latest ? this.dayActivities(target.childId, latest.date) : [];
+    const row = this.current(target, pet, activities);
+    const next = this.next(row, activities);
+    const idle =
+      pet.last_interaction === null
+        ? ACTIVITY_SLEEP_MS
+        : Math.max(0, target.now - pet.last_interaction);
+    const state =
+      pet.excited_until !== null && pet.excited_until > target.now
+        ? "excited"
+        : idle >= ACTIVITY_SLEEP_MS
+          ? "sleeping"
+          : idle >= ACTIVITY_BORED_MS
+            ? "bored"
+            : "normal";
+    const daily = latest ? readDay(latest) : undefined;
+    const image =
+      state === "bored" || state === "sleeping"
+        ? {
+            imageId: state,
+            caption:
+              daily?.stateText[state] ??
+              (state === "sleeping"
+                ? "Resting until our next adventure."
+                : "Wondering what we will explore next."),
+          }
+        : (daily?.scene[state] ?? {
+            imageId: "reference",
+            caption: "Ready for our next adventure.",
+          });
+    const snapshot: ActivitySnapshot = {
+      now: target.now,
+      date: target.date,
+      pet: {
+        state,
+        scene: daily?.scene ?? null,
+        image,
+        lastInteractionAt: pet.last_interaction,
+        excitedUntil:
+          pet.excited_until !== null && pet.excited_until > target.now ? pet.excited_until : null,
+      },
+      correctStreak: pet.streak,
+      daily: latest
+        ? {
+            date: latest.date,
+            total: activities.length,
+            completed: activities.filter((entry) => readProgress(entry).completed).length,
+          }
+        : null,
+      nextActivity: next ? { id: next.activity_id, title: readActivity(next).title } : null,
+      activity: null,
+    };
+    if (row) {
+      const activity = readActivity(row);
+      const progress = readProgress(row);
+      const question = progress.completed ? undefined : activity.questions[progress.index];
+      snapshot.activity = {
+        id: row.activity_id,
+        date: row.date,
+        title: activity.title,
+        subject: activity.subject,
+        started: progress.started,
+        completed: progress.completed,
+        currentIndex: progress.index,
+        total: activity.questions.length,
+        currentQuestion: question
+          ? {
+              id: question.id,
+              prompt: question.prompt,
+              options: question.options,
+              hint: progress.questions[progress.index]?.hintUsed ? question.hint : null,
+            }
+          : null,
+      };
+    }
+    return snapshot;
+  }
+
+  prepare(target: ActivityStoreTarget) {
+    const rows = executeSqliteQuerySync(
+      this.db,
+      this.query
+        .selectFrom("kids_activity")
+        .selectAll()
+        .where("child_id", "=", target.childId)
+        .where("updated_at", ">=", target.now - HISTORY_MS)
+        .orderBy("updated_at", "desc")
+        .orderBy("date", "desc")
+        .orderBy("ordinal", "asc")
+        .limit(14),
+    ).rows;
+    const recentActivities: ActivityEvidence[] = rows.map((row) => {
+      const activity = readActivity(row);
+      const progress = readProgress(row);
+      return {
+        id: row.activity_id,
+        date: row.date,
+        title: activity.title,
+        subject: activity.subject,
+        completed: progress.completed,
+        completedAt: progress.completedAt,
+        questions: progress.questions,
+        attempts: progress.attempts.slice(-32),
+        attemptsOmitted: Math.max(
+          0,
+          progress.questions.reduce((count, question) => count + question.attempts, 0) -
+            Math.min(32, progress.attempts.length),
+        ),
+      };
+    });
+    const recentScenes = executeSqliteQuerySync(
+      this.db,
+      this.query
+        .selectFrom("kids_day")
+        .selectAll()
+        .where("child_id", "=", target.childId)
+        .where("date", "<=", target.date)
+        .orderBy("date", "desc")
+        .limit(14),
+    ).rows.map((row) => {
+      const day = readDay(row);
+      return {
+        date: row.date,
+        scene: day.scene,
+        scenePrompt: day.scenePrompt,
+        stateText: day.stateText,
+      };
+    });
+    const count =
+      executeSqliteQueryTakeFirstSync(
+        this.db,
+        this.query
+          .selectFrom("kids_activity")
+          .select((expression) => expression.fn.countAll<number>().as("count"))
+          .where("child_id", "=", target.childId)
+          .where("updated_at", ">=", target.now - HISTORY_MS),
+      )?.count ?? 0;
+    return {
+      snapshot: this.snapshot(target),
+      recentActivities,
+      recentScenes,
+      activitiesOmitted: Math.max(0, count - rows.length),
+    };
+  }
+
+  findDaily(childId: string, date: string): DailyActivityBundle | null {
+    const row = executeSqliteQueryTakeFirstSync(
+      this.db,
+      this.query
+        .selectFrom("kids_day")
+        .selectAll()
+        .where("child_id", "=", childId)
+        .where("date", "=", date),
+    );
+    return row
+      ? {
+          childId,
+          date,
+          ...readDay(row),
+          activities: this.dayActivities(childId, date).map(readActivity),
+        }
+      : null;
+  }
+
+  private transaction<T>(run: () => T): T {
+    return runSqliteImmediateTransactionSync(this.db, () => {
+      requestSqliteWorkerOperationAdmission({ stage: "transaction", facts: undefined });
+      const result = run();
+      requestSqliteWorkerOperationAdmission({ stage: "commit", facts: undefined });
+      return result;
+    });
+  }
+
+  /** Publish the day and all three definitions together; a saved date is immutable. */
+  publish(target: ActivityStoreTarget, bundle: DailyActivityBundle): { published: boolean } {
+    validateDailyActivityBundle(bundle, target);
+    return this.transaction(() => {
+      if (this.findDaily(target.childId, bundle.date)) {
+        return { published: false };
+      }
+      const content: DayContent = {
+        scene: bundle.scene,
+        scenePrompt: bundle.scenePrompt,
+        stateText: bundle.stateText,
+      };
+      executeSqliteQuerySync(
+        this.db,
+        this.query.insertInto("kids_day").values({
+          child_id: target.childId,
+          date: bundle.date,
+          created_at: target.now,
+          content: JSON.stringify(content),
+        }),
+      );
+      executeSqliteQuerySync(
+        this.db,
+        this.query.insertInto("kids_activity").values(
+          bundle.activities.map((activity, ordinal) => ({
+            child_id: target.childId,
+            activity_id: activity.id,
+            date: bundle.date,
+            ordinal,
+            updated_at: target.now,
+            definition: JSON.stringify(activity),
+            progress: JSON.stringify(initialProgress(activity)),
+          })),
+        ),
+      );
+      this.prune(target);
+      return { published: true };
+    });
+  }
+
+  /** Commit grading and its receipt together; duplicate input replays only its feedback. */
+  mutate(target: ActivityStoreTarget, mutation: ActivityMutation): ActivityResult {
+    return this.transaction(() => {
+      const encoded = JSON.stringify(mutation);
+      const receipt = executeSqliteQueryTakeFirstSync(
+        this.db,
+        this.query
+          .selectFrom("kids_request")
+          .selectAll()
+          .where("child_id", "=", target.childId)
+          .where("request_id", "=", mutation.requestId),
+      );
+      if (receipt) {
+        if (receipt.input !== encoded) {
+          throw new ActivityInputError("This request ID was already used for another action.");
+        }
+        return {
+          snapshot: this.snapshot(target),
+          ...(receipt.feedback
+            ? {
+                // SAFETY: mutate() serializes its typed feedback atomically with progress.
+                feedback: JSON.parse(receipt.feedback) as ActivityFeedback,
+              }
+            : {}),
+        };
+      }
+      const pet = this.pet(target.childId);
+      let feedback: ActivityFeedback | undefined;
+      if (mutation.kind !== "touch") {
+        const latest = this.latestDay(target);
+        const activities = latest ? this.dayActivities(target.childId, latest.date) : [];
+        const current = this.current(target, pet, activities);
+        const next = mutation.kind === "start" ? this.next(current, activities) : undefined;
+        const row = next?.activity_id === mutation.activityId ? next : current;
+        if (!row || row.activity_id !== mutation.activityId) {
+          throw new ActivityInputError(
+            "This activity changed. Refresh and continue the current activity.",
+          );
+        }
+        const activity = readActivity(row);
+        const progress = readProgress(row);
+        if (progress.completed) {
+          throw new ActivityInputError("This activity is already complete.");
+        }
+        const question = activity.questions[progress.index];
+        const evidence = progress.questions[progress.index];
+        if (!question || !evidence) {
+          throw new ActivityInputError("This activity cannot continue.");
+        }
+        if (mutation.kind !== "start" && question.id !== mutation.questionId) {
+          throw new ActivityInputError(
+            "This question was already answered. Continue the current question.",
+          );
+        }
+        if (mutation.kind !== "start" && !progress.started) {
+          throw new ActivityInputError("Start the activity first.");
+        }
+        progress.started = true;
+        pet.active_id = row.activity_id;
+        if (mutation.kind === "hint") {
+          evidence.hintUsed = true;
+        }
+        if (mutation.kind === "answer") {
+          if (!question.options.some((option) => option.id === mutation.optionId)) {
+            throw new ActivityInputError("Choose one of the answers shown.");
+          }
+          evidence.attempts += 1;
+          const correct = mutation.optionId === question.correctOptionId;
+          evidence.correct = correct;
+          evidence.independent = correct && evidence.attempts === 1 && !evidence.hintUsed;
+          progress.attempts.push({
+            id: mutation.requestId,
+            at: target.now,
+            activityId: row.activity_id,
+            questionId: question.id,
+            optionId: mutation.optionId,
+            answerText: question.options.find((option) => option.id === mutation.optionId)!.text,
+            ordinal: evidence.attempts,
+            hintUsed: evidence.hintUsed,
+            correct,
+            independent: evidence.independent,
+          });
+          progress.attempts = progress.attempts.slice(-256);
+          feedback = {
+            questionId: question.id,
+            correct,
+            independent: evidence.independent,
+            explanation: correct
+              ? question.explanation
+              : "Not quite. Try again, or ask for a hint.",
+          };
+          pet.streak = correct ? pet.streak + 1 : 0;
+          if (!correct) {
+            pet.excited_until = null;
+          }
+          if (correct) {
+            progress.index += 1;
+            progress.completed = progress.index === activity.questions.length;
+            if (progress.completed) {
+              progress.completedAt = target.now;
+            }
+            if (pet.streak % ACTIVITY_STREAK_TARGET === 0) {
+              pet.excited_until = target.now + ACTIVITY_EXCITED_MS;
+            }
+          }
+        }
+        executeSqliteQuerySync(
+          this.db,
+          this.query
+            .updateTable("kids_activity")
+            .set({ progress: JSON.stringify(progress), updated_at: target.now })
+            .where("child_id", "=", target.childId)
+            .where("activity_id", "=", row.activity_id),
+        );
+      }
+      if (mutation.kind !== "start") {
+        pet.last_interaction = target.now;
+      }
+      executeSqliteQuerySync(
+        this.db,
+        this.query
+          .insertInto("kids_pet")
+          .values(pet)
+          .onConflict((conflict) => conflict.column("child_id").doUpdateSet(pet)),
+      );
+      executeSqliteQuerySync(
+        this.db,
+        this.query.insertInto("kids_request").values({
+          child_id: target.childId,
+          request_id: mutation.requestId,
+          created_at: target.now,
+          input: encoded,
+          feedback: feedback ? JSON.stringify(feedback) : null,
+        }),
+      );
+      this.prune(target);
+      return { snapshot: this.snapshot(target), ...(feedback ? { feedback } : {}) };
+    });
+  }
+
+  private prune(target: ActivityStoreTarget): void {
+    const pet = this.pet(target.childId);
+    // Keep each day as one publication: its scene and all three definitions live
+    // together, including while any quiz has recent evidence or is still active.
+    const recentDates = this.query
+      .selectFrom("kids_activity")
+      .select("date")
+      .where("child_id", "=", target.childId)
+      .where("updated_at", ">=", target.now - HISTORY_MS);
+    let history = this.query
+      .deleteFrom("kids_day")
+      .where("child_id", "=", target.childId)
+      .where("created_at", "<", target.now - HISTORY_MS)
+      .where("date", "not in", recentDates);
+    const active = pet.active_id ? this.byId(target.childId, pet.active_id) : undefined;
+    if (active && !readProgress(active).completed) {
+      history = history.where("date", "!=", active.date);
+    }
+    executeSqliteQuerySync(this.db, history);
+    const retained = this.query
+      .selectFrom("kids_request")
+      .select("request_id")
+      .where("child_id", "=", target.childId)
+      .orderBy("created_at", "desc")
+      .orderBy("request_id", "desc")
+      .limit(512);
+    executeSqliteQuerySync(
+      this.db,
+      this.query
+        .deleteFrom("kids_request")
+        .where("child_id", "=", target.childId)
+        .where("request_id", "not in", retained),
+    );
+  }
+}
+
+/** Broker admission owns this connection until joined close; no module-global handles. */
+export function createSqliteWorkerBackend(
+  _input: undefined,
+  context: { databasePath: string },
+): SqliteWorkerBackend<ActivityStoreOperations> {
+  fs.mkdirSync(path.dirname(context.databasePath), { recursive: true, mode: 0o700 });
+  const db = openNodeSqliteDatabase(context.databasePath);
+  let maintenance: ReturnType<typeof configureSqliteConnectionPragmas> | undefined;
+  try {
+    fs.chmodSync(context.databasePath, 0o600);
+    maintenance = configureSqliteConnectionPragmas(db, {
+      databasePath: context.databasePath,
+      databaseLabel: "kids activities",
+      foreignKeys: true,
+      synchronous: "NORMAL",
+      checkpointIntervalMs: 0,
+      busyTimeoutMs: 5000,
+    });
+    const version = db.prepare("PRAGMA user_version").get()?.user_version;
+    if (typeof version !== "number" || version > 1) {
+      throw new Error("Activities database needs a newer plugin version.");
+    }
+    db.exec(SCHEMA);
+    db.exec("PRAGMA user_version = 1");
+    const owner = new ActivityDatabaseOwner(db);
+    return {
+      execute(command: SqliteWorkerCommand<ActivityStoreOperations>) {
+        switch (command.type) {
+          case "get":
+            return owner.snapshot(command.input);
+          case "prepare":
+            return owner.prepare(command.input);
+          case "findDaily":
+            return owner.findDaily(command.input.childId, command.input.date);
+          case "mutate":
+            return owner.mutate(command.input, command.input.mutation);
+          case "publish":
+            return owner.publish(command.input, command.input.bundle);
+          default:
+            throw new Error("Unsupported activity operation.");
+        }
+      },
+      close() {
+        try {
+          maintenance?.close();
+        } finally {
+          db.close();
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      maintenance?.close();
+    } finally {
+      db.close();
+    }
+    throw error;
+  }
+}

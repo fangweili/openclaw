@@ -1,0 +1,9 @@
+{
+  "name": "@openclaw/kids-activity-contract",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

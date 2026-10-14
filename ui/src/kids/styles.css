@@ -19,6 +19,7 @@ html[data-kids] body {
 html[data-kids],
 html[data-kids] body,
 .kids-thread,
+.kids-today,
 .kids-composer textarea,
 .kids-message-content pre,
 .kids-message-content table {
@@ -32,6 +33,7 @@ html[data-kids] body,
   html[data-kids],
   html[data-kids] body,
   .kids-thread,
+  .kids-today,
   .kids-composer textarea,
   .kids-message-content pre,
   .kids-message-content table {
@@ -63,6 +65,302 @@ html[data-kids] body,
   opacity: 0.45;
 }
 
+.kids-thread-area[hidden],
+.kids-footer[hidden] {
+  display: none;
+}
+
+.kids-mode-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 18px;
+  background: var(--kids-tint);
+}
+
+.kids-mode-switch button {
+  min-width: 88px;
+  padding: 8px 18px;
+  border-radius: 14px;
+  color: var(--kids-muted);
+  background: transparent;
+}
+
+.kids-mode-switch [aria-current="page"] {
+  color: var(--kids-accent);
+  background: var(--kids-paper);
+  font-weight: 650;
+}
+
+.kids-today {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 32px max(32px, env(safe-area-inset-bottom));
+}
+
+.kids-pet {
+  max-width: 500px;
+  margin: 0 auto 28px;
+  text-align: center;
+}
+
+.kids-pet-picture {
+  width: min(100%, 340px);
+  aspect-ratio: 4 / 3;
+  margin: auto;
+}
+
+.kids-pet-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: kids-pet-breathe 5s ease-in-out infinite;
+}
+
+.kids-pet-picture .kids-pet-placeholder {
+  width: 35%;
+  margin: auto;
+  opacity: 0.5;
+}
+
+.kids-pet--sleeping img {
+  animation-duration: 7s;
+}
+
+.kids-pet--bored img {
+  animation: kids-pet-sway 6s ease-in-out infinite;
+}
+
+.kids-pet--excited img {
+  animation: kids-pet-bounce 1.5s ease-in-out infinite;
+}
+
+.kids-pet-caption {
+  margin: 18px auto 0;
+  max-width: 420px;
+  color: var(--kids-muted);
+  line-height: 1.6;
+}
+
+.kids-activity-card {
+  max-width: 580px;
+  padding: 28px;
+  margin: auto;
+  border: 1px solid var(--kids-border);
+  border-radius: 28px;
+  background: var(--kids-paper);
+}
+
+.kids-activity-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--kids-muted);
+  font-size: 13px;
+}
+
+.kids-activity-daily {
+  margin: 0 0 16px;
+  color: var(--kids-muted);
+  font-size: 13px;
+}
+
+.kids-activity-subject {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--kids-accent);
+  font-weight: 600;
+}
+
+.kids-activity-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.kids-activity-card h2 {
+  margin: 10px 0 18px;
+  font-size: 25px;
+  line-height: 1.3;
+  letter-spacing: -0.5px;
+  overflow-wrap: anywhere;
+}
+
+.kids-activity-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.kids-activity-progress span {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--kids-tint);
+}
+
+.kids-activity-progress .is-complete {
+  background: var(--kids-accent);
+}
+
+.kids-activity-question {
+  margin: 0 0 22px;
+  font-size: 19px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.kids-activity-options {
+  display: grid;
+  gap: 10px;
+}
+
+.kids-activity-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--kids-border) !important;
+  border-radius: 16px;
+  background: var(--kids-background);
+  text-align: left;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.kids-activity-option:hover:enabled {
+  background: var(--kids-tint);
+}
+
+.kids-activity-letter {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--kids-paper);
+  color: var(--kids-muted);
+  font-size: 12px;
+}
+
+.kids-activity-actions {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.kids-activity-primary,
+.kids-activity-secondary,
+.kids-activity-link {
+  padding: 12px 20px;
+  border-radius: 18px;
+  line-height: 1.5;
+}
+
+.kids-activity-primary {
+  background: var(--kids-accent);
+  color: var(--kids-paper) !important;
+  font-weight: 600 !important;
+}
+
+.kids-activity-secondary {
+  background: var(--kids-tint);
+}
+
+.kids-activity-link {
+  color: var(--kids-accent) !important;
+  background: transparent;
+}
+
+.kids-activity-hint {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--kids-tint);
+  line-height: 1.65;
+}
+
+.kids-activity-feedback > p,
+.kids-activity-intro,
+.kids-activity-complete > p,
+.kids-activity-empty > p,
+.kids-activity-notice > p {
+  color: var(--kids-muted);
+  line-height: 1.65;
+}
+
+.kids-activity-feedback h3,
+.kids-activity-complete h3 {
+  font-size: 22px;
+  margin: 16px 0 8px;
+}
+
+.kids-activity-complete,
+.kids-activity-empty {
+  padding: 12px 0;
+  text-align: center;
+}
+
+.kids-activity-spark {
+  font-size: 36px;
+  color: var(--kids-accent);
+}
+
+.kids-activity-notice {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--kids-border);
+}
+
+@keyframes kids-pet-breathe {
+  50% {
+    transform: scale(1.025);
+  }
+}
+
+@keyframes kids-pet-sway {
+  25% {
+    transform: rotate(-1deg);
+  }
+  75% {
+    transform: rotate(1deg);
+  }
+}
+
+@keyframes kids-pet-bounce {
+  30% {
+    transform: translateY(-8px) rotate(-1deg);
+  }
+  60% {
+    transform: translateY(0) rotate(1deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kids-pet-picture img {
+    animation: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .kids-today {
+    padding: 0 16px max(24px, env(safe-area-inset-bottom));
+  }
+  .kids-pet-picture {
+    width: 240px;
+  }
+  .kids-activity-card {
+    padding: 22px 18px;
+  }
+  .kids-activity-card h2 {
+    font-size: 23px;
+  }
+}
+
 .kids-shell button:focus-visible {
   outline: 2px solid var(--kids-accent);
   outline-offset: 4px;
@@ -72,27 +370,13 @@ html[data-kids] body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: max(24px, env(safe-area-inset-top)) 32px 24px;
+  gap: 16px;
+  padding: max(18px, env(safe-area-inset-top)) 32px 18px;
   border-bottom: 1px solid var(--kids-border);
 }
 
-.kids-identity {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.kids-avatar {
-  width: 46px;
-  height: 46px;
-  border-radius: 15px;
-}
-
-.kids-header h1 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 650;
-  letter-spacing: -0.4px;
+.kids-header-main {
+  flex-shrink: 0;
 }
 
 .kids-status {
@@ -101,22 +385,31 @@ html[data-kids] body,
   font-size: 13px;
 }
 
+.kids-status:empty {
+  margin: 0;
+}
+
 .kids-child {
+  min-width: 0;
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--kids-muted);
   font-size: 14px;
 }
 
 .kids-header-actions {
   display: flex;
+  flex: 1;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   min-width: 0;
 }
 
 .kids-notifications {
+  flex-shrink: 0;
   width: 44px;
   background: transparent;
   border-radius: 50%;
@@ -125,6 +418,7 @@ html[data-kids] body,
 
 .kids-notifications-on {
   display: grid;
+  flex-shrink: 0;
   place-items: center;
   width: 36px;
   height: 36px;
@@ -412,7 +706,14 @@ html[data-kids] body,
 
 @media (max-width: 560px) {
   .kids-header {
+    gap: 8px;
     padding: max(18px, env(safe-area-inset-top)) 20px 18px;
+  }
+
+  .kids-mode-switch button {
+    width: 64px;
+    min-width: 64px;
+    padding: 8px;
   }
 
   .kids-thread {

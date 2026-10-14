@@ -232,7 +232,7 @@ describe("kids app durable draft acknowledgements", () => {
       type(composer, "Same words");
       await started.promise;
       boundary.accepted("Same words");
-      boundary.options!.onClose!({ code: 1006, reason: "Synthetic reconnect" });
+      boundary.options!.onClose!({ code: 1006, reason: "Synthetic reconnect", willRetry: true });
       expect(composer.value).toBe("");
       expect(composer.disabled).toBe(true);
       boundary.update({
@@ -278,7 +278,7 @@ describe("kids app durable draft acknowledgements", () => {
       boundary.update(ready);
       await started.promise;
       boundary.accepted("Already accepted");
-      boundary.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
+      boundary.options!.onClose!({ code: 1006, reason: "Synthetic disconnect", willRetry: true });
       const closing = app.dispose();
       released.resolve();
       await closing;

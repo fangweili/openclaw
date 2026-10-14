@@ -76,6 +76,7 @@ const allocation = {
   provider: "fixture",
   transport: "webrtc" as const,
   voiceSessionId: "voice-one",
+  clientSecret: "synthetic-voice-key",
 };
 const history = (leaf: string) => ({
   sessionId: "session-one",
@@ -282,17 +283,25 @@ describe("kids app attachment ownership", () => {
       expect(fixture.state!.attachments.items.map((item) => item.name)).toEqual(["later.mp4"]);
       expect(fixture.state!.draft).toBe("A new caption");
       expect(revoke).toHaveBeenCalledWith("blob:app-1");
-      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
+      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect", willRetry: true });
       expect(fixture.state!.conversation.status).toBe("disconnected");
       expect(fixture.state!.attachments.items).toHaveLength(1);
-      fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
+      fixture.options!.onHello!({
+        type: "hello-ok",
+        protocol: 4,
+        auth: { role: "operator", scopes: ["operator.sessions.write", "operator.talk"] },
+      });
       await vi.advanceTimersByTimeAsync(0);
       await drafts.settle();
       expect(fixture.state!.draft).toBe("A new caption");
       expect(fixture.state!.attachments.items).toHaveLength(1);
-      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect" });
+      fixture.options!.onClose!({ code: 1006, reason: "Synthetic disconnect", willRetry: true });
       backing = "session-reset";
-      fixture.options!.onHello!({ type: "hello-ok", protocol: 4 });
+      fixture.options!.onHello!({
+        type: "hello-ok",
+        protocol: 4,
+        auth: { role: "operator", scopes: ["operator.sessions.write", "operator.talk"] },
+      });
       await vi.advanceTimersByTimeAsync(0);
       await drafts.settle();
       expect(fixture.state!.draft).toBe("");
