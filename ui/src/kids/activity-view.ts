@@ -157,7 +157,7 @@ export function renderKidsActivity(
                           </div>`
                         : activity && !activity.started
                           ? html`<p class="kids-activity-intro">
-                                ${t("kids.activity.invitation", { count: String(activity.total) })}
+                                ${t(activity.total === 1 ? "kids.activity.invitationOne" : "kids.activity.invitation", { count: String(activity.total) })}
                               </p>
                               <button
                                 class="kids-activity-primary"

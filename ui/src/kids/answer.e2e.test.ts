@@ -8,6 +8,7 @@ import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import {
   notificationPermissionFixture,
   profile,
+  readKidsFrame,
   roster,
   sessionKey,
   startKidsE2e,
@@ -23,7 +24,10 @@ afterAll(async () => {
 
 it("checks typed and dictated answers explicitly, keeps feedback editable, and retries the original uncertain answer", async () => {
   const { browser, baseUrl, proof, examples } = harness;
-  const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  const context = await browser.newContext({
+    viewport: { width: 1024, height: 768 },
+    reducedMotion: "reduce",
+  });
   try {
     await context.addInitScript(notificationPermissionFixture);
     await context.addInitScript(() => {
@@ -133,6 +137,12 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     await page.getByRole("button", { name: "Solve", exact: true }).click();
     expect(await number.inputValue()).toBe("3/4");
     await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    const numericFrame = await readKidsFrame(page);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    expect(await readKidsFrame(page)).toEqual(numericFrame);
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    expect(await readKidsFrame(page)).toEqual(numericFrame);
     await capture("numeric-landscape", "iPad landscape — typed fraction before checking");
     await gateway.deferNext("kids.activity.answer");
     await page.getByRole("button", { name: "Check answer", exact: true }).click();
@@ -171,6 +181,30 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     const words = page.getByLabel("Your thinking", { exact: true });
     await words.waitFor();
+    for (const viewport of [
+      { width: 1024, height: 650 },
+      { width: 1024, height: 768 },
+      { width: 1024, height: 1366 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const answerFrame = await readKidsFrame(page);
+      expect(
+        await page.locator(".kids-solve").evaluate((element) => {
+          const card = element.querySelector(".kids-activity-card")!.getBoundingClientRect();
+          return card.bottom <= element.getBoundingClientRect().bottom;
+        }),
+      ).toBe(true);
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      expect(await readKidsFrame(page)).toEqual(answerFrame);
+      await page.getByRole("button", { name: "Solve", exact: true }).click();
+      await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      expect(await readKidsFrame(page)).toEqual(answerFrame);
+      await capture(
+        `explanation-frame-${viewport.width}-${viewport.height}`,
+        `Explanation in the shared frame — ${viewport.width} × ${viewport.height}`,
+      );
+    }
+    await page.setViewportSize({ width: 1024, height: 768 });
     await words.focus();
     // The first Say it tap must survive blur without moving before pointer-up.
     await page.getByRole("button", { name: "Say it", exact: true }).click();

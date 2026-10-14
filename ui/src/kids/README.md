@@ -10,7 +10,11 @@ The name comes only from the verified conversation; an empty name uses
 **What shall we do?**. There is no header or subtitle. Solve offers saved choice,
 numeric and short explanation questions. The server alone grades them. Landscape
 tablets place Rocky left of the choices or challenge; portrait and small screens
-stack them.
+stack them. Today and Solve share the same art and panel anchors, sizes, column
+alignment and top row. Today fills that row with its greeting; Solve reserves it
+for the floating navigation. The content below may grow without moving the frame.
+Phones reserve two heading lines; unusually long names may still wrap further.
+The existing answer-editing layout continues to make room for the keyboard.
 
 Compact floating **Today** controls return home from Chat or Solve; each scroller
 reserves their safe-area top inset so initial content stays clear. **Talk it

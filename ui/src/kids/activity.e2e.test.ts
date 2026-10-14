@@ -9,6 +9,7 @@ import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import {
   notificationPermissionFixture,
   profile,
+  readKidsFrame,
   roster,
   sessionKey,
   startKidsE2e,
@@ -29,7 +30,10 @@ afterAll(async () => {
 });
 
 it("keeps saved activities beside chat, grades through the server, and carries a question into the existing draft", async () => {
-  const context = await browser.newContext({ viewport: { width: 1024, height: 1366 } });
+  const context = await browser.newContext({
+    viewport: { width: 1024, height: 1366 },
+    reducedMotion: "reduce",
+  });
   try {
     await context.addInitScript(notificationPermissionFixture);
     // Exercise Safari's event fallback in Chromium; this does not prove native iPad zoom.
@@ -228,6 +232,14 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       expect(layout.overflow).toBeLessThanOrEqual(1);
       expect(layout.centered).toBeLessThanOrEqual(1);
       expect(layout.aboveBoth).toBe(true);
+      const homeFrame = await readKidsFrame(page);
+      await page.getByRole("button", { name: "Solve", exact: true }).click();
+      await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      expect(await readKidsFrame(page)).toEqual(homeFrame);
+      const solveId = `solve-frame-${viewport.width}-${viewport.height}`;
+      await capture(solveId, `Matching Solve frame — ${viewport.width} × ${viewport.height}`);
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      expect(await readKidsFrame(page)).toEqual(homeFrame);
     }
     await page.setViewportSize({ width: 1024, height: 1366 });
     await page.getByRole("button", { name: "Solve", exact: true }).click();

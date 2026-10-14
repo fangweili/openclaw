@@ -56,6 +56,7 @@ const enKids = {
       imageRetry: "Try the picture again",
       start: "Let's explore",
       invitation: "{count} little questions. Take your time; hints are always welcome.",
+      invitationOne: "1 little question. Take your time; hints are always welcome.",
       correct: "You figured it out!",
       tryAgain: "Let's look at it together",
       next: "Continue",

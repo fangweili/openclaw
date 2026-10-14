@@ -111,6 +111,8 @@ html[data-kids] body,
 }
 
 .kids-today {
+  --kids-page-title-height: 44px;
+
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -118,9 +120,22 @@ html[data-kids] body,
   padding: max(24px, env(safe-area-inset-top)) 32px max(32px, env(safe-area-inset-bottom));
 }
 
-/* Scrollers reserve the floating controls' safe-area inset only on subpages. */
-.kids-today.kids-solve {
-  padding-top: var(--kids-navigation-inset);
+/* Today and Solve keep one frame. Solve reserves the title row for its floating
+   navigation, so entering a challenge cannot move Rocky or the card panel. */
+.kids-home-title,
+.kids-solve::before {
+  display: grid;
+  place-items: center;
+  grid-column: 1 / -1;
+  min-height: var(--kids-page-title-height);
+  margin: 0 0 24px;
+}
+
+.kids-solve::before {
+  content: "";
+}
+
+.kids-solve {
   scroll-padding-top: var(--kids-navigation-inset);
 }
 
@@ -174,14 +189,12 @@ html[data-kids] body,
 
 .kids-home-content {
   width: 100%;
-  max-width: 540px;
+  max-width: 580px;
   min-width: 0;
   margin: auto;
 }
 
 .kids-home-title {
-  grid-column: 1 / -1;
-  margin: 0 0 24px;
   font-size: 28px;
   line-height: 1.25;
   letter-spacing: -0.6px;
@@ -279,6 +292,9 @@ html[data-kids] body,
 }
 
 .kids-activity-card {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
   max-width: 580px;
   padding: 28px;
   margin: auto;
@@ -487,23 +503,44 @@ html[data-kids] body,
     display: grid;
     align-self: center;
     width: min(100vw, 1100px);
-    grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 260px) minmax(0, 580px);
+    justify-content: center;
     align-items: start;
-    gap: 24px;
+    align-content: start;
+    gap: 12px 36px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
 
   .kids-pet {
     min-width: 0;
     width: 100%;
-    margin: 24px 0 0;
+    margin: 0;
+  }
+
+  .kids-pet-picture {
+    width: 100%;
+    aspect-ratio: 1;
+  }
+
+  .kids-pet-picture img {
+    width: 100%;
+  }
+
+  .kids-home-content,
+  .kids-activity-card {
+    margin: 0;
   }
 
   .kids-activity-card {
-    box-sizing: border-box;
-    min-width: 0;
-    width: 100%;
-    margin: 0;
-    padding: 20px;
+    padding: 16px;
+  }
+
+  .kids-activity-daily {
+    margin-bottom: 8px;
+  }
+
+  .kids-activity-card h2 {
+    margin: 6px 0 12px;
   }
 
   .kids-activity-options {
@@ -516,35 +553,28 @@ html[data-kids] body,
   }
 
   .kids-activity-progress {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   .kids-activity-question {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   .kids-activity-actions {
-    margin-top: 16px;
+    margin-top: 10px;
   }
 
-  .kids-home {
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-    align-items: center;
-    align-content: start;
-    gap: 24px 36px;
-  }
-
-  .kids-home-title {
-    margin: 0;
-  }
-
-  .kids-home .kids-pet {
+  .kids-home-title,
+  .kids-solve::before {
     margin: 0;
   }
 }
 
 @media (max-width: 560px) {
   .kids-today {
+    /* Reserve two title lines on phones without moving Solve's matching frame. */
+    --kids-page-title-height: 70px;
+
     padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
   }
   .kids-pet-picture {
