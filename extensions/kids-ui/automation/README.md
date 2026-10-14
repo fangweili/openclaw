@@ -15,7 +15,7 @@ runtime, including normal-to-excited reference continuity. The job supplies word
 and verified questions; it cannot choose an image path, provider or sibling.
 
 Create one isolated preparation job per configured child, with `delivery.mode`
-set to `none`, a 600-second timeout, and tools limited to `read`, `exec`, and
+set to `none`, a 1,200-second timeout covering image-provider fallback, and tools limited to `read`, `exec`, and
 `kids_activity`. Suggested schedules are `0 6 * * *` and `10 6 * * *` in the
 children's configured timezone. Point each payload to `cron-daily-prepare.md`.
 Record each actual job ID as that child's `preparationJobId` and the job's agent

@@ -476,7 +476,9 @@ export class KidsApp {
       !this.snapshot.activityEnabled ||
       this.snapshot.tab === "chat" ||
       this.snapshot.voice.active ||
-      this.snapshot.voice.status === "stopping";
+      this.snapshot.voice.status === "stopping" ||
+      this.snapshot.dictation.active ||
+      this.snapshot.dictation.finishing;
     if (showingChat) {
       this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
     }
@@ -531,9 +533,16 @@ export class KidsApp {
     }
   }
 
-  /** Tab changes preserve the existing composer and conversation; only Today polls. */
+  /** Tab changes preserve context; microphone work must finish before Today can poll. */
   private selectTab(tab: "chat" | "today"): void {
-    if (tab === "today" && !this.snapshot.activityEnabled) {
+    if (
+      tab === "today" &&
+      (!this.snapshot.activityEnabled ||
+        this.snapshot.voice.active ||
+        this.snapshot.voice.status === "stopping" ||
+        this.snapshot.dictation.active ||
+        this.snapshot.dictation.finishing)
+    ) {
       return;
     }
     if (tab === "today") {

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Browser } from "playwright";
 import { afterAll, assert, beforeAll, expect, it } from "vitest";
 import type { MockGatewayWindow } from "../test-helpers/control-ui-e2e-contract.ts";
+import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e-defaults.ts";
 import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 import {
   notificationPermissionFixture,
@@ -465,6 +466,14 @@ it("records dictation into an editable draft and sends only on request", async (
     await context.addInitScript(notificationPermissionFixture);
     // Observe the actual browser recorder, so finish cannot race microphone startup.
     await context.addInitScript(() => {
+      const acquire = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        document.documentElement.dataset.microphoneRequested = "true";
+        await new Promise<void>((resolve) => {
+          window.addEventListener("kids-fixture-grant-microphone", () => resolve(), { once: true });
+        });
+        return acquire(constraints);
+      };
       const NativeRecorder = MediaRecorder;
       window.MediaRecorder = class extends NativeRecorder {
         override start(timeslice?: number) {
@@ -484,6 +493,8 @@ it("records dictation into an editable draft and sends only on request", async (
     page.on("pageerror", (error) => errors.push(error.message));
     const gateway = await installMockGateway(page, {
       awaitInitialRoster: false,
+      featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
+      deferredMethods: ["kids.transcribe"],
       sessionKey,
       operatorScopes: ["operator.sessions.write", "operator.talk"],
       methodResponses: {
@@ -496,12 +507,42 @@ it("records dictation into an editable draft and sends only on request", async (
           messages: [],
         },
         "kids.transcribe": { text: "Can we practice fractions?" },
+        "kids.activity.touch": {
+          snapshot: {
+            now: 1000,
+            date: "2026-10-13",
+            correctStreak: 0,
+            daily: null,
+            nextActivity: null,
+            activity: null,
+            pet: {
+              state: "normal",
+              scene: null,
+              image: null,
+              lastInteractionAt: 1000,
+              excitedUntil: null,
+            },
+          },
+        },
       },
     });
     await page.goto(baseUrl);
     await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
     await page.getByRole("button", { name: "Dictate a message" }).click();
+    await page.waitForFunction(
+      () => document.documentElement.dataset.microphoneRequested === "true",
+    );
+    const today = page.getByRole("button", { name: "Today", exact: true });
+    const chat = page.getByRole("button", { name: "Chat", exact: true });
+    const finish = page.getByRole("button", { name: "Finish dictation", exact: true });
+    expect(await today.isDisabled()).toBe(true);
+    expect(await today.getAttribute("title")).toBe("Finish dictation to open Today.");
+    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await finish.isVisible()).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new Event("kids-fixture-grant-microphone")));
     await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
+    expect(await today.isDisabled()).toBe(true);
+    expect(await finish.isVisible()).toBe(true);
     expect(await page.getByRole("button", { name: "Send message" }).isDisabled()).toBe(true);
     expect(
       await page.getByRole("button", { name: "Talk to Rocky", exact: true }).isDisabled(),
@@ -515,12 +556,21 @@ it("records dictation into an editable draft and sends only on request", async (
       mimeType: expect.stringMatching(/^audio\/(webm|mp4|ogg)/),
     });
     expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
+    expect(await today.isDisabled()).toBe(true);
+    expect(await today.getAttribute("title")).toBe(
+      "Wait for your words to appear before opening Today.",
+    );
+    expect(await chat.getAttribute("aria-current")).toBe("page");
+    expect(await page.locator(".kids-footer").isVisible()).toBe(true);
+    await page.getByText("Finishing your words…", { exact: true }).waitFor();
+    await gateway.resolveDeferred("kids.transcribe", { text: "Can we practice fractions?" });
     const composer = page.getByLabel("Message Rocky", { exact: true });
     await page.waitForFunction(
       () =>
         document.querySelector<HTMLTextAreaElement>("textarea")?.value ===
         "Can we practice fractions?",
     );
+    expect(await today.isEnabled()).toBe(true);
     expect(await gateway.getRequests("chat.send")).toHaveLength(0);
     await composer.fill("Can we practice fractions together?");
     await page.screenshot({ path: path.join(proof, "dictation-draft.png"), fullPage: true });

@@ -6,7 +6,11 @@ text, photos, short videos, voice dictation, live voice, and private notificatio
 the same tutor conversation. Switching tabs preserves unsent text and attachments.
 The header's labeled **Chat / Today** switch stays in the same place in both modes.
 During a live or finishing voice call, Chat stays selected and Today is disabled
-with an accessible explanation. Only useful connection, reply, or voice status
+with an accessible explanation. The same restriction applies while dictation
+awaits microphone permission, records, or finishes transcription, keeping its
+Stop control and progress visible. It uses the dictation owner's existing active
+and finishing states; completing or cancelling dictation makes Today available again.
+Only useful connection, reply, or voice status
 appears beneath the switch; there is no header mascot, wordmark, or idle subtitle.
 The child's name and notification control remain on the right.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,

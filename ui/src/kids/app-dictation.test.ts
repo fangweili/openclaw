@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   options: null as GatewayBrowserClientOptions | null,
   state: null as KidsViewState | null,
   actions: null as KidsViewActions | null,
+  activityMethods: [] as string[],
   recorders: [] as Array<{
     commit: (text: string) => void;
     publish: (state: KidsViewState["dictation"]) => void;
@@ -70,6 +71,7 @@ vi.mock("../api/gateway.ts", async (original) => {
           type: "hello-ok",
           protocol: 4,
           auth: { role: "operator", scopes: ["operator.sessions.write", "operator.talk"] },
+          features: { methods: fixture.activityMethods },
         });
       }
       override async request<T>(method: string, params?: unknown): Promise<T> {
@@ -87,6 +89,7 @@ beforeEach(() => {
     toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
   });
   fixture.recorders = [];
+  fixture.activityMethods = [];
   fixture.cleanup.mockReset().mockResolvedValue(undefined);
   fixture.request.mockReset().mockImplementation(async (method, input) => {
     const params = input as Record<string, unknown>;
@@ -113,6 +116,29 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.useRealTimers());
+
+it("rejects Today intents until admitted microphone work has finished", async () => {
+  fixture.activityMethods = ["kids.activity.get"];
+  const app = new KidsApp(document.createElement("div"));
+  try {
+    app.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await drafts.settle();
+    expect(fixture.state!.activityEnabled).toBe(true);
+    fixture.actions!.dictate();
+    await vi.advanceTimersByTimeAsync(0);
+    fixture.actions!.tab("today");
+    expect(fixture.state!.tab).toBe("chat");
+    fixture.recorders[0]!.publish({ active: false, finishing: true, detail: null });
+    fixture.actions!.tab("today");
+    expect(fixture.state!.tab).toBe("chat");
+    expect(fixture.request.mock.calls.some(([method]) => method === "kids.activity.get")).toBe(
+      false,
+    );
+  } finally {
+    await app.dispose();
+  }
+});
 
 it("inserts speech into the current draft without sending, and excludes simultaneous live voice", async () => {
   const app = new KidsApp(document.createElement("div"));

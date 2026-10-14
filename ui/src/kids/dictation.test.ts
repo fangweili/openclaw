@@ -101,6 +101,7 @@ describe("kids reviewable dictation owner", () => {
     vi.spyOn(navigator.mediaDevices, "getUserMedia").mockReturnValue(permission.promise);
     const { owner, request, onCommit } = create();
     const starting = owner.start();
+    expect(owner.state).toMatchObject({ active: true, finishing: false });
     await owner.finish();
     await starting;
     permission.resolve({

@@ -26,6 +26,8 @@ const enKids = {
       chat: "Chat",
       navigation: "Chat and today's challenges",
       finishCall: "Finish your call to open Today.",
+      finishDictation: "Finish dictation to open Today.",
+      waitForDictation: "Wait for your words to appear before opening Today.",
       pet: "Your companion",
       challenge: "Today's challenge",
       progress: "Challenge progress",

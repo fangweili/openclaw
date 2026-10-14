@@ -133,7 +133,14 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
-  const today = ready && state.activityEnabled && state.tab === "today" && !calling;
+  const today = ready && state.activityEnabled && state.tab === "today" && !calling && !dictating;
+  const todayUnavailable = calling
+    ? t("kids.activity.finishCall")
+    : state.dictation.finishing
+      ? t("kids.activity.waitForDictation")
+      : dictating
+        ? t("kids.activity.finishDictation")
+        : null;
   // Keep the empty idle live region mounted so its first useful update is announced.
   const status = error
     ? t("kids.unavailable")
@@ -163,15 +170,15 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                     <button
                       type="button"
                       aria-current=${today ? "page" : nothing}
-                      aria-describedby=${calling ? "kids-today-voice-help" : nothing}
-                      title=${calling ? t("kids.activity.finishCall") : nothing}
-                      ?disabled=${!ready || calling}
+                      aria-describedby=${todayUnavailable ? "kids-today-voice-help" : nothing}
+                      title=${todayUnavailable ?? nothing}
+                      ?disabled=${!ready || calling || dictating}
                       @click=${() => actions.tab("today")}
                     >
                       ${t("kids.activity.today")}
                     </button>
                   </nav>
-                  ${calling ? html`<span id="kids-today-voice-help" class="kids-sr-only">${t("kids.activity.finishCall")}</span>` : nothing}`
+                  ${todayUnavailable ? html`<span id="kids-today-voice-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
               : nothing
           }
           <p class="kids-status" role="status">${status ?? nothing}</p>

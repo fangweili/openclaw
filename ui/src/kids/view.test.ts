@@ -136,6 +136,35 @@ it("keeps useful header status and a stable switch without idle branding or inte
   }
 });
 
+it.each([false, true])(
+  "keeps dictation controls visible and Today unavailable (finishing: %s)",
+  (finishing) => {
+    const root = document.createElement("div");
+    const state = readyState();
+    const actions = viewActions();
+    state.tab = "today";
+    state.dictation = { active: !finishing, finishing, detail: null };
+    try {
+      render(renderKidsView(state, actions), root);
+      const modes = root.querySelector("header nav")!;
+      const [chat, today] = modes.querySelectorAll("button");
+      expect(chat!.getAttribute("aria-current")).toBe("page");
+      expect(today!.disabled).toBe(true);
+      expect(root.querySelector<HTMLElement>(".kids-footer")!.hidden).toBe(false);
+      expect(root.querySelector<HTMLButtonElement>(".kids-dictate")!.disabled).toBe(finishing);
+      expect(root.querySelector("#kids-today-voice-help")?.textContent).toBe(
+        finishing
+          ? "Wait for your words to appear before opening Today."
+          : "Finish dictation to open Today.",
+      );
+      today!.click();
+      expect(actions.tab).not.toHaveBeenCalled();
+    } finally {
+      render(null, root);
+    }
+  },
+);
+
 describe("kids draft privacy", () => {
   it.each(["disconnected", "loading", "error"] as const)(
     "hides the retained draft while %s and restores it only for the ready conversation",
