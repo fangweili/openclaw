@@ -13,6 +13,7 @@ export type KidsActivityActions = {
   draft: (text: string) => void;
   check: () => void;
   dictate: () => void;
+  edit: () => void;
   hint: () => void;
   next: () => void;
   help: () => void;
@@ -38,7 +39,7 @@ export function renderKidsActivity(
   const recording = input.dictation.active || input.dictation.finishing;
   const locked = state.busy || state.canRetry || state.error !== null;
   return html`<main
-    class="kids-today kids-solve"
+    class=${state.answerEditing ? "kids-today kids-solve kids-solve--editing" : "kids-today kids-solve"}
     aria-label=${t("kids.home.solve")}
     ?hidden=${hidden}
   >

@@ -96,7 +96,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     const gateway = await installMockGateway(page, {
       awaitInitialRoster: false,
       featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
-      deferredMethods: ["kids.activity.answer", "kids.transcribe"],
+      deferredMethods: ["kids.transcribe"],
       sessionKey,
       operatorScopes: ["operator.sessions.write", "operator.talk"],
       methodResponses: {
@@ -134,6 +134,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     expect(await number.inputValue()).toBe("3/4");
     await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
     await capture("numeric-landscape", "iPad landscape — typed fraction before checking");
+    await gateway.deferNext("kids.activity.answer");
     await page.getByRole("button", { name: "Check answer", exact: true }).click();
     const first = await gateway.waitForRequest("kids.activity.answer");
     expect(first.params).toMatchObject({
@@ -170,6 +171,8 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     const words = page.getByLabel("Your thinking", { exact: true });
     await words.waitFor();
+    await words.focus();
+    // The first Say it tap must survive blur without moving before pointer-up.
     await page.getByRole("button", { name: "Say it", exact: true }).click();
     await page.waitForFunction(
       () => document.documentElement.dataset.microphoneRequested === "true",
@@ -192,6 +195,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     expect(await gateway.getRequests("chat.send")).toHaveLength(0);
     await page.setViewportSize({ width: 1024, height: 1366 });
     await capture("explanation-portrait", "iPad portrait — dictated words ready to edit or check");
+    await gateway.deferNext("kids.activity.answer");
     await page.getByRole("button", { name: "Check answer", exact: true }).click();
     const clarify = await gateway.waitForRequest("kids.activity.answer", { after: 1 });
     await gateway.resolveDeferred("kids.activity.answer", {
@@ -211,11 +215,13 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     );
     await words.fill("No. Their areas are 9 and 24 square centimeters.");
     await page.setViewportSize({ width: 320, height: 480 });
+    await words.scrollIntoViewIfNeeded();
     expect(await page.locator(".kids-solve .kids-pet").isVisible()).toBe(false);
     await capture(
       "explanation-keyboard-narrow",
       "Narrow reduced viewport with focused answer — desktop keyboard-space simulation",
     );
+    await gateway.deferNext("kids.activity.answer");
     await page.getByRole("button", { name: "Check answer", exact: true }).click();
     const uncertain = await gateway.waitForRequest("kids.activity.answer", { after: 2 });
     expect(uncertain.params).not.toMatchObject({
@@ -236,6 +242,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
       "explanation-error-landscape",
       "iPad landscape — failed checking preserves the exact answer",
     );
+    await gateway.deferNext("kids.activity.answer");
     await page.getByRole("button", { name: "Try again", exact: true }).click();
     const replay = await gateway.waitForRequest("kids.activity.answer", { after: 3 });
     expect(replay.params).toEqual(uncertain.params);

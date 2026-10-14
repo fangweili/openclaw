@@ -15,6 +15,7 @@ export type KidsAnswerActions = {
   draft: (text: string) => void;
   check: () => void;
   dictate: () => void;
+  edit: () => void;
   next: () => void;
 };
 const microphone = strokeIcon(
@@ -64,6 +65,7 @@ export function renderKidsAnswer(
               maxlength=${ACTIVITY_NUMERIC_MAX_LENGTH}
               aria-describedby=${question.unit ? "kids-answer-unit" : nothing}
               .value=${value}
+              @focus=${actions.edit}
               ?readonly=${state.checking || state.canRetry || correct || recording}
               @input=${(event: InputEvent) => actions.draft((event.target as HTMLInputElement).value)}
             />
@@ -76,6 +78,7 @@ export function renderKidsAnswer(
               maxlength=${ACTIVITY_EXPLANATION_MAX_LENGTH}
               placeholder=${t("kids.answer.placeholder")}
               .value=${value}
+              @focus=${actions.edit}
               ?readonly=${state.checking || state.canRetry || correct || recording}
               @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
             ></textarea>

@@ -471,6 +471,9 @@ export class KidsApp {
       start: field?.selectionStart ?? value.length,
       end: field?.selectionEnd ?? value.length,
     };
+    if (destination === "solve") {
+      this.activity.setEditing(false);
+    }
     const generation = this.generation;
     const current = () =>
       !this.disposed && generation === this.generation && this.dictation === owner;
@@ -555,6 +558,7 @@ export class KidsApp {
             }
           },
           dictate: () => void this.dictate("solve"),
+          edit: () => this.activity.setEditing(true),
           hint: () => void this.activity.act("hint"),
           next: () => this.activity.continue(),
           retry: () => void this.activity.retry(),
@@ -661,6 +665,7 @@ export class KidsApp {
       this.snapshot.returnToSolve = this.snapshot.page === "solve";
     }
     this.snapshot.page = page;
+    this.activity.setEditing(false);
     this.writeLocation();
     this.paint();
     if (page === "solve") {

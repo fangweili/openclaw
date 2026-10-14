@@ -1068,8 +1068,8 @@ html[data-kids] body,
   line-height: 1.5;
 }
 
-/* Solve keeps typed and dictated answers visible through review. Focus makes
-   room for the software keyboard without another viewport or scroll owner. */
+/* Solve keeps typed and dictated answers visible through review. Its owner
+   holds keyboard layout across blur so a tap cannot move its target. */
 .kids-answer-label {
   display: block;
   margin: 0 0 8px;
@@ -1150,15 +1150,15 @@ html[data-kids] body,
   display: block;
 }
 
-.kids-solve:has(.kids-answer-input:focus) {
+.kids-solve--editing {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.kids-solve:has(.kids-answer-input:focus) .kids-pet {
+.kids-solve--editing .kids-pet {
   display: none;
 }
 
-.kids-solve:has(.kids-answer-input:focus) .kids-activity-card {
+.kids-solve--editing .kids-activity-card {
   width: 100%;
   max-width: 700px;
   margin: 0 auto;

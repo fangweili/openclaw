@@ -71,6 +71,7 @@ function viewActions(): KidsViewActions {
       draft: vi.fn(),
       check: vi.fn(),
       dictate: vi.fn(),
+      edit: vi.fn(),
       hint: vi.fn(),
       next: vi.fn(),
       help: vi.fn(),
@@ -368,6 +369,12 @@ it("keeps the submitted free answer and live result mounted while checking and r
     const field = root.querySelector<HTMLTextAreaElement>("#kids-answer")!;
     const live = root.querySelector(".kids-answer-result")!;
     expect(field.value).toBe(state.activity.answerDraft);
+    field.dispatchEvent(new FocusEvent("focus"));
+    expect(actions.activity.edit).toHaveBeenCalledOnce();
+    state.activity.answerEditing = true;
+    paint();
+    field.dispatchEvent(new FocusEvent("blur"));
+    expect(root.querySelector(".kids-solve--editing")).not.toBeNull();
     expect(live.textContent?.trim()).toBe("");
     expect(live.classList.contains("kids-answer-result--populated")).toBe(false);
     root

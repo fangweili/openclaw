@@ -37,6 +37,7 @@ export type KidsActivityState = {
   submission: Submission | null;
   answerDraft: string;
   answerError: string | null;
+  answerEditing: boolean;
   checking: boolean;
   imageUrl: string | null;
   imageError: boolean;
@@ -62,6 +63,7 @@ export function emptyKidsActivity(): KidsActivityState {
     submission: null,
     answerDraft: "",
     answerError: null,
+    answerEditing: false,
     checking: false,
     imageUrl: null,
     imageError: false,
@@ -240,6 +242,14 @@ export class KidsActivity {
     this.publish({ answerDraft: text, answerError: null, feedback: null, submission: null });
   }
 
+  /** Keep keyboard layout stable across blur until an explicit action changes it. */
+  setEditing(editing: boolean): void {
+    if (this.disposed || !this.binding || this.snapshot.answerEditing === editing) {
+      return;
+    }
+    this.publish({ answerEditing: editing });
+  }
+
   /** Only acknowledged text or final user speech calls this; concurrent turns coalesce. */
   touch(source: "chat" | "voice"): void {
     if (!this.binding || this.disposed) {
@@ -263,7 +273,7 @@ export class KidsActivity {
 
   /** Dismiss acknowledged feedback; the next question already came from the server. */
   continue(): void {
-    this.publish({ feedback: null, submission: null });
+    this.publish({ feedback: null, submission: null, answerEditing: false });
   }
 
   /** Permanently fence results, stop polling, revoke media, and join admitted requests. */
@@ -283,6 +293,7 @@ export class KidsActivity {
       checking: pending.mutation.kind === "answer",
       error: null,
       canRetry: false,
+      ...(pending.mutation.kind === "answer" ? { answerEditing: false } : {}),
       ...(pending.submission ? { submission: pending.submission, feedback: null } : {}),
     });
     return this.run(async () => {
@@ -456,6 +467,7 @@ export class KidsActivity {
     this.snapshot = {
       ...this.snapshot,
       ...update,
+      ...(changedQuestion ? { answerEditing: false } : {}),
       ...(changedQuestion && update.answerDraft === undefined
         ? { answerDraft: "", answerError: null }
         : {}),

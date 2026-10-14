@@ -83,7 +83,11 @@ to screen readers.
   dictated text shows a visible error and preserves the previous answer.
   **Say it** edits the captured question draft and never submits it. The app
   cancels that recording if its activity/question changes; late callbacks cannot
-  populate Chat or the next question. Keyboard focus hides Rocky to leave room.
+  populate Chat or the next question. Focusing an answer hides Rocky to leave room. The activity owner keeps one
+  presentation editing flag across ordinary blur, so pointer-down cannot move a
+  Check/Say it target before pointer-up. Check admission, dictation start,
+  navigation, Continue, question changes and binding retirement clear it. It is
+  neither persisted nor part of grading.
   Drafts survive navigation and ordinary polling in the same binding, but are
   memory-only and clear on question changes, disconnect and reload. An uncertain
   submitted answer retains its original ID and text through same-session reconnect.

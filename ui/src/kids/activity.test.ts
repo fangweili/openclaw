@@ -335,6 +335,8 @@ it("keeps a typed answer through checking and rollover without submitting twice"
   request.mockResolvedValueOnce(current);
   await owner.refresh();
   owner.updateAnswer("36");
+  owner.setEditing(true);
+  expect(owner.state.answerEditing).toBe(true);
   let complete!: (result: unknown) => void;
   request.mockReturnValueOnce(
     new Promise((resolve) => {
@@ -345,6 +347,7 @@ it("keeps a typed answer through checking and rollover without submitting twice"
   owner.updateAnswer("40");
   await owner.act("answer");
   expect(owner.state.checking).toBe(true);
+  expect(owner.state.answerEditing).toBe(false);
   expect(owner.state.answerDraft).toBe("36");
   expect(owner.state.submission?.answer).toEqual({ kind: "numeric", text: "36" });
   const next = snapshot();
@@ -443,17 +446,29 @@ it("bounds unsent answers, preserves them through polling, and clears them when 
   request.mockResolvedValueOnce(current);
   await owner.refresh();
   owner.updateAnswer("1/2");
+  owner.setEditing(true);
   owner.updateAnswer("9".repeat(41));
   expect(owner.state.answerDraft).toBe("1/2");
   expect(owner.state.answerError).toContain("40");
   request.mockResolvedValueOnce(current);
   await owner.refresh();
   expect(owner.state.answerDraft).toBe("1/2");
+  expect(owner.state.answerEditing).toBe(true);
+  owner.setEditing(false);
+  expect(owner.state.answerDraft).toBe("1/2");
+  owner.setEditing(true);
   const next = structuredClone(current);
   next.activity!.currentQuestion!.id = "q2";
   request.mockResolvedValueOnce(next);
   await owner.refresh();
   expect(owner.state.answerDraft).toBe("");
   expect(owner.state.answerError).toBeNull();
+  expect(owner.state.answerEditing).toBe(false);
+  owner.setEditing(true);
+  owner.continue();
+  expect(owner.state.answerEditing).toBe(false);
+  owner.setEditing(true);
+  owner.disconnect();
+  expect(owner.state.answerEditing).toBe(false);
   expect(request.mock.calls.every(([method]) => method === "kids.activity.get")).toBe(true);
 });
