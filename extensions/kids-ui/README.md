@@ -3,7 +3,8 @@
 This optional, private plugin serves the minimal tutor app at `/kids/` on the
 existing Gateway origin. It owns public static files from its adjacent
 `assets/` directory, bounded private dictation, and optional saved daily activities.
-It registers preparation tools for configured background jobs. It does not replace
+Its manifest declares `kids_activity` for host discovery; the registered factory
+exposes it only to configured background jobs. It does not replace
 the Control UI, create child conversations, grant permissions, or handle credentials. The browser connects directly
 to the Gateway's authenticated WebSocket; configured identity and agent policies
 remain authoritative.

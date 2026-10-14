@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type {
   OpenClawPluginApi,
   OpenClawPluginToolContext,
@@ -12,11 +13,16 @@ import type {
 import { registerActivityTools, type ActivityToolsOptions } from "./activity-tools.js";
 
 type ActivityToolRuntime = NonNullable<ReturnType<ActivityToolsOptions["getRuntime"]>>;
+const manifest = JSON.parse(
+  readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"),
+) as { contracts?: { tools?: string[] } };
 
 /** Exercise discovery through the real public registration boundary. */
 function registeredTool(context: OpenClawPluginToolContext<2>, options: ActivityToolsOptions) {
   const registerTool = vi.fn<OpenClawPluginApi["registerTool"]>();
   registerActivityTools({ registerTool }, options);
+  // The host discovers and admits registrations from the manifest before calling factories.
+  expect(manifest.contracts?.tools).toContain(registerTool.mock.calls[0]?.[1]?.name);
   const factory = registerTool.mock.calls[0]?.[0];
   if (!factory || typeof factory === "function" || !("contextVersion" in factory)) {
     throw new Error("Expected the registered version-2 activity tool factory");
