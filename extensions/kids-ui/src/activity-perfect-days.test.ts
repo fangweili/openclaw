@@ -321,7 +321,7 @@ describe("durable perfect calendar days", () => {
       expect(art).toEqual({ childId, date: today, ...artwork });
       const context = await migrated.execute({ type: "prepare", input: target(childId) });
       expect(
-        context.recentActivities.filter((activity) => activity.scope === "extra"),
+        context.recentActivities.filter((evidence) => evidence.scope === "extra"),
       ).toHaveLength(2);
       expect(context.snapshot.perfectDayStreak).toBe(9);
     } finally {
@@ -332,10 +332,11 @@ describe("durable perfect calendar days", () => {
       const after = legacyRows(check);
       expect({ ...after, days: undefined }).toEqual({ ...before, days: undefined });
       expect(after.days).toEqual(
-        before.days.map((row) => ({
-          ...row,
-          content: JSON.stringify({ learningBrief: "Keep the existing teaching context." }),
-        })),
+        before.days.map((row) =>
+          Object.assign({}, row, {
+            content: JSON.stringify({ learningBrief: "Keep the existing teaching context." }),
+          }),
+        ),
       );
       expect(check.prepare("SELECT * FROM kids_pet").all()).toEqual(pet);
       expect(check.prepare("SELECT required_count FROM kids_day").get()?.required_count).toBe(1);
@@ -552,12 +553,18 @@ describe("durable perfect calendar days", () => {
       expect(db.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
       const migrated = legacyRows(db);
       expect({ ...migrated, days: undefined }).toEqual({ ...originalRows, days: undefined });
-      expect(migrated.days).toEqual(originalRows.days.map((row) => ({ ...row, content: "{}" })));
+      expect(migrated.days).toEqual(
+        originalRows.days.map((row) => Object.assign({}, row, { content: "{}" })),
+      );
       const art = db
         .prepare("SELECT child_id,date,created_at,content FROM kids_art ORDER BY child_id,date")
         .all();
-      expect(art.map((row) => ({ ...row, content: JSON.parse(String(row.content)) }))).toEqual(
-        originalRows.days.map((row) => ({ ...row, content: JSON.parse(String(row.content)) })),
+      expect(
+        art.map((row) => Object.assign({}, row, { content: JSON.parse(String(row.content)) })),
+      ).toEqual(
+        originalRows.days.map((row) =>
+          Object.assign({}, row, { content: JSON.parse(String(row.content)) }),
+        ),
       );
       expect(db.prepare("SELECT DISTINCT required_count FROM kids_day").all()).toEqual([
         { required_count: 3 },

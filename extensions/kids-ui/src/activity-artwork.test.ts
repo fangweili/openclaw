@@ -227,7 +227,9 @@ describe("independent artwork persistence", () => {
     });
     let admitted = true;
     const revoked = art(original, refreshed.scene.normal.imageId, () => {
-      if (!admitted) throw new Error("Revoked artwork authority");
+      if (!admitted) {
+        throw new Error("Revoked artwork authority");
+      }
     });
     admitted = false;
     await expect(revoked).rejects.toThrow();

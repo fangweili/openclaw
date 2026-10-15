@@ -140,7 +140,9 @@ export class ActivityArtworkStore {
 
   private prune(target: ActivityStoreTarget): void {
     const latest = this.latest(target);
-    if (!latest) return;
+    if (!latest) {
+      return;
+    }
     // Retain the latest usable picture even across a long gap in art generation.
     executeSqliteQuerySync(
       this.db,
