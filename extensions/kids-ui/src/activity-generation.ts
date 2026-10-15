@@ -3,7 +3,7 @@
  * Cron owns scheduling; the activity store owns publication and progress. Each
  * accepted child preparation generates normal then excited artwork, referencing
  * the same approved pet, then attempts two daily rest poses before publishing
- * three complete challenges. Optional renders stop contributing at their deadline;
+ * the complete daily goal. Optional renders stop contributing at their deadline;
  * late results are discarded and joined, so publication can precede tool settlement. No generation runs
  * on browser reads. A service instance admits at most two preparations and one
  * per child. Closing revokes admission and joins provider calls/file cleanup;
@@ -32,6 +32,7 @@ export type ActivityGenerationChild = ActivityChildBinding & {
 /** Agent-authored creative input. Character identity and image references are host-owned. */
 export type ActivityDailyPreparation = {
   date: string;
+  learningBrief: string;
   activities: DailyActivityBundle["activities"];
   normalPrompt: string;
   excitedPrompt: string;
@@ -131,6 +132,7 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
     const bundle: DailyActivityBundle = {
       childId: child.childId,
       date: input.date,
+      learningBrief: input.learningBrief,
       activities: input.activities,
       scenePrompt: input.normalPrompt,
       scene: {

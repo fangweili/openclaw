@@ -89,10 +89,13 @@ function completedDayState(): KidsViewState {
     date: "2026-10-14",
     correctStreak: 12,
     perfectDayStreak: 0,
+    extras: { questionsSolved: 0 },
+    canContinue: true,
     daily: {
       date: "2026-10-14",
-      total: 4,
-      completed: 4,
+      questionTotal: 10,
+      total: 1,
+      completed: 1,
       questionsSolved: 10,
       firstTryCorrect: 8,
       hintedQuestions: 2,
@@ -106,8 +109,11 @@ function completedDayState(): KidsViewState {
       subject: "Science",
       started: true,
       completed: true,
-      currentIndex: 1,
-      total: 1,
+      scope: "daily",
+      firstTryCorrect: 8,
+      hintedQuestions: 2,
+      currentIndex: 10,
+      total: 10,
       currentQuestion: null,
     },
   };
@@ -200,7 +206,7 @@ it("keeps final-answer feedback before replacing the question with the full dail
     const solve = root.querySelector(".kids-solve")!;
     expect(solve.querySelector("h1")!.textContent?.trim()).toBe("You did it, Child!");
     expect(solve.querySelector("h2")!.textContent).toBe("Look what you figured out!");
-    expect(solve.textContent).toContain("4 challenges · 10 questions solved");
+    expect(solve.textContent).toContain("10 questions solved");
     expect(
       Array.from(solve.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
     ).toEqual(["8", "2", "0"]);
@@ -210,15 +216,16 @@ it("keeps final-answer feedback before replacing the question with the full dail
     expect(solve.textContent).not.toContain("The last question");
     expect(solve.textContent).not.toContain("Science");
     expect(solve.querySelector(".kids-activity-count, [role=progressbar]")).toBeNull();
-    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today complete");
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Daily goal complete");
+    expect(solve.querySelectorAll(".kids-activity-card button")).toHaveLength(1);
     solve.querySelector<HTMLButtonElement>(".kids-daily-footer button")!.click();
-    expect(actions.activity.chat).toHaveBeenCalledOnce();
+    expect(actions.activity.start).toHaveBeenCalledOnce();
   } finally {
     render(null, root);
   }
 });
 
-it("dates an older completed batch and does not mark today complete while carryover or daily work remains", () => {
+it("dates older work and preserves the nine-question goal of a saved multi-part day", () => {
   const root = document.createElement("div");
   const state = completedDayState();
   const snapshot = state.activity.snapshot!;
@@ -226,25 +233,99 @@ it("dates an older completed batch and does not mark today complete while carryo
   try {
     snapshot.daily!.date = "2026-10-13";
     snapshot.activity!.date = "2026-10-13";
+    snapshot.canContinue = false;
     paint();
     const solve = root.querySelector(".kids-solve")!;
     expect(solve.querySelector("h1")!.textContent?.trim()).toBe("Nice exploring, Child!");
     expect(solve.textContent).toContain("Completed for Oct 13, 2026");
     expect(solve.textContent).not.toContain("tomorrow");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
+      "Daily goal complete",
+    );
     snapshot.daily!.date = snapshot.date;
+    snapshot.daily!.completed = 0;
     snapshot.activity!.completed = false;
     paint();
     expect(solve.querySelector(".kids-daily-recap")).toBeNull();
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+    expect(solve.textContent).toContain("Continuing from Oct 13, 2026");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
+      "Daily goal complete",
+    );
+    snapshot.activity!.date = snapshot.date;
     snapshot.activity!.completed = true;
-    snapshot.daily!.completed = 3;
+    snapshot.daily!.total = 3;
+    snapshot.daily!.completed = 1;
+    snapshot.daily!.questionTotal = 9;
+    snapshot.daily!.questionsSolved = 3;
     snapshot.nextActivity = { id: "next", title: "One more adventure" };
     paint();
     expect(solve.querySelector(".kids-daily-recap")).toBeNull();
     expect(solve.textContent).toContain("Adventure complete!");
-    expect(solve.textContent).toContain("Another challenge");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+    expect(solve.textContent).toContain("Keep going");
+    expect(solve.textContent).toContain("Daily goal · 3 of 9 solved");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
+      "Daily goal complete",
+    );
+  } finally {
+    render(null, root);
+  }
+});
+
+it("keeps one completion action through generation and retry, then separates extra results from the daily goal", () => {
+  const root = document.createElement("div");
+  const state = completedDayState();
+  const actions = viewActions();
+  const data = state.activity.snapshot!;
+  const paint = () => render(renderKidsView(state, actions), root);
+  try {
+    state.activity.busy = true;
+    state.activity.preparing = true;
+    paint();
+    const solve = root.querySelector(".kids-solve")!;
+    const card = solve.querySelector(".kids-activity-card")!;
+    expect(card.querySelectorAll("button")).toHaveLength(1);
+    expect(card.querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
+    expect(card.textContent).toContain("Preparing your next problems…");
+    expect(card.textContent).toContain("10 questions solved");
+    state.activity.busy = false;
+    state.activity.preparing = false;
+    state.activity.canRetry = true;
+    state.activity.error =
+      "Rocky couldn’t prepare the next problems. Your progress is saved—try again.";
+    paint();
+    expect(card.querySelectorAll("button")).toHaveLength(1);
+    expect(card.querySelector("button")!.textContent?.trim()).toBe("Try again");
+    expect(card.querySelector(".kids-daily-recap")).not.toBeNull();
+    card.querySelector<HTMLButtonElement>("button")!.click();
+    expect(actions.activity.retry).toHaveBeenCalledOnce();
+
+    state.activity.canRetry = false;
+    state.activity.error = null;
+    data.perfectDayStreak = 3;
+    data.extras.questionsSolved = 20;
+    data.activity = {
+      ...data.activity!,
+      id: "extra-two",
+      scope: "extra",
+      firstTryCorrect: 9,
+      hintedQuestions: 1,
+    };
+    paint();
+    expect(card.textContent).toContain("Extra practice complete!");
+    expect(
+      Array.from(card.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
+    ).toEqual(["9", "1", "3"]);
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
+      "Daily goal complete · 20 extra solved",
+    );
+    data.activity.completed = false;
+    data.activity.currentIndex = 4;
+    data.canContinue = false;
+    paint();
+    expect(card.querySelector(".kids-daily-recap")).toBeNull();
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
+      "Daily goal complete · Continue extra practice",
+    );
   } finally {
     render(null, root);
   }
@@ -559,6 +640,8 @@ it("keeps the submitted free answer and live result mounted while checking and r
     date: "2026-10-14",
     correctStreak: 0,
     perfectDayStreak: 0,
+    extras: { questionsSolved: 0 },
+    canContinue: false,
     daily: null,
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
@@ -569,6 +652,9 @@ it("keeps the submitted free answer and live result mounted while checking and r
       subject: "Math",
       started: true,
       completed: false,
+      scope: "daily",
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
       currentIndex: 0,
       total: 3,
       currentQuestion: question,
@@ -653,6 +739,8 @@ it("keeps Solve recording controls visible through microphone permission and tra
     date: "2026-10-14",
     correctStreak: 0,
     perfectDayStreak: 0,
+    extras: { questionsSolved: 0 },
+    canContinue: false,
     daily: null,
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
@@ -663,6 +751,9 @@ it("keeps Solve recording controls visible through microphone permission and tra
       subject: "Math",
       started: true,
       completed: false,
+      scope: "daily",
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
       currentIndex: 0,
       total: 3,
       currentQuestion: {

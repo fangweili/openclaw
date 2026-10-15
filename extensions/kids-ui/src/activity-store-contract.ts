@@ -5,6 +5,10 @@ import type {
 } from "@openclaw/kids-activity-contract";
 import type {
   ActivityGrade,
+  ActivityContinueMutation,
+  ActivityDirectMutation,
+  ActivityDefinition,
+  ActivityEvidence,
   ActivityPreparationContext,
   ActivityPracticeOffer,
   ActivityQuestionDefinition,
@@ -29,7 +33,33 @@ export type ActivityStoreOperations = {
       | { kind: "grade"; question: Extract<ActivityQuestionDefinition, { kind: "explanation" }> };
   };
   mutate: {
-    input: ActivityStoreTarget & { mutation: ActivityMutation; grade?: ActivityGrade };
+    input: ActivityStoreTarget & { mutation: ActivityDirectMutation; grade?: ActivityGrade };
+    output: ActivityResult;
+  };
+  /** Read-only preflight: a successor is authoritative even after its request receipt expires. */
+  planNext: {
+    input: ActivityStoreTarget & { mutation: ActivityContinueMutation };
+    output:
+      | { kind: "replay"; result: ActivityResult }
+      | {
+          kind: "generate";
+          date: string;
+          previous: ActivityEvidence;
+          history: ActivityEvidence[];
+          historyOmitted: number;
+          learningBrief: string | null;
+        };
+  };
+  /**
+   * Append and select/start the generator's already-validated ten-question
+   * definition once; rechecks date, predecessor and authority at commit.
+   */
+  publishNext: {
+    input: ActivityStoreTarget & {
+      mutation: ActivityContinueMutation;
+      generationDate: string;
+      activity: ActivityDefinition;
+    };
     output: ActivityResult;
   };
   offerPractice: {
@@ -49,7 +79,7 @@ export function encodeActivityMutation(mutation: ActivityMutation): string {
     fields.push(mutation.source);
   } else {
     fields.push(mutation.activityId);
-    if (mutation.kind !== "start") {
+    if (mutation.kind !== "start" && mutation.kind !== "continue") {
       fields.push(mutation.questionId);
     }
     if (mutation.kind === "answer") {

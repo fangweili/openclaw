@@ -36,10 +36,13 @@ const prepared: ActivityPreparationContext = {
     activity: null,
     daily: null,
     nextActivity: null,
+    canContinue: false,
+    extras: { questionsSolved: 0 },
   },
   recentActivities: [],
   recentScenes: [],
   activitiesOmitted: 0,
+  learningBrief: null,
 };
 function harness() {
   let hook!: Hook;
@@ -105,6 +108,7 @@ describe("activity prompt partition", () => {
       recentActivities: [
         {
           id: "a",
+          scope: "daily",
           date: "2026-10-13",
           title: "Equal parts",
           subject: "Math",

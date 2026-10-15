@@ -19,8 +19,9 @@ another notification ledger.
    If `activity` is completed and `nextActivity` is present, you may invite them
    to try that optional next challenge. If neither condition holds, return
    exactly `NO_REPLY`. Match the actual title/concept and progress. The daily
-   batch has three optional challenges with three questions each; it is not a
-   requirement to finish all three. Do not invent a new question, regenerate a
+   goal has ten problems, with older saved days retaining their original format.
+   Keep invitations optional. Once the daily goal is complete, do not send
+   reminders merely because Keep going can generate more. Do not invent a new question, regenerate a
    quiz in chat, or claim a new activity was published. Avoid repeating the last
    invitation. Existing scheduled chat-quiz generation is replaced by this
    reminder; never send a second challenge alongside the saved Today work.

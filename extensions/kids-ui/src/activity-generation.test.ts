@@ -31,22 +31,34 @@ const sibling: ActivityGenerationChild = {
 };
 const input: ActivityDailyPreparation = {
   date: "2026-10-14",
-  activities: [1, 2, 3].map((index) => ({
+  learningBrief: "Dated synthetic learner: practicing equal parts with support.",
+  activities: [1].map((index) => ({
     id: `activity-${index}`,
     title: "A tiny boat",
     subject: "science",
-    questions: [1, 2, 3].map((n) => ({
-      kind: "choice" as const,
-      id: `q${n}`,
-      prompt: "Which object floats?",
-      options: [
-        { id: "a", text: "A cork" },
-        { id: "b", text: "A coin" },
-      ],
-      correctOptionId: "a",
-      hint: "Think of a light cork.",
-      explanation: "Cork is less dense than water.",
-    })),
+    questions: Array.from({ length: 10 }, (_, n) =>
+      n < 2
+        ? {
+            kind: "choice" as const,
+            id: `q${n}`,
+            prompt: "Which object floats?",
+            options: [
+              { id: "a", text: "A cork" },
+              { id: "b", text: "A coin" },
+            ],
+            correctOptionId: "a",
+            hint: "Think of a light cork.",
+            explanation: "Cork is less dense than water.",
+          }
+        : {
+            kind: "explanation" as const,
+            id: `q${n}`,
+            prompt: "Why does cork float?",
+            rubric: "Cork is less dense than water.",
+            hint: "Think about density.",
+            explanation: "Cork is less dense than water.",
+          },
+    ),
   })),
   normalPrompt: "Rocky builds a leaf boat after a conversation about floating objects.",
   excitedPrompt: "Rocky raises its arms beside the same boat.",
@@ -136,14 +148,14 @@ describe("daily pet artwork owner", () => {
     await h.owner.close();
   });
 
-  it("rejects incomplete or duplicate three-by-three batches before provider calls", async () => {
+  it("rejects incomplete or duplicate ten-question batches before provider calls", async () => {
     const h = await harness();
     const missing = structuredClone(input);
     missing.activities.pop();
     const extraQuestion = structuredClone(input);
     extraQuestion.activities[0]!.questions.push(extraQuestion.activities[0]!.questions[0]!);
     const duplicate = structuredClone(input);
-    duplicate.activities[1]!.id = duplicate.activities[0]!.id;
+    duplicate.activities[0]!.questions[1]!.id = duplicate.activities[0]!.questions[0]!.id;
     for (const malformed of [missing, extraQuestion, duplicate]) {
       await expect(
         h.owner.prepareDaily(child.childId, malformed, { assertCurrent() {} }),

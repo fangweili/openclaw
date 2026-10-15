@@ -507,13 +507,6 @@ html[data-kids] body {
   padding-top: 24px;
 }
 
-.kids-daily-footer p {
-  margin: 0 0 16px;
-  color: var(--kids-muted);
-  font-size: 15px;
-  line-height: 1.6;
-}
-
 .kids-daily-footer button {
   width: 100%;
 }

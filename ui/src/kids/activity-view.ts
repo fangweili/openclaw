@@ -5,7 +5,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
 import { renderKidsAnswer, type KidsAnswerInput } from "./answer-view.ts";
-import { completedKidsDay, renderKidsDailyProgress, renderKidsDailyRecap } from "./daily-view.ts";
+import { completedKidsBatch, renderKidsActivityProgress, renderKidsRecap } from "./daily-view.ts";
 import { renderKidsPet } from "./pet-view.ts";
 
 export type KidsActivityActions = {
@@ -32,7 +32,9 @@ export function renderKidsActivity(
 ) {
   const data = state.snapshot;
   const activity = data?.activity;
-  const retainingAnswer = state.checking || state.canRetry || state.feedback?.outcome === "correct";
+  const retainingAnswer =
+    state.submission !== null &&
+    (state.checking || state.canRetry || state.feedback?.outcome === "correct");
   const question = retainingAnswer
     ? (state.submission?.question ?? activity?.currentQuestion)
     : activity?.currentQuestion;
@@ -40,15 +42,16 @@ export function renderKidsActivity(
   const freeAnswer = question && question.kind !== "choice";
   const recording = input.dictation.active || input.dictation.finishing;
   const locked = state.busy || state.canRetry || state.error !== null;
-  const completedDay = !state.feedback && !retainingAnswer ? completedKidsDay(data) : null;
-  const currentDay = completedDay?.date === data?.date;
+  const completed = Boolean(activity?.completed && !state.feedback && !retainingAnswer);
+  const recap = completed ? completedKidsBatch(data) : null;
+  const currentDay = recap?.date === data?.date;
   return html`<main
     class=${state.answerEditing ? "kids-today kids-solve kids-solve--editing" : "kids-today kids-solve"}
     aria-label=${t("kids.home.solve")}
     ?hidden=${hidden}
   >
     ${
-      completedDay
+      recap
         ? html`<h1 class="kids-page-title kids-home-title">
             ${t(
               currentDay
@@ -65,29 +68,38 @@ export function renderKidsActivity(
     }
     ${renderKidsPet(state, actions.retry)}
     <section
-      class=${completedDay ? "kids-activity-card kids-activity-card--recap" : "kids-activity-card"}
-      aria-label=${t(completedDay ? "kids.daily.label" : "kids.activity.challenge")}
+      class=${recap ? "kids-activity-card kids-activity-card--recap" : "kids-activity-card"}
+      aria-label=${t(recap ? "kids.daily.label" : "kids.activity.challenge")}
       aria-busy=${state.busy}
     >
       ${
         state.error
           ? html`<div class="kids-activity-notice" role="alert">
               <p>${state.error}</p>
-              <button
-                class="kids-activity-secondary"
-                ?disabled=${state.busy}
-                @click=${actions.retry}
-              >
-                ${t("kids.retry")}
-              </button>
+              ${
+                !completed
+                  ? html`<button
+                      class="kids-activity-secondary"
+                      ?disabled=${state.busy}
+                      @click=${actions.retry}
+                    >
+                      ${t("kids.retry")}
+                    </button>`
+                  : nothing
+              }
             </div>`
           : nothing
       }
       ${
         state.loading && !data
           ? html`<p class="kids-activity-empty" role="status">${t("kids.activity.loading")}</p>`
-          : completedDay && data
-            ? renderKidsDailyRecap(completedDay, data.date, data.perfectDayStreak, actions.chat)
+          : recap && data
+            ? renderKidsRecap(
+                recap,
+                data.date,
+                data.perfectDayStreak,
+                renderCompletionAction(state, actions),
+              )
             : !heading
               ? html`<div class="kids-activity-empty">
                   <h2>${t("kids.activity.gettingReady")}</h2>
@@ -97,11 +109,7 @@ export function renderKidsActivity(
                   </button>
                 </div>`
               : html`
-                  ${
-                    !state.feedback && data?.daily
-                      ? renderKidsDailyProgress(data.daily, data.date)
-                      : nothing
-                  }
+                  ${!state.feedback && data ? renderKidsActivityProgress(data) : nothing}
                   <div class="kids-activity-heading">
                     <span class="kids-activity-subject">${heading.subject}</span>
                     ${!state.feedback && activity ? html`<span class="kids-activity-count">${t("kids.activity.questionProgress", { completed: String(activity.currentIndex), total: String(activity.total) })}</span>` : nothing}
@@ -152,25 +160,7 @@ export function renderKidsActivity(
                               <span class="kids-activity-spark" aria-hidden="true">✦</span>
                               <h3>${t("kids.activity.finished")}</h3>
                               <p>${t("kids.activity.finishedDetail")}</p>
-                              <div class="kids-activity-actions">
-                                ${
-                                  data?.nextActivity
-                                    ? html`<button
-                                        class="kids-activity-primary"
-                                        ?disabled=${locked}
-                                        @click=${actions.start}
-                                      >
-                                        ${t("kids.activity.anotherChallenge")}
-                                      </button>`
-                                    : nothing
-                                }
-                                <button
-                                  class=${data?.nextActivity ? "kids-activity-secondary" : "kids-activity-primary"}
-                                  @click=${actions.chat}
-                                >
-                                  ${t("kids.activity.chatAction")}
-                                </button>
-                              </div>
+                              ${renderCompletionAction(state, actions)}
                             </div>`
                           : activity && !activity.started
                             ? html`<p class="kids-activity-intro">
@@ -211,6 +201,23 @@ export function renderKidsActivity(
       }
     </section>
   </main>`;
+}
+
+/** Completion has one action; uncertain writes retry their original request. */
+function renderCompletionAction(state: KidsActivityState, actions: KidsActivityActions) {
+  const retry = state.error !== null || state.canRetry;
+  if (!retry && !state.preparing && !state.snapshot?.nextActivity && !state.snapshot?.canContinue) {
+    return nothing;
+  }
+  return html`<button
+    class="kids-activity-primary"
+    ?disabled=${state.busy}
+    @click=${retry ? actions.retry : actions.start}
+  >
+    <span aria-live="polite"
+      >${t(state.preparing ? "kids.activity.preparing" : retry ? "kids.retry" : "kids.activity.keepGoing")}</span
+    >
+  </button>`;
 }
 
 function renderHelp(question: ActivityQuestion, disabled: boolean, actions: KidsActivityActions) {

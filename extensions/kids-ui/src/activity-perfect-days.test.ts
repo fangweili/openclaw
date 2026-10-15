@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActivityMutation } from "@openclaw/kids-activity-contract";
 import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import {
   openSqliteWorkerStore,
@@ -12,6 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type {
   ActivityDefinition,
+  ActivityDirectMutation,
   ActivityGrade,
   DailyActivityBundle,
 } from "./activity-contract.js";
@@ -82,7 +82,12 @@ const target = (childId: string, date = today) => ({
 function get(childId: string, date = today) {
   return store.execute({ type: "get", input: target(childId, date) });
 }
-function mutate(childId: string, mutation: ActivityMutation, date = today, grade?: ActivityGrade) {
+function mutate(
+  childId: string,
+  mutation: ActivityDirectMutation,
+  date = today,
+  grade?: ActivityGrade,
+) {
   return runSqliteWorkerStoreWrite(
     store,
     (scope) =>
@@ -502,7 +507,7 @@ describe("durable perfect calendar days", () => {
     const childId = "clean";
     const activityId = activity(childId, today, 0).id;
     await mutate(childId, { kind: "start", requestId: "start-clean", activityId });
-    const unclear: ActivityMutation = {
+    const unclear: ActivityDirectMutation = {
       kind: "answer",
       requestId: "unclear",
       activityId,
@@ -550,7 +555,7 @@ describe("durable perfect calendar days", () => {
     for (const childId of ["hint", "wrong"]) {
       const activityId = activity(childId, today, 0).id;
       await mutate(childId, { kind: "start", requestId: "start", activityId });
-      const mutation: ActivityMutation =
+      const mutation: ActivityDirectMutation =
         childId === "hint"
           ? { kind: "hint", requestId: "disqualify", activityId, questionId: "q1" }
           : {
@@ -579,7 +584,7 @@ describe("durable perfect calendar days", () => {
     expect((await get(childId, today)).perfectDayStreak).toBe(2);
   });
 
-  it("continues a streak beyond retained history, survives worker restart, and supports additive-copy rollback", async () => {
+  it("continues a streak beyond retained history and restart while distinguishing new daily goals", async () => {
     expect((await get("retention")).perfectDayStreak).toBe(91);
     const complete = await finish("retention");
     expect(complete.perfectDayStreak).toBe(92);
@@ -600,31 +605,46 @@ describe("durable perfect calendar days", () => {
       (scope) =>
         scope.execute({
           type: "publish",
-          input: { ...target("retention", tomorrow), bundle: bundle("retention", tomorrow) },
+          input: {
+            ...target("retention", tomorrow),
+            bundle: {
+              ...bundle("retention", tomorrow),
+              learningBrief: "Fraction relationships at the child's current level.",
+              activities: [
+                {
+                  ...activity("retention", tomorrow, 0),
+                  questions: Array.from({ length: 10 }, (_, index) => ({
+                    ...activity("retention", tomorrow, 0).questions[0]!,
+                    id: `q${index + 1}`,
+                  })),
+                },
+              ],
+            },
+          },
         }),
       () => {},
       [databasePath],
     );
     expect((await finish("retention", tomorrow)).perfectDayStreak).toBe(93);
     await store.close();
-    // Offline task-owned copy rehearsal: dropping only additive columns preserves
-    // every original v2 field and all activity progress made since the upgrade.
-    const rollbackPath = path.join(directory, "rollback.sqlite");
-    await fs.copyFile(databasePath, rollbackPath);
-    const rollback = new DatabaseSync(rollbackPath);
+    const saved = new DatabaseSync(databasePath, { readOnly: true });
     try {
-      const before = legacyRows(rollback);
+      // The historical count stays three; only the new ten-question day uses one
+      // activity. An old schema-2 binary cannot safely infer this new day's goal.
       expect(
-        rollback.prepare("SELECT COUNT(*) AS count FROM kids_day WHERE required_count != 3").get()
-          ?.count,
-      ).toBe(0);
-      rollback.exec(
-        "BEGIN IMMEDIATE; ALTER TABLE kids_pet DROP COLUMN last_perfect_date; ALTER TABLE kids_pet DROP COLUMN perfect_day_streak; ALTER TABLE kids_day DROP COLUMN required_count; PRAGMA user_version = 2; COMMIT;",
-      );
-      expect(legacyRows(rollback)).toEqual(before);
-      expect(rollback.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
+        saved
+          .prepare("SELECT required_count FROM kids_day WHERE child_id = ? AND date = ?")
+          .get("retention", today)?.required_count,
+      ).toBe(3);
+      expect(
+        saved
+          .prepare("SELECT required_count FROM kids_day WHERE child_id = ? AND date = ?")
+          .get("retention", tomorrow)?.required_count,
+      ).toBe(1);
+      expect(saved.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(saved.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
     } finally {
-      rollback.close();
+      saved.close();
     }
     store = await openSqliteWorkerStore<ActivityStoreOperations>({
       moduleUrl,

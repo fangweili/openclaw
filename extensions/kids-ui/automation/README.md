@@ -11,7 +11,7 @@ The activity plugin owns saved quizzes, answers, attempts, pet clocks and comple
 scene publication. It checks choice/numeric answers directly and checks short
 explanations through the child's configured model in an isolated, tool-free
 completion. Two isolated daily cron jobs ask the existing agents to plan
-their child's three three-question challenges and four daily mood pictures.
+their child's ten-question daily goal and four daily mood pictures.
 Cron owns scheduling, run cancellation and retries. The
 plugin's `kids_activity` tool owns image generation through the configured image
 runtime, including normal-to-excited/bored/sleeping reference continuity and fixed
@@ -38,6 +38,11 @@ current schedules and delivery settings. Add `kids_activity` to their tool
 allowlists if an allowlist is present. Insert the instructions in
 `cron-nightly-activities.md` and `cron-weekly-activities.md` into their existing
 owned prompts. These are evidence extensions, not replacement profile owners.
+
+The nightly owner consolidates retained conversations and saved Solve results
+into the existing profile and recent-activity summary. Live tutoring does not
+need a separate progress-log write at each practice boundary. Keep existing
+dated logs as read-only historical evidence; new batches do not require them.
 
 Configure `plugins.entries.kids-ui.config` with verified existing app session
 keys and the actual job IDs returned when creating the preparation jobs. For
@@ -88,7 +93,7 @@ complete date; it does not mean a child received a notification.
 ## Collector integration
 
 Copy `collect-app-activity.mjs` alongside the existing `kids-activity.mjs` and
-apply `collector-integration.patch` after reviewing it against that host's
+apply `collector-integration.diff` after reviewing it against that host's
 collector. The patch uses its existing trusted child/profile bindings; it does
 not store configuration, credentials, message text or delivery receipts twice.
 The adapter reads `kids.activity.get` through the existing authenticated host CLI,
@@ -160,18 +165,24 @@ eight image reads run concurrently; each preparation can admit two optional
 provider calls concurrently. Shutdown revokes admission and joins them
 before releasing dependencies.
 
-Each day contains exactly three challenges of three questions each, plus up to four
-pictures shared by the whole day. The child sees one challenge at a time and can
-choose Another challenge or Chat after completion. After all three, the app
-shows All done for today. A started unfinished challenge stays resumable across
-days; unstarted extras are replaced when the next morning's batch arrives. The
-newest day's counts exclude any older carryover. A published day is immutable;
-a duplicate preparation returns without generating again. Required-art or storage
-failure preserves the previous complete activities. Optional render/encoding failures
-use original fixed poses without blocking publication. Daily resting art is shown
-only on its own local date; old batches and missing variants use fixed originals.
+Each new day contains one ten-question goal (at least eight free answers), plus
+up to four shared pictures. The child can choose Keep going after completion to
+generate and immediately start another ten-question batch. Optional batches adapt
+to saved prior results, the dated `learningBrief` supplied by the daily job, and
+recent own-session conversation as unscored context. They require no new cron job,
+agent, persistent session or image generation. Failure preserves the recap with a
+retry button. The daily goal and perfect-day streak exclude optional batches.
+
+Copy the updated daily preparation prompt with this release: `prepare_daily`
+requires one ten-question activity and a nonblank `learningBrief` of at most
+8,000 characters. This snapshot carries the existing profile and notes, including
+evidence dates and coverage gaps; it does not become another profile writer.
+Existing saved three-by-three days and parent practice stay unchanged. A started
+activity remains resumable across days; unstarted old extras are not offered.
+Required-art or storage failure preserves the previous complete bundle. Optional
+render failures use fixed poses. Daily resting art is shown only on its own date.
 The optional `restImages` field remains optional day content; old days use fixed
-resting poses. The current activity schema is 3; follow the main plugin README's
+resting poses. Adaptive batches reuse activity schema 3 without a migration; follow the main plugin README's
 [upgrade and rollback contract](../README.md#daily-activities-and-pets) for the
 coordinated backup, retained-history initialization, and compatible copy downgrade.
 Switching binaries alone cannot roll back this database. Never discard work

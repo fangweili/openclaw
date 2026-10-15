@@ -513,14 +513,14 @@ describe("client voice session", () => {
       agentId: "main",
       sessionId: "session-agent-main-main",
     });
-    expect(persisted[2]?.event.message).toHaveProperty("__openclaw.senderIdentity", {
+    expect(persisted[2]?.event).toHaveProperty("message.__openclaw.senderIdentity", {
       type: "profile",
       id: "original-caller",
     });
-    expect(persisted[2]?.event.message).toHaveProperty("__openclaw.senderId", "original-caller");
-    expect(persisted[2]?.event.message).not.toHaveProperty("__openclaw.senderName");
-    expect(persisted[2]?.event.message).not.toHaveProperty("__openclaw.senderUsername");
-    expect(persisted[1]?.event.message).not.toHaveProperty("__openclaw.senderIdentity");
+    expect(persisted[2]?.event).toHaveProperty("message.__openclaw.senderId", "original-caller");
+    expect(persisted[2]?.event).not.toHaveProperty("message.__openclaw.senderName");
+    expect(persisted[2]?.event).not.toHaveProperty("message.__openclaw.senderUsername");
+    expect(persisted[1]?.event).not.toHaveProperty("message.__openclaw.senderIdentity");
     expect(sessionAccessorMocks.appendTranscriptMessage).toHaveBeenCalledTimes(41);
     expect(
       sessionAccessorMocks.appendTranscriptMessage.mock.calls.map(([, options]) => options.eventId),

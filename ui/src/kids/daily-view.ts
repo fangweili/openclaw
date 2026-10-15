@@ -1,25 +1,45 @@
 /**
- * Shared, stateless presentation of the server's latest prepared day. The plugin
- * owns every count and the current date; neither rendering nor navigation records
- * progress. Home uses the same completion boundary as Solve. Retained answer
- * feedback takes precedence at the Solve caller until the child continues.
+ * Stateless daily-goal and selected-batch presentation. The plugin owns every
+ * count and the current date. Optional work never changes daily completion;
+ * its recap uses only that activity's counters. Retained answer feedback takes
+ * precedence at the Solve caller until the child continues.
  */
 import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
-import { html } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { t } from "../i18n/index.ts";
 import { formatDateMs } from "../lib/format.ts";
 
 type Daily = NonNullable<ActivitySnapshot["daily"]>;
+type Recap = Pick<Daily, "date" | "questionsSolved" | "firstTryCorrect" | "hintedQuestions"> & {
+  scope: "daily" | "extra";
+};
 
-/** A finished prepared batch is not the current task while an older quiz remains unfinished. */
+/** The immutable scheduled goal stays complete even while extra practice is unfinished. */
 export function completedKidsDay(snapshot: ActivitySnapshot | null): Daily | null {
   if (!snapshot?.daily) {
     return null;
   }
   const { daily } = snapshot;
-  return daily.completed === daily.total && (!snapshot.activity || snapshot.activity.completed)
-    ? daily
-    : null;
+  return daily.completed === daily.total ? daily : null;
+}
+
+/** Only the selected finished batch has a recap; old multi-part days finish as one daily goal. */
+export function completedKidsBatch(snapshot: ActivitySnapshot | null): Recap | null {
+  const activity = snapshot?.activity;
+  if (!activity?.completed) {
+    return null;
+  }
+  if (activity.scope === "extra") {
+    return {
+      scope: "extra",
+      date: activity.date,
+      questionsSolved: activity.currentIndex,
+      firstTryCorrect: activity.firstTryCorrect,
+      hintedQuestions: activity.hintedQuestions,
+    };
+  }
+  const daily = completedKidsDay(snapshot);
+  return daily?.date === activity.date ? { ...daily, scope: "daily" } : null;
 }
 
 function dayLabel(date: string) {
@@ -27,64 +47,72 @@ function dayLabel(date: string) {
   return formatDateMs(Date.parse(date), { dateStyle: "medium", timeZone: "UTC" });
 }
 
-/** Label old prepared work by its own date instead of calling it today's progress. */
-export function renderKidsDailyProgress(daily: Daily, currentDate: string) {
+/** Keep scheduled progress separate from extra practice and an older selected carryover. */
+export function renderKidsActivityProgress(snapshot: ActivitySnapshot) {
+  const { daily, activity } = snapshot;
+  if (!activity) {
+    return nothing;
+  }
+  if (activity.date !== snapshot.date) {
+    return html`<p class="kids-activity-daily">
+      ${t("kids.activity.continuingDate", { date: dayLabel(activity.date) })}
+    </p>`;
+  }
+  if (activity.scope === "extra") {
+    return html`<p class="kids-activity-daily">${t("kids.activity.extraPractice")}</p>`;
+  }
+  if (!daily) {
+    return nothing;
+  }
   return html`<p class="kids-activity-daily">
     ${t(
-      daily.date === currentDate ? "kids.activity.dailyProgress" : "kids.activity.datedProgress",
+      daily.date === snapshot.date ? "kids.activity.dailyProgress" : "kids.activity.datedProgress",
       {
-        completed: String(daily.completed),
-        total: String(daily.total),
+        completed: String(daily.questionsSolved),
+        total: String(daily.questionTotal),
         date: dayLabel(daily.date),
       },
     )}
   </p>`;
 }
 
-/** Render a completed batch's recorded results; Perfect days is a separate server-owned day streak. */
-export function renderKidsDailyRecap(
-  daily: Daily,
+/** Render recorded batch results; the caller supplies the single completion action. */
+export function renderKidsRecap(
+  recap: Recap,
   currentDate: string,
   perfectDayStreak: number,
-  chat: () => void,
+  action: TemplateResult | typeof nothing,
 ) {
-  const current = daily.date === currentDate;
+  const current = recap.date === currentDate;
   return html`<div class="kids-daily-recap">
     <p class="kids-daily-mark">
       <span aria-hidden="true">✓</span>
-      ${current ? t("kids.activity.allDone") : t("kids.daily.completedDate", { date: dayLabel(daily.date) })}
+      ${
+        current
+          ? t(recap.scope === "daily" ? "kids.activity.allDone" : "kids.daily.extraComplete")
+          : t("kids.daily.completedDate", { date: dayLabel(recap.date) })
+      }
     </p>
     <h2>${t("kids.daily.title")}</h2>
     <p class="kids-daily-summary">
-      ${t("kids.daily.summary", {
-        challenges: t(daily.total === 1 ? "kids.daily.challengeOne" : "kids.daily.challenges", {
-          count: String(daily.total),
-        }),
-        questions: t(
-          daily.questionsSolved === 1 ? "kids.daily.questionOne" : "kids.daily.questions",
-          {
-            count: String(daily.questionsSolved),
-          },
-        ),
+      ${t(recap.questionsSolved === 1 ? "kids.daily.questionOne" : "kids.daily.questions", {
+        count: String(recap.questionsSolved),
       })}
     </p>
     <dl class="kids-daily-stats">
       <div>
         <dt>${t("kids.daily.firstTry")}</dt>
-        <dd class="kids-daily-value">${daily.firstTryCorrect}</dd>
+        <dd class="kids-daily-value">${recap.firstTryCorrect}</dd>
       </div>
       <div>
         <dt>${t("kids.daily.hints")}</dt>
-        <dd class="kids-daily-value">${daily.hintedQuestions}</dd>
+        <dd class="kids-daily-value">${recap.hintedQuestions}</dd>
       </div>
       <div>
         <dt>${t("kids.daily.perfectDays")}</dt>
         <dd class="kids-daily-value">${perfectDayStreak}</dd>
       </div>
     </dl>
-    <div class="kids-daily-footer">
-      <p>${t(current ? "kids.daily.nextDay" : "kids.daily.saved")}</p>
-      <button class="kids-activity-primary" @click=${chat}>${t("kids.activity.chatAction")}</button>
-    </div>
+    <div class="kids-daily-footer">${action}</div>
   </div>`;
 }

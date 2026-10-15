@@ -5,11 +5,15 @@
  * history. Calendar arithmetic operates on local date identities, not elapsed
  * hours, so daylight-saving changes cannot skip or duplicate a day.
  */
-import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
-import type {
-  ActivityAttemptEvidence,
-  ActivityDefinition,
-  ActivityQuestionEvidence,
+import type { ActivityFeedback, ActivitySnapshot } from "@openclaw/kids-activity-contract";
+import {
+  ACTIVITY_EXCITED_MS,
+  ACTIVITY_STREAK_TARGET,
+  type ActivityAttemptEvidence,
+  type ActivityDefinition,
+  type ActivityDirectMutation,
+  type ActivityGrade,
+  type ActivityQuestionEvidence,
 } from "./activity-contract.js";
 
 export type ActivityProgress = {
@@ -52,11 +56,82 @@ export function initialActivityProgress(activity: ActivityDefinition): ActivityP
   };
 }
 
+/**
+ * Apply one admitted answer to caller-owned progress and answer-streak state.
+ * The caller must validate the current question/answer and supply its grade;
+ * this synchronous calculation performs no I/O and retains no references.
+ * Clarification preserves graded attempts/streak; detailed evidence is bounded
+ * to 256 submissions. The caller owns atomic persistence and rollback of both
+ * records, and separately decides whether this batch affects the daily streak.
+ */
+export function applyActivityAnswer(
+  activity: ActivityDefinition,
+  progress: ActivityProgress,
+  pet: { streak: number; excited_until: number | null },
+  mutation: Extract<ActivityDirectMutation, { kind: "answer" }>,
+  grade: ActivityGrade,
+  now: number,
+): ActivityFeedback {
+  const question = activity.questions[progress.index]!;
+  const evidence = progress.questions[progress.index]!;
+  const answer = mutation.answer;
+  const correct = grade.outcome === "correct";
+  if (grade.outcome !== "clarify") {
+    evidence.attempts += 1;
+    evidence.correct = correct;
+    evidence.independent = correct && evidence.attempts === 1 && !evidence.hintUsed;
+  }
+  progress.submissionCount += 1;
+  progress.attempts.push({
+    id: mutation.requestId,
+    at: now,
+    activityId: activity.id,
+    questionId: question.id,
+    answer: mutation.answer,
+    answerText:
+      answer.kind === "choice" && question.kind === "choice"
+        ? question.options.find((option) => option.id === answer.optionId)!.text
+        : answer.kind === "choice"
+          ? ""
+          : answer.text,
+    outcome: grade.outcome,
+    feedback: grade.explanation,
+    ordinal: evidence.attempts,
+    hintUsed: evidence.hintUsed,
+    independent: correct && evidence.independent,
+  });
+  progress.attempts = progress.attempts.slice(-256);
+  const feedback: ActivityFeedback = {
+    questionId: question.id,
+    outcome: grade.outcome,
+    independent: correct && evidence.independent,
+    explanation: grade.explanation,
+  };
+  if (grade.outcome !== "clarify") {
+    pet.streak = correct ? pet.streak + 1 : 0;
+    if (!correct) {
+      pet.excited_until = null;
+    }
+  }
+  if (correct) {
+    progress.index += 1;
+    progress.completed = progress.index === activity.questions.length;
+    if (progress.completed) {
+      progress.completedAt = now;
+    }
+    if (pet.streak % ACTIVITY_STREAK_TARGET === 0) {
+      pet.excited_until = now + ACTIVITY_EXCITED_MS;
+    }
+  }
+  return feedback;
+}
+
 /** Project the child's current progress without private grading keys or unrevealed hints. */
 export function projectActivityProgress(
   activity: ActivityDefinition,
   progress: ActivityProgress,
   date: string,
+  scope: "daily" | "extra",
 ): NonNullable<ActivitySnapshot["activity"]> {
   const question = progress.completed ? undefined : activity.questions[progress.index];
   return {
@@ -64,6 +139,11 @@ export function projectActivityProgress(
     date,
     title: activity.title,
     subject: activity.subject,
+    scope,
+    firstTryCorrect: progress.questions.filter(
+      (evidence) => evidence.correct && evidence.attempts === 1,
+    ).length,
+    hintedQuestions: progress.questions.filter((evidence) => evidence.hintUsed).length,
     started: progress.started,
     completed: progress.completed,
     currentIndex: progress.index,

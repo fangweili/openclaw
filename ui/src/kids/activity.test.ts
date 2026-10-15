@@ -29,8 +29,11 @@ function snapshot(): ActivitySnapshot {
     date: "2026-10-13",
     correctStreak: 0,
     perfectDayStreak: 0,
+    extras: { questionsSolved: 0 },
+    canContinue: false,
     daily: {
       date: "2026-10-13",
+      questionTotal: 9,
       total: 3,
       completed: 0,
       questionsSolved: 0,
@@ -46,6 +49,9 @@ function snapshot(): ActivitySnapshot {
       subject: "Math",
       started: true,
       completed: false,
+      scope: "daily",
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
       currentIndex: 0,
       total: 3,
       currentQuestion: {
@@ -81,6 +87,54 @@ afterEach(async () => {
 });
 
 describe("kids activity ownership", () => {
+  it("requests the next batch once and replays the same predecessor after an uncertain generation result", async () => {
+    const { owner, request } = setup();
+    const completed = snapshot();
+    completed.activity!.completed = true;
+    completed.activity!.currentQuestion = null;
+    completed.canContinue = true;
+    request.mockResolvedValueOnce(completed);
+    await owner.refresh();
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["kids.activity.get"]);
+    const outcome = Promise.withResolvers<never>();
+    request.mockReturnValueOnce(outcome.promise);
+    const preparing = owner.act("start");
+    await owner.act("start");
+    expect(owner.state.preparing).toBe(true);
+    const original = request.mock.calls.find(([method]) => method === "kids.activity.continue");
+    expect(original?.[1]).toMatchObject({ activityId: completed.activity!.id });
+    expect(original?.[2]).toEqual({ timeoutMs: 120_000 });
+    outcome.reject(new Error("Connection lost after generation admission"));
+    await preparing;
+    expect(owner.state.preparing).toBe(false);
+    expect(owner.state.canRetry).toBe(true);
+    expect(owner.state.error).toContain("couldn’t prepare");
+    expect(owner.state.snapshot?.activity?.completed).toBe(true);
+    owner.disconnect();
+    owner.bind(binding);
+    const next = snapshot();
+    next.activity!.id = "extra-one";
+    next.activity!.scope = "extra";
+    request.mockResolvedValueOnce(next);
+    await owner.refresh();
+    expect(
+      request.mock.calls.filter(([method]) => method === "kids.activity.continue"),
+    ).toHaveLength(1);
+    request.mockResolvedValueOnce({ snapshot: next });
+    await owner.retry();
+    expect(request.mock.calls.filter(([method]) => method === "kids.activity.continue")).toEqual([
+      original,
+      original,
+    ]);
+    expect(owner.state.snapshot?.activity).toMatchObject({
+      id: "extra-one",
+      started: true,
+      completed: false,
+    });
+    expect(owner.state.canRetry).toBe(false);
+    expect(owner.state.preparing).toBe(false);
+  });
+
   it("starts the offered next challenge once and retains that target through an uncertain retry", async () => {
     const { owner, request } = setup();
     const completed = snapshot();

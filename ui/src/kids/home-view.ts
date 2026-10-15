@@ -35,6 +35,25 @@ export function renderKidsHome(
 ) {
   const completed = completedKidsDay(activity.snapshot);
   const todayComplete = completed !== null && completed.date === activity.snapshot?.date;
+  const selected = activity.snapshot?.activity;
+  const daily = activity.snapshot?.daily;
+  const extras = activity.snapshot?.extras.questionsSolved ?? 0;
+  const detail = activity.preparing
+    ? t("kids.activity.preparing")
+    : todayComplete
+      ? selected?.scope === "extra" && !selected.completed
+        ? t("kids.home.solveExtraResume")
+        : extras > 0
+          ? t("kids.home.solveExtraComplete", { count: String(extras) })
+          : t("kids.home.solveComplete")
+      : selected?.started && !selected.completed && selected.date !== activity.snapshot?.date
+        ? t("kids.home.solveResume")
+        : daily && daily.date === activity.snapshot?.date
+          ? t("kids.home.solveProgress", {
+              completed: String(daily.questionsSolved),
+              total: String(daily.questionTotal),
+            })
+          : t("kids.home.solveDetail");
   return html`<main
     class="kids-today kids-home"
     aria-label=${t("kids.activity.today")}
@@ -67,10 +86,7 @@ export function renderKidsHome(
             ><span aria-hidden="true">${solve}</span
             ><span aria-hidden="true">${todayComplete ? finish : arrow}</span></span
           >
-          <strong>${t("kids.home.solve")}</strong
-          ><span class="kids-home-detail"
-            >${t(todayComplete ? "kids.home.solveComplete" : "kids.home.solveDetail")}</span
-          >
+          <strong>${t("kids.home.solve")}</strong><span class="kids-home-detail">${detail}</span>
         </button>
         ${(
           [

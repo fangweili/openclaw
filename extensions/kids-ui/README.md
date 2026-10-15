@@ -134,8 +134,8 @@ versions. A committed write may outlive its response; callers retry the same
 request ID to retrieve its outcome. The newest 512 request receipts per child are
 retained, and a solved question cannot award progress again under a fresh ID.
 
-The six child-facing `kids.activity.*` methods are `get`, `start`, `answer`, `hint`, `touch`,
-and `image`. All accept the existing app `sessionKey`; Gateway session admission
+The child-facing `kids.activity.*` methods are `get`, `start`, `answer`, `hint`,
+`touch`, `continue`, and `image`. All accept the existing app `sessionKey`; Gateway session admission
 selects the configured child. Snapshot responses contain only the current
 question/options, a requested hint, progress, and opaque image references. Answer
 keys, explanation rubrics, and unrevealed explanations stay private. Questions
@@ -191,32 +191,60 @@ work from help or corrections. Incorrect answers reset the streak and leave the
 pet normal. Chat does not clear a streak or interrupt an ongoing celebration.
 Mood is derived from saved timestamps, so no durable timers are necessary.
 
-Each morning prepares one batch of exactly three three-question challenges per
-child and attempts four shared daily pictures (normal, excited, bored, and sleeping).
-Normal and excited are required; either resting picture can fall back to its fixed
-original when rendering, encoding, or the optional deadline fails. Publication is atomic;
-retries reuse the saved batch. The app shows one challenge. Completing it keeps
-the result visible and offers `nextActivity`; only an explicit `start` advances.
-After all three, `nextActivity` is null unless a parent has explicitly offered extra practice. A started incomplete challenge remains
-resumable across midnight. Once it is finished, the first challenge of the newest
-batch appears; yesterday's unstarted extras are no longer offered. `daily` counts
-always describe the newest batch, so completing a carryover does not count toward
-today's three. The same read-only projection supplies the completion recap:
-`questionsSolved` counts eventual correct answers, `firstTryCorrect` counts correct
-answers on their first graded attempt (including hinted answers), and
-`hintedQuestions` counts distinct questions whose hint was opened. Clarification
-is ungraded and duplicate request retries never add to these totals. The totals
-include parent-offered extra practice and use complete saved question counters,
-not truncated attempt history; they add no stored counters, query or migration.
-`correctStreak` remains a current cross-day streak of graded activity answers,
-not a daily best; hints, clarification, chat and voice do not reset or increment it.
-The app may call the recap today's only when `daily.date` matches the local date.
+Each morning prepares one ten-question daily goal per child (at least eight free
+answers) and attempts four shared daily pictures (normal, excited, bored, sleeping).
+Normal and excited are required; resting pictures can use fixed fallbacks.
+Publication is atomic and immutable. Existing three-by-three days and parent
+single-question practice retain their definitions and original scheduled count.
+
+After the current batch, Keep going either starts an existing `nextActivity` or
+requests `continue` with its completed predecessor ID. The service reads saved
+results before inference, generates ten questions, then appends and starts one
+successor atomically. A per-child in-flight operation joins concurrent requests
+for the same predecessor; a unique child/date/ordinal prevents duplicate successors
+across retries and service lifetimes. Recovery checks the saved successor before
+spending again, even after request-receipt expiry. New publication rechecks the
+local date and predecessor at commit; a call crossing midnight cannot add work to
+yesterday. Failure leaves the completed recap available with Try again.
+
+`activity-next-generation.ts` owns stateless prompt assembly and strict output
+admission. It combines the daily `learningBrief` snapshot of profile/learning notes,
+full preceding-batch evidence, up to fourteen bounded older activities, and an
+optional text-only tail of the child's own canonical chat (at most forty messages
+and 12,000 characters). Conversation fills gaps since notes were updated, especially
+read-only voice; it is unscored context, never another independent success.
+Missing or truncated sources remain explicit coverage limits. The daily preparer
+owns the brief; it is not a second editable profile. Nightly remains the sole
+profile/recent-activity writer and deduplicates Solve attempts with linked chat help.
+
+Generation uses the child's configured model through `runtime.llm.complete` in
+isolated-agent-runtime mode,
+with no tools, model override, new retained session, artwork or message delivery.
+The service permits one outstanding generation per child, joining the SDK
+completion promise before closing the database. The SDK can settle a timeout or
+cancellation before physical provider cleanup; that remaining work is host-owned
+and cannot publish a late batch. The provider timeout hint is ninety seconds,
+with an advisory 8,192-token output budget. The caller/service signal and authority checks fence every publication.
+One generation per child is admitted; a failed or invalid generation records no
+learning result. The server assigns activity/question IDs and the shared validator
+admits exactly ten questions with no more than two choice items.
+
+A started incomplete activity remains resumable across midnight. Completing it
+moves to the newest day's work; old unstarted extras are not offered. `daily`
+contains only the newest day's originally scheduled work, including its
+`questionTotal`. Extras never enlarge that goal. `extras.questionsSolved` counts
+optional solved questions; selected-batch counters supply its own recap. Counters
+use complete saved per-question progress, not truncated attempt history.
+`firstTryCorrect` includes hinted first answers; `hintedQuestions` counts distinct
+hinted questions. Clarification is ungraded. `correctStreak` remains the pet's
+cross-day answer streak, not a daily best. The app labels a recap today only when
+its date matches the local date.
 
 `perfectDayStreak` is separate from that pet answer streak. A perfect local day
 means every originally scheduled challenge is finished on its scheduled date,
 with every question correct on its first graded attempt and no hint opened.
 Clarifications are ungraded; corrected wrong answers and hinted answers cannot
-make a perfect day. Optional parent practice neither earns nor breaks this
+make a perfect day. Optional practice batches neither earn nor break this
 streak. The immutable scheduled count comes from the original published batch,
 not a hardcoded number in the streak rules.
 
@@ -266,6 +294,12 @@ older saved days without it remain readable. Browser
 responses retain the existing selected `pet.image` contract. Refresh the daily
 preparation prompt with this release to supply both resting scene directions.
 
+Adaptive batches reuse schema 3 without migration. New days store one required
+activity containing ten questions; older required counts and definitions remain
+unchanged. The private optional `learningBrief` field is required for new daily
+publication but absent on old saved days, where generation adapts conservatively
+from saved results.
+
 Schema 3 adds `kids_day.required_count` and the `kids_pet.perfect_day_streak` /
 `last_perfect_date` checkpoint. The existing database, worker, authority and
 transaction remain the owners. Schema-1 upgrades first migrate old choice kinds,
@@ -294,8 +328,8 @@ proceed. Restoring a pre-upgrade backup is an alternative but loses later work;
 never restore automatically after a failed activation.
 
 A parent can call `kids.activity.offerPractice` with `{sessionKey,date,activity}`
-for one optional, one-question practice activity after today's three challenges
-are complete. It requires `operator.admin` **and** prepared session write access
+for one optional, one-question practice activity after today's scheduled goal
+is complete, before any optional batch has been appended. It requires `operator.admin` **and** prepared session write access
 for the configured child; the child's own-session scope cannot call it. The host
 requires all session-resource descriptors to declare `operator.write`, so the
 request-bound assertion additionally checks the authenticated connection's admin
@@ -314,7 +348,7 @@ been answered or the local day changes; changed content under that ID is rejecte
 A fresh offer for any date except the child's current local date is rejected.
 Optional practice uses normal grading, evidence, carryover and retention: a started
 unfinished question carries over; an unstarted one stops being offered when a newer
-daily batch appears. The preparation lookup still returns only the original three
+daily batch appears. The preparation lookup still returns only the original scheduled
 activities, while snapshots and learning evidence include practice. This adds no
 schema version, migration, timer, worker or privileged browser capability.
 

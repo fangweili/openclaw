@@ -64,26 +64,27 @@ const evidence: ActivityPreparationContext = {
     activity: null,
     daily: null,
     nextActivity: null,
+    canContinue: false,
+    extras: { questionsSolved: 0 },
   },
   recentActivities: [],
   recentScenes: [],
   activitiesOmitted: 0,
+  learningBrief: null,
 };
 const daily: ActivityDailyPreparation = {
   date: "2026-10-14",
-  activities: [1, 2, 3].map((index) => ({
+  learningBrief: "Dated synthetic learner: practicing equal parts with support.",
+  activities: [1].map((index) => ({
     id: `daily-${index}`,
     title: "Equal pieces",
     subject: "fractions",
-    questions: [1, 2, 3].map((n) => ({
-      kind: "choice" as const,
+    questions: Array.from({ length: 10 }, (_, n) => ({
+      kind: "numeric" as const,
       id: `q${n}`,
-      prompt: "One of two equal pieces is called what?",
-      options: [
-        { id: "half", text: "A half" },
-        { id: "quarter", text: "A quarter" },
-      ],
-      correctOptionId: "half",
+      prompt: "How many equal halves make one whole?",
+      answer: "2",
+      unit: null,
       hint: "Count how many equal pieces make the whole.",
       explanation: "Two equal halves make one whole.",
     })),
@@ -174,7 +175,7 @@ describe("activity cron tool authority", () => {
       { ...prepareRequest, excitedPrompt: "x".repeat(1501) },
       { ...prepareRequest, boredPrompt: "x".repeat(1501) },
       { ...prepareRequest, sleepingPrompt: "" },
-      { ...prepareRequest, activities: daily.activities.slice(0, 2) },
+      { ...prepareRequest, activities: [] },
       {
         ...prepareRequest,
         activities: daily.activities.map((activity) =>

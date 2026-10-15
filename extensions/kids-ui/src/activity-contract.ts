@@ -3,6 +3,7 @@ import type {
   ActivityAnswer,
   ActivityFeedback,
   ActivityOption,
+  ActivityMutation,
   ActivitySnapshot,
 } from "@openclaw/kids-activity-contract";
 
@@ -18,7 +19,7 @@ export type ActivityQuestionDefinition = {
 );
 /** Private grading verdict; never supplied by the browser. */
 export type ActivityGrade = Pick<ActivityFeedback, "outcome" | "explanation">;
-/** An immutable challenge: three daily questions, or one parent-requested practice question. */
+/** One immutable batch; new batches have ten questions, while saved legacy sizes remain valid. */
 export type ActivityDefinition = {
   id: string;
   title: string;
@@ -27,11 +28,13 @@ export type ActivityDefinition = {
 };
 /** One optional extra question for an existing completed local day; never replaces daily work. */
 export type ActivityPracticeOffer = { date: string; activity: ActivityDefinition };
-/** Atomic publication: three challenges, required normal/excited art, optional daily rest art. */
+/** Atomic daily publication; existing stored bundles may retain legacy activity sizes. */
 export type DailyActivityBundle = {
   childId: string;
   date: string;
   activities: ActivityDefinition[];
+  /** Bounded private teaching context for extra sets; absent only on older saved days. */
+  learningBrief?: string;
   scene: NonNullable<ActivitySnapshot["pet"]["scene"]>;
   /** Absent in older batches or after optional rendering failure; use the fixed pose. */
   restImages?: { bored?: string; sleeping?: string };
@@ -56,6 +59,8 @@ export type ActivityQuestionEvidence = {
 export type ActivityEvidence = {
   id: string;
   date: string;
+  /** Derived from the owning day; saved legacy and new optional batches stay distinct. */
+  scope: "daily" | "extra";
   title: string;
   subject: string;
   completed: boolean;
@@ -80,6 +85,8 @@ export type ActivityAttemptEvidence = {
 };
 export type ActivityPreparationContext = {
   snapshot: ActivitySnapshot;
+  /** Latest prepared day's teaching context, never exposed in the browser snapshot. */
+  learningBrief: string | null;
   recentActivities: ActivityEvidence[];
   activitiesOmitted: number;
   recentScenes: {
@@ -94,3 +101,7 @@ export const ACTIVITY_BORED_MS = 30 * 60_000;
 export const ACTIVITY_SLEEP_MS = 2 * 60 * 60_000;
 export const ACTIVITY_EXCITED_MS = 2 * 60_000;
 export const ACTIVITY_STREAK_TARGET = 3;
+
+/** Continue owns inference/publication; ordinary worker mutations never receive it. */
+export type ActivityContinueMutation = Extract<ActivityMutation, { kind: "continue" }>;
+export type ActivityDirectMutation = Exclude<ActivityMutation, { kind: "continue" }>;
