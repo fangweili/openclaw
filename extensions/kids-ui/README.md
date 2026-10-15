@@ -10,6 +10,13 @@ existing configuration, session bindings, and state directories. The extraction
 does not migrate or delete conversations, learning records, or activity progress.
 
 The app uses a separate HTTPS origin with the existing Gateway. Add its exact
-origin to the Gateway allowlist, pair each device, and enable notifications in the
-new Home Screen app. Do not broaden child permissions. See the standalone
-repository's dependency audit before replacing the host fork with upstream.
+origin to the Gateway allowlist and pair each device. Do not broaden child
+permissions. See the standalone repository's dependency audit before replacing
+the host fork with upstream.
+
+Custom kids and parent Web Push alerts are removed, including foreground claims
+and automation-completion pushes. The Gateway retains upstream generic push
+with its standard operator scopes. Disable existing device subscriptions during
+deployment; retaining their disabled preferences prevents automatic browser
+reconciliation from re-enabling them. The private parent-notice copy overlay is
+also retired. Archive its two alert conversations and keep Discord delivery.

@@ -7,30 +7,25 @@ import {
 } from "./method-scopes.js";
 
 describe("session-scoped method admission", () => {
-  it("admits own-device push setup without granting global notification authority", () => {
-    for (const method of [
-      "push.web.vapidPublicKey",
-      "push.web.subscribe",
-      "push.web.unsubscribe",
-      "push.web.preferences.set",
-      "push.web.foreground",
+  it.each([
+    ["push.web.vapidPublicKey", "operator.write"],
+    ["push.web.subscribe", "operator.write"],
+    ["push.web.unsubscribe", "operator.write"],
+    ["push.web.preferences.set", "operator.write"],
+    ["push.web.preferences.get", "operator.read"],
+    ["push.web.test", "operator.write"],
+  ])("requires standard push authority for %s", (method, requiredScope) => {
+    for (const scopes of [
+      ["operator.sessions.read"],
+      ["operator.sessions.write"],
+      ["operator.sessions.read", "operator.sessions.write"],
     ]) {
-      expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.write"])).toEqual({
-        allowed: true,
-        sessionScope: "operator.sessions.write",
-      });
-      expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.read"])).toEqual({
+      expect(authorizeOperatorScopesForMethod(method, scopes)).toEqual({
         allowed: false,
-        missingScope: "operator.write",
+        missingScope: requiredScope,
       });
     }
-    expect(
-      authorizeOperatorScopesForMethod("push.web.preferences.get", ["operator.sessions.read"]),
-    ).toEqual({ allowed: true, sessionScope: "operator.sessions.read" });
-    expect(authorizeOperatorScopesForMethod("push.web.test", ["operator.sessions.write"])).toEqual({
-      allowed: false,
-      missingScope: "operator.write",
-    });
+    expect(authorizeOperatorScopesForMethod(method, [requiredScope])).toEqual({ allowed: true });
   });
 
   it.each([

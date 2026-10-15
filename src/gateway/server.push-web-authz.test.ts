@@ -1,8 +1,7 @@
 import path from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { writeConfigFile } from "../config/config.js";
-import { createGatewayConnectionState } from "./server-connection-state.js";
 import {
   connectReq,
   CONTROL_UI_CLIENT,
@@ -12,17 +11,6 @@ import {
   testState,
   withGatewayServer,
 } from "./server.auth.test-helpers.js";
-import { withCurrentWebPushAuthority } from "./web-push-authority.js";
-
-// Keep the authenticated router, connection registry, and delivery authority real;
-// observe their completion and replace only the external push provider.
-const sendPush = vi.hoisted(() => vi.fn(async () => []));
-vi.mock("../infra/push-web.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../infra/push-web.js")>()),
-  prepareWebPushNotificationSender: async () => sendPush,
-}));
-vi.mock("./server-connection-state.js", { spy: true });
-vi.mock("./web-push-authority.js", { spy: true });
 
 installGatewayTestHooks({ scope: "suite" });
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -58,7 +46,7 @@ test("protects Web Push ownership through authenticated browser RPCs and profile
         const response = await connectReq(ws, {
           skipDefaultAuth: true,
           prePairDevice: true,
-          scopes: ["operator.sessions.read", "operator.sessions.write"],
+          scopes: ["operator.read", "operator.write"],
           client: CONTROL_UI_CLIENT,
           deviceIdentityPath: path.join(identities, `${device}.sqlite`),
           browserOrigin: origin,
@@ -73,59 +61,7 @@ test("protects Web Push ownership through authenticated browser RPCs and profile
     const owner = await connect("alice@example.com", "first");
     const clients = [owner];
     try {
-      const sessionKey = "agent:main:kids:fixture";
-      expect(
-        (await rpcReq(owner, "sessions.create", { key: sessionKey, agentId: "main" })).ok,
-      ).toBe(true);
       expect((await rpcReq(owner, "push.web.subscribe", { endpoint, keys })).ok).toBe(true);
-      expect(
-        await rpcReq(owner, "push.web.preferences.set", {
-          endpoint,
-          scope: "device",
-          preferences: {
-            enabled: true,
-            label: "",
-            categories: {
-              approvalRequested: false,
-              agentFinished: true,
-              agentQuestion: false,
-              humanMentioned: false,
-              scheduledTaskFailed: false,
-            },
-          },
-        }),
-      ).toMatchObject({ ok: true });
-      expect(
-        await rpcReq(owner, "push.web.foreground", {
-          endpoint,
-          sessionKey,
-        }),
-      ).toMatchObject({ ok: true });
-      const runtime = vi.mocked(createGatewayConnectionState).mock.results[0]!.value;
-      const deliverReply = async (runId: string) => {
-        const delivery = vi.mocked(withCurrentWebPushAuthority);
-        const resultIndex = delivery.mock.settledResults.length;
-        runtime.broadcast(
-          "chat",
-          {
-            state: "final",
-            runId,
-            sessionKey,
-            message: { role: "assistant", content: "Fixture reply" },
-          },
-          { agentId: "main", sessionKeys: [sessionKey] },
-        );
-        await vi.waitFor(() =>
-          expect(delivery.mock.settledResults[resultIndex]).toMatchObject({ type: "fulfilled" }),
-        );
-      };
-      await deliverReply("visible-reply");
-      expect(sendPush).not.toHaveBeenCalled();
-      expect(
-        await rpcReq(owner, "push.web.foreground", { endpoint, sessionKey: null }),
-      ).toMatchObject({ ok: true });
-      await deliverReply("background-reply");
-      expect(sendPush).toHaveBeenCalledOnce();
       expect(
         (
           await rpcReq(owner, "push.web.preferences.set", {

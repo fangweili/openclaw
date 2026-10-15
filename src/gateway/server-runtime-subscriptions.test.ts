@@ -207,44 +207,6 @@ describe("startGatewayEventSubscriptions", () => {
     configureExecutionIdentityAdmissionSink(() => false)();
   });
 
-  it("retains offline completion push work and stops admission on teardown", async () => {
-    const params = createParams();
-    const controller = new AbortController();
-    params.signal = controller.signal;
-    const finished = createDeferred();
-    params.deliverAutomationCompletion = vi.fn(() => finished.promise);
-    unsubs = startGatewayEventSubscriptions(params);
-    const update = {
-      target: {
-        agentId: "main",
-        sessionId: "offline-session",
-        sessionKey: "agent:main:offline",
-        storePath: "/tmp/offline-sessions.json",
-      },
-      message: { role: "assistant" },
-    };
-    const priorWork = getActiveGatewayRootWorkCount();
-    const admission = tryBeginGatewayRootWorkAdmission("test:offline-completion-publisher");
-    if (!admission) {
-      throw new Error("Completion publisher admission was closed");
-    }
-    await admission.run(async () => emitSessionTranscriptUpdate(update));
-    admission.release();
-    expect(params.deliverAutomationCompletion).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining(update),
-      controller.signal,
-    );
-    expect(getActiveGatewayRootWorkCount()).toBeGreaterThan(priorWork);
-    controller.abort();
-    emitSessionTranscriptUpdate(update);
-    expect(params.deliverAutomationCompletion).toHaveBeenCalledOnce();
-    unsubs.transcriptUnsub();
-    emitSessionTranscriptUpdate(update);
-    expect(params.deliverAutomationCompletion).toHaveBeenCalledOnce();
-    finished.resolve();
-    await waitForFast(() => expect(getActiveGatewayRootWorkCount()).toBe(priorWork));
-  });
-
   it.each([
     "same-id reset",
     "replacement",

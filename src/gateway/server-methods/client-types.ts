@@ -15,7 +15,6 @@ import type {
   PreparedSessionProfile,
 } from "../server/client-identity-types.js";
 import type { TrustedSessionCreation } from "../session-creation-provenance.js";
-import type { WebPushForegroundState } from "../web-push-foreground.js";
 
 /** Trusted in-process spawn control plane that already owns this run's task row.
     Gateway CLI tracking only covers runs nobody else records, so a marked run
@@ -50,8 +49,6 @@ export type GatewayClient = {
   browserOrigin?: GatewayWsBrowserOrigin;
   connId?: string;
   presenceKey?: string;
-  /** Connection-owned transient push presentation state, never accepted from handshake data. */
-  webPushForeground?: WebPushForegroundState;
   clientIp?: string;
   /** Client id verified against the server-approved device pairing record. */
   pairedClientId?: string;
