@@ -1,48 +1,37 @@
-# Daily activities on an existing tutor host
+# Solve and Rocky artwork on an existing tutor host
 
-These templates are deployment inputs, not automatic installation actions. They
-reuse the existing tutor agents, nightly records owner, invitation jobs and
-notification delivery. Installation does not edit a workspace or schedule jobs.
-Keep the deployed plugin and these files on the same reviewed release.
+These templates are deployment inputs, not automatic installation actions.
+The existing tutor agents plan content; cron owns scheduling and retries; the
+kids plugin owns publication, progress, images and lifecycle. No new agent,
+child conversation, learning log, or Gateway core capability is needed.
 
-## Ownership and activation
+## Separate jobs and inputs
 
-The activity plugin owns saved quizzes, answers, attempts, pet clocks and complete
-scene publication. It checks choice/numeric answers directly and checks short
-explanations through the child's configured model in an isolated, tool-free
-completion. Two isolated daily cron jobs ask the existing agents to plan
-their child's three three-question challenges and four daily mood pictures.
-Cron owns scheduling, run cancellation and retries. The
-plugin's `kids_activity` tool owns image generation through the configured image
-runtime, including normal-to-excited/bored/sleeping reference continuity and fixed
-resting fallbacks. The job supplies words
-and verified questions; it cannot choose an image path, provider or sibling.
+Configure two isolated jobs per child, both with `delivery.mode: none`:
 
-Create one isolated preparation job per configured child, with `delivery.mode`
-set to `none`, a 1,200-second job timeout, and tools limited to `read`, `exec`, and
-`kids_activity`. Suggested schedules are `0 6 * * *` and `10 6 * * *` in the
-children's configured timezone. Point each payload to `cron-daily-prepare.md`.
-Record each actual job ID as that child's `preparationJobId` and the job's agent
-as `preparationAgentId` when different from the child's tutor. No new agent is
-needed. The tool requires that exact agent and isolated `cron:<job>:run:<id>`
-context, together with current invocation authority.
+- Solve: existing `preparationJobId` (and optional `preparationAgentId`), reading
+  `cron-daily-prepare.md`. It publishes one ten-question daily goal and its bounded
+  teaching brief. Profile, learning notes, saved results and recent conversation
+  inform level and topic. Keep going independently generates another ten questions
+  using results and recent context; it does not generate pictures.
+- Artwork: `artworkJobId` (using the same configured preparation agent), reading
+  `cron-daily-artwork.md`. It publishes normal/excited/bored/sleeping pictures and
+  captions independently of questions. Keep it daily for now. The separate job
+  permits a future frequency change without changing Solve scheduling.
 
-The preparation template runs
-`node scripts/kids-activity.mjs --days 30 --child <childId>` from the tutor
-workspace. Verify that existing read-only collector is installed there before
-activation. It reads only the creation-bound child; a failed or partial collection
-is reported as limited evidence, not inactivity.
+Allow only `read`, `exec`, and `kids_activity` for these jobs. A 1,200-second
+artwork job budget allows planning plus the tool's 600,000-ms image budget and
+cleanup. Suggested daily times are Solve at 06:00/06:10 and artwork at 05:40/05:50
+in each child's configured timezone. Jobs need not finish in that order:
+questions can publish without pictures, and pictures can publish without a goal.
 
-Add existing nightly and weekly job IDs to `activities.evidenceJobs`; retain their
-current schedules and delivery settings. Add `kids_activity` to their tool
-allowlists if an allowlist is present. Insert the instructions in
-`cron-nightly-activities.md` and `cron-weekly-activities.md` into their existing
-owned prompts. These are evidence extensions, not replacement profile owners.
+Tool discovery checks the actual isolated `agent:<id>:cron:<job>:run:<id>` identity,
+never a claimed child in prompt text. Solve jobs cannot generate artwork; artwork
+jobs cannot publish questions. Read-only nightly/weekly evidence bindings retain
+their existing schedules and authority. Keep both job IDs in the plugin config;
+leaving the artwork binding absent disables artwork preparation for that child.
 
-Configure `plugins.entries.kids-ui.config` with verified existing app session
-keys and the actual job IDs returned when creating the preparation jobs. For
-example, this synthetic single-child configuration adds activities to an
-existing tutor without changing that child's permissions:
+For example, this synthetic binding extends an existing tutor:
 
 ```json
 {
@@ -53,148 +42,113 @@ existing tutor without changing that child's permissions:
         "agentId": "tutor",
         "sessionKey": "agent:tutor:kids:verified-profile-id",
         "timeZone": "America/Chicago",
-        "preparationJobId": "actual-preparation-job-id"
+        "preparationJobId": "actual-solve-job-id",
+        "artworkJobId": "actual-art-job-id"
       }
     ],
-    "evidenceJobs": [
-      {
-        "agentId": "records-worker",
-        "jobId": "actual-nightly-job-id"
-      }
-    ]
+    "evidenceJobs": [{ "agentId": "records-worker", "jobId": "nightly-job-id" }]
   }
 }
 ```
 
-Each child, tutor agent, session key, and preparation job must be unique. Leaving
-`activities` unset keeps the existing chat/dictation service and creates no
-activity database. Never copy production identifiers into these templates.
+Use actual returned job IDs and verified app bindings during installation; never
+copy production identities into these templates. Empty activities configuration
+keeps chat and dictation available without opening an activity database. Keep
+`plugins.entries.kids-ui.llm.allowAgentIdOverride: true` for explanation grading
+and adaptive question generation through the child's configured model. Browser
+input cannot choose a model, provider or sibling.
 
-Enable the existing host capability
-`plugins.entries.kids-ui.llm.allowAgentIdOverride: true` for explanation checks.
-The plugin takes the agent ID only from the installed child binding, never from
-browser input, and uses that agent's configured default at low reasoning. No model
-or auth-profile override is needed. Verify the chosen runtime supports isolated
-completions before activation. Failed or timed-out checks retain the answer for
-retry and never count it wrong. There is no grading chat session or extra agent.
+## Fresh artwork context
 
-Keep the current-session invitation job IDs, creation-bound session targets,
-Slack backup and push settings. Replace their invitation instructions with
-`cron-app-activity-invitation.md`. Before enabling those jobs, extend the existing
-read-only collector as described below and seed a complete daily bundle through
-the preparation job. A preparation success means `published:true` or an existing
-complete date; it does not mean a child received a notification.
+Artwork does not read the learning profile. It receives a bounded recent view:
+latest verified text/voice turns within 24 hours, recent Solve attempt summaries,
+and a few previous scene descriptions to avoid repetition. Relevant verified
+holidays/events can set the costume/theme; recent interaction shapes the action,
+props, expression and caption. If school information lives in a profile, extract
+only its Current School Context section. No weather lookup is needed. A quiet
+window can inspire a playful fictional Rocky moment without claiming the child
+experienced it. Planned events are not completed experiences.
 
-## Collector integration
+Install the host's read-only collector with
+`node scripts/kids-activity.mjs --recent --child <childId>`. It returns a small
+newest-message selection, not a whole-day report. Source completeness/warnings
+remain distinct from intentional selection omissions. Read it separately from
+profile files; do not combine large files into one tool response. Source gaps
+are never evidence of inactivity. The existing `--days` mode and invitation
+cooldown behavior remain unchanged. The host collector owns trusted provenance;
+this repository's `collect-app-activity.mjs` adapter does not duplicate it.
 
-Copy `collect-app-activity.mjs` alongside the existing `kids-activity.mjs` and
-apply `collector-integration.patch` after reviewing it against that host's
-collector. The patch uses its existing trusted child/profile bindings; it does
-not store configuration, credentials, message text or delivery receipts twice.
-The adapter reads `kids.activity.get` through the existing authenticated host CLI,
-with a 30-second timeout and bounded output. It never reads the activity SQLite
-file directly. The CLI's existing owner authentication is required; do not grant
-children administrative scopes or copy a Gateway token into the workspace.
+Rocky's fixed reference defines the original soft clay moss-green mountain body,
+ivory snowy central peak, small green arms/feet and black-and-ivory eyes, with no
+ears, tail or belly patch. Scenes may vary pose, costume, action and viewpoint.
+Normal is an everyday moment; excitement is a different whole-body action in the
+same theme. Bored and sleeping remain clearly readable, comfortable resting
+states without guilt, distress or feeding requirements. All images use genuine
+transparency, minimal props and no text or full scenery. Rest captions also fit
+the original fixed fallback poses. Generated art is fiction, never learning proof.
 
-Only CLI collection reads the Gateway. The pure `collectActivity` entry point
-accepts supplied snapshots, so existing fixture tests stay isolated. Missing or
-failed snapshots mark the real CLI result incomplete and block invitations. The
-collector's existing cooldown calculation remains authoritative; its last-child-
-interaction input becomes the latest verified chat or plugin interaction time.
-Chat message counts remain chat counts. `appActivity` carries the saved activity
-snapshot so the invitation job can check that unfinished work actually exists.
+## Publication, lifecycle and recovery
 
-## Artwork, publication and recovery
+`prepare_daily` accepts only date, one ten-question activity (at least eight free
+answers) and a nonblank teaching brief up to 8,000 characters. Publication is
+atomic and immutable per child/date; existing work is a no-op. It makes no image
+calls and cannot change artwork. The brief supplements profile/history for later
+optional batches; it is not a second learning-record writer.
 
-`prepare_daily` requires `timeoutMs: 600000`, the host's supported ten-minute
-tool-call budget. The larger job budget leaves room for planning and cleanup;
-it does not extend that tool limit. After required normal/excited art, the two
-optional rest renders run concurrently for at most 180 seconds and only until
-540 seconds after preparation began. Provider timeout hints use that remaining
-window, but each provider fallback still owns its timeout. At the optional
-deadline the owner freezes completed results, uses fixed poses for unfinished
-moods, and publishes once. Challenges can therefore become ready while the tool
-still joins late provider work; those results cannot adopt files or change the
-saved bundle. The deadline timer is cleared on every exit. No optional phase is
-started if required work already consumed its window. A slow required
-provider/fallback sequence can still exceed the tool watchdog. Cancellation
-fences publication and joins any dispatched provider work;
-previous complete bundles remain valid. Context and evidence reads retain the
-ordinary tool timeout. Never treat a timeout as proof that a retry is safe before
-the prior operation has settled and the saved day has been checked.
+`prepare_art` accepts date, four prompts/captions and `timeoutMs: 600000`.
+The renderer owns provider selection, the approved reference, compression and
+private file adoption. It renders normal then excited, and attempts both resting
+images concurrently within the remaining budget (at most 180 seconds, cutoff
+540 seconds from start). It publishes once with fixed resting fallbacks when
+necessary, then joins late optional calls; late results cannot adopt files.
+Cancellation revokes later effects and joins admitted calls. Shutdown joins this
+owner before closing the activity worker. At most two children generate art and
+eight private image reads run concurrently.
 
-The plugin ships approved canonical and fixed pose artwork under `pets/`.
-Both children use the same original Rocky mountain character, with distinct
-reference, bored, and sleeping poses. Rocky is a soft clay moss-green rounded
-mountain with an ivory snowy central top peak, small rounded green arms and feet,
-large black-and-ivory eyes; it has no ears, tail, or belly
-patch. The fixed files are `rocky-reference.webp`, `rocky-bored.webp`, and
-`rocky-sleeping.webp`. Daily normal pictures keep this identity while personalizing
-the activity, outfit, equipment, expression and whole-body pose. The planner
-prioritizes recent conversations and dated school context already maintained in
-the child's profile, falling back to established interests or seasonal ideas.
-Excited, bored, and sleeping pictures reference that child's exact normal picture,
-continuing its theme and outfit. Excitement uses a distinct action and silhouette;
-the resting variations show comfortable daydreaming or sleep. All four scene
-directions and captions come from the preparing agent. Copy the updated daily
-preparation template with this release: `prepare_daily` now requires bounded
-`boredPrompt` and `sleepingPrompt` directions in addition to the existing fields.
+Ordinary art publication is once per child/date. A parent-requested refresh uses
+`replaceImageId` from the current art context. Both preflight and commit compare
+that current normal-image ID; stale/missing matches are no-ops. Only today's art
+can be refreshed. A lost acknowledgement is not permission to generate again:
+retry the same expected ID, which cannot overwrite a newer picture. Confirmed
+losing publication removes its staged files; uncertain publication retains them
+because the database may already reference them. No refresh alters questions,
+learning briefs, results, pet clocks, receipts or streaks.
 
-The private preparation context retains each day's `scenePrompt` alongside its
-captions, so later jobs can remember intended actions, outfits and story details. This is the
-requested scene, not a claim that every generated visual detail was verified. It
-is omitted from the child's public activity snapshot.
+Images are immutable PNG user artifacts, at most 512 KiB each, under the plugin's
+private media directory. Authenticated reads use the child's existing session
+admission. Static `/kids/` hosting never exposes these files. Normal/excited art
+may fall back to the previous available scene; daily resting art is shown only
+on its own date, otherwise the fixed pose is used. Art failure never blocks Solve.
 
-Planner prompts describe scene content and pose while the renderer owns the
-canonical character and visual style. Pictures contain no lettering; questions
-and numbers belong in the app's text. Bored/sleeping captions can recall or dream
-about the daily theme, but must also fit the fixed fallback poses: do not assert
-that a particular prop, costume or setting is visibly present.
+Schema 4 separates art into `kids_art` under the existing SQLite worker. Upgrade
+atomically moves saved art out of day content without moving image files or
+changing quiz/results. Back up before activation; an older plugin cannot open
+schema 4. See the main [upgrade and rollback contract](../README.md#daily-activities-and-pets).
+Do not restore an old whole database over work accepted after activation.
 
-The runtime chooses the configured image model/fallback; preparation never
-overrides them. Before publication, generated pictures are encoded as PNG with alpha preserved,
-at most 512 KiB each and durably written beneath the plugin's private media root.
-No generated image is exposed by the public static `/kids/` handler. Authenticated
-image reads are scoped to one configured child. At most two preparations and
-eight image reads run concurrently; each preparation can admit two optional
-provider calls concurrently. Shutdown revokes admission and joins them
-before releasing dependencies.
+## Existing learning and notifications
 
-Each day contains exactly three challenges of three questions each, plus up to four
-pictures shared by the whole day. The child sees one challenge at a time and can
-choose Another challenge or Chat after completion. After all three, the app
-shows All done for today. A started unfinished challenge stays resumable across
-days; unstarted extras are replaced when the next morning's batch arrives. The
-newest day's counts exclude any older carryover. A published day is immutable;
-a duplicate preparation returns without generating again. Required-art or storage
-failure preserves the previous complete activities. Optional render/encoding failures
-use original fixed poses without blocking publication. Daily resting art is shown
-only on its own local date; old batches and missing variants use fixed originals.
-The optional `restImages` field remains optional day content; old days use fixed
-resting poses. The current activity schema is 3; follow the main plugin README's
-[upgrade and rollback contract](../README.md#daily-activities-and-pets) for the
-coordinated backup, retained-history initialization, and compatible copy downgrade.
-Switching binaries alone cannot roll back this database. Never discard work
-accepted after the upgrade silently.
-Artwork
-that loses a confirmed publication race is removed. A publication error with an
-unknown commit outcome retains the image files; retry checks the saved day before
-spending again. Files left by an interrupted/uncertain publication are retained
-artifacts, not proof of an activity. Do not guess whether a commit succeeded.
+The nightly owner combines retained conversations and saved Solve results into
+existing profiles and recent-activity summaries. Live tutors do not create new
+progress logs. Add `cron-nightly-activities.md`/`cron-weekly-activities.md` evidence
+guidance to the existing owned jobs, preserving their schedules and deliveries.
+Evidence omissions remain explicit; count stable attempt IDs once and separate
+independent success from hints/retries.
 
-Quiz evidence uses the store's bounded history. Each quiz has its own attempts
-and completion; each day contributes only one scene-history entry. Image artifacts are retained until
-an operator removes unreferenced files; their maximum normal growth is roughly
-2 MiB per prepared child-day. Do not delete images referenced by retained bundles
-or an unfinished activity. Generation and publishing never wake the pet, change
-its streak, or send notifications.
+Invitation jobs retain existing app conversation targets, push settings and
+Slack backup. Use `cron-app-activity-invitation.md` and the existing collector's
+cooldown decision. Install `collect-app-activity.mjs` with the reviewed
+`collector-integration.diff` for `--days` CLI snapshots. Only that CLI mode calls
+the authenticated Gateway; pure collector fixtures remain isolated. Failed
+snapshots mark collection incomplete and block invitations. Preparation success
+means saved content, not a notification delivery.
 
-## Validation before enabling delivery
+## Validation
 
-Run the plugin's focused tests and the host collector's existing fixture suite.
-Use synthetic profiles and a no-delivery test configuration for a full preparation
-run. Verify identity across all four moods, fixed resting fallbacks on failure or
-timeout, and the exclusion of another day's rest art. Check saved quiz correctness,
-reload/resume behavior, inactivity transitions, evidence IDs, cancellation and child isolation. Confirm
-nightly evidence distinguishes independent and helped correctness. Activate the
-reviewed host edits only after the matching app/plugin release is installed.
+Use focused plugin/store tests and the host collector fixtures. Verify independent
+art/Solve publication in both orders, refresh preservation and stale retries,
+existing-data migration, child/job isolation, cancellation, provider failures,
+fixed mood fallbacks, and current-date resting images. Check configured jobs
+through their real no-delivery boundary after deployment. Keep code, prompts,
+configuration and job payloads on the same reviewed release. A physical iPad
+check remains distinct from store, provider and browser evidence.

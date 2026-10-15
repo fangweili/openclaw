@@ -21,18 +21,31 @@ The existing answer-editing layout continues to make room for the keyboard.
 Chat retains the full available height and its bottom composer; it never adopts
 the centered Today/Solve stage.
 
-After the final answer's feedback is dismissed with **Continue**, a finished
-prepared day shows its own recap instead of the old question title, subject and
-progress bar. It displays the server's solved-question and challenge totals,
-first-try correct answers, distinct questions that used a hint, and **Perfect days**.
+Each new daily goal has ten questions. **Keep going** prepares and starts another
+optional ten-question batch, adapted by the server to the child's current profile,
+recorded learning notes, previous Solve work, and bounded recent conversation. No generation starts merely by opening
+the app or reading a recap. Existing saved three-part days keep their original
+nine-question goal and use **Keep going** between their already-prepared parts.
+After the final answer's feedback is dismissed with **Continue**, a completed
+batch shows the cumulative day recap instead of the old question title, subject
+and progress bar, once the scheduled daily goal is complete. **Today so far** sums
+the server's scheduled and optional counts for the same prepared date: solved
+questions, first-try answers and distinct hinted questions. **Perfect days** is
+the server's separate day streak and does not change for optional work.
 Perfect days counts consecutive local days when every scheduled question was
-correct on its first graded attempt without hints; optional parent practice is
+correct on its first graded attempt without hints; optional practice is
 excluded. The server owns that count independently of the correct-answer streak
-used by Rocky. First try includes hinted answers; clarification is not graded. **Chat with Rocky** is the main next action.
-An intermediate challenge still offers **Another challenge**. Today marks Solve
-complete only for the server's current date when all prepared challenges are done
-and no unfinished selected challenge remains. An older finished batch is labeled
-with its own date and never promises today's completion or tomorrow's preparation.
+used by Rocky. First try includes hinted answers; clarification is not graded.
+Completion has one **Keep going** action; the existing **Today** navigation returns
+home. During generation it reads **Preparing your next problems…**; a failed or
+uncertain request keeps the recap and changes that action to **Try again**. It
+reuses the original request and completed predecessor instead of generating twice.
+Home shows the same cumulative solved count, including progress in unfinished
+extra batches, while its goal-complete check still uses only scheduled work.
+Older results are dated explicitly. The server's local-midnight cutoff for
+**Keep going** is unchanged.
+An unfinished carryover stays resumable; after its last feedback, the server's
+newest prepared work appears without counting the old work toward today's goal.
 
 Compact floating **Today** controls return home from Chat or Solve; each scroller
 reserves their safe-area top inset so initial content stays clear. **Talk it
@@ -95,7 +108,10 @@ to screen readers.
   original heading, one uncertain operation, and one pet
   object URL. The plugin alone owns durable progress, grading, clocks and streaks.
   Quiz operations serialize with reads; ambiguous failures retain their exact
-  request ID for an explicit retry. Reconnect clears all private presentation and
+  request ID for an explicit retry. Keep going starts an advertised saved part,
+  or sends `kids.activity.continue` with the completed predecessor and a bounded
+  120-second wait. Successful generation returns the next batch already started;
+  no second start request or browser generation store is needed. Reconnect clears all private presentation and
   can recover that retry only after the same backing session is verified. A new
   backing session discards it. The app polls every 15 seconds while foregrounded
   on every page so Rocky stays current; hiding the page, disconnecting,
@@ -111,8 +127,8 @@ to screen readers.
   loss of conversation admission removes both private panels immediately.
 - `activity-view.ts` renders the server-selected quiz and feedback.
 - `daily-view.ts` owns stateless completion presentation shared by Home and Solve.
-  It reads the admitted snapshot's dates and counters without recomputing learning
-  evidence or using the browser clock. Solve gives retained answer feedback priority
+  It combines the admitted snapshot's disjoint scheduled and optional day counts
+  without recomputing learning evidence or using the browser clock. Solve gives retained answer feedback priority
   over the recap; this helper owns no state, listeners, resources or lifecycle.
   `answer-view.ts` renders numeric or explanation input with an explicit **Check
   answer** action. Numeric text input allows negative values and fractions, with
@@ -137,11 +153,11 @@ to screen readers.
   Feedback keeps the submitted question's heading until **Continue**, including
   when finishing yesterday's quiz reveals today's invitation on the server.
   Progress is hidden during feedback; Continue displays the latest server snapshot.
-  Daily counts describe the latest prepared batch, separately from question progress.
-  Completing a challenge offers **Another challenge** or **Chat with Rocky**;
-  all three finished shows **All done for today**. Extra challenges are optional.
-  Reading never advances the selected challenge: starting the advertised next ID
-  uses the same serialized, idempotent start operation. A started unfinished
+  Daily counts describe the fixed scheduled goal; optional aggregates remain
+  separate on the wire and are added only for presentation. Completion offers only **Keep going**, which never
+  runs on a read or page change. Starting an advertised saved part or generating
+  the next optional batch uses the same serialized, idempotent operation owner.
+  A started unfinished
   challenge carries into the next day, while unopened extras are replaced by the
   new daily batch. The plugin owns selection and carryover; the UI renders its facts.
   A wrong answer offers a friendly retry. **Talk it through** first records a hint

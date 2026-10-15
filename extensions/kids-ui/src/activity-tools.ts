@@ -1,9 +1,9 @@
 /**
- * Agent boundary for the activity owner. Only explicitly configured isolated cron
- * jobs discover this tool; child chat cannot generate/publish content or choose a
- * sibling. The host supplies agent/session identity and live invocation authority.
- * Cron owns schedules; this adapter owns no state, files, workers, or timers.
- * Retained calls recheck both service identity and invocation authority after waits.
+ * Creation-bound cron adapters for the activity owner. Solve, artwork, and
+ * read-only evidence jobs receive disjoint schemas; child chat receives none.
+ * Cron owns frequency, the service owns state and generation, and this adapter
+ * owns only bounded argument/result translation. Calls recheck invocation and
+ * service lifetime after awaits; no work or mutable state survives a call.
  */
 import type {
   AnyAgentTool,
@@ -13,7 +13,7 @@ import type {
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { ActivityPreparationContext } from "./activity-contract.js";
+import type { ActivityPreparationContext, DailyActivityBundle } from "./activity-contract.js";
 import type { ActivityGeneration, ActivityGenerationChild } from "./activity-generation.js";
 import { activityDefinitionSchema } from "./activity-validation.js";
 
@@ -21,6 +21,7 @@ type ActivityEvidenceJob = { agentId: string; jobId: string };
 type ActivityToolRuntime = {
   generation: ActivityGeneration;
   prepare(childId: string, assertCurrent: () => void): Promise<ActivityPreparationContext>;
+  publish(bundle: DailyActivityBundle, assertCurrent: () => void): Promise<{ published: boolean }>;
 };
 export type ActivityToolsOptions = {
   children: readonly ActivityGenerationChild[];
@@ -30,18 +31,49 @@ export type ActivityToolsOptions = {
 };
 
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
-const preparationFields = {
-  date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
-  activities: Type.Array(activityDefinitionSchema(3), { minItems: 3, maxItems: 3 }),
-  normalPrompt: text(3000),
-  excitedPrompt: text(1500),
-  boredPrompt: text(1500),
-  sleepingPrompt: text(1500),
-  normalCaption: text(400),
-  excitedCaption: text(400),
-  boredCaption: text(400),
-  sleepingCaption: text(400),
-};
+const dateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
+const contextSchema = Type.Object(
+  { action: Type.Literal("prepare_context") },
+  { additionalProperties: false },
+);
+const solveSchema = Type.Union([
+  contextSchema,
+  Type.Object(
+    {
+      action: Type.Literal("prepare_daily"),
+      date: dateSchema,
+      learningBrief: text(8000),
+      activities: Type.Array(activityDefinitionSchema(10), { minItems: 1, maxItems: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+const artworkSchema = Type.Union([
+  contextSchema,
+  Type.Object(
+    {
+      action: Type.Literal("prepare_art"),
+      // The supported host argument extends the ordinary tool watchdog for images.
+      timeoutMs: Type.Literal(600_000),
+      date: dateSchema,
+      replaceImageId: Type.Optional(text(128)),
+      normalPrompt: text(3000),
+      excitedPrompt: text(1500),
+      boredPrompt: text(1500),
+      sleepingPrompt: text(1500),
+      normalCaption: text(400),
+      excitedCaption: text(400),
+      boredCaption: text(400),
+      sleepingCaption: text(400),
+    },
+    { additionalProperties: false },
+  ),
+]);
+const evidenceSchema = Type.Object(
+  { action: Type.Literal("evidence"), childId: text(128) },
+  { additionalProperties: false },
+);
+
 /** Match the canonical isolated cron run, never a child-supplied prompt or argument. */
 function isJob(context: OpenClawPluginToolContext<2>, agentId: string, jobId: string): boolean {
   const prefix = `agent:${agentId}:cron:${jobId}:run:`;
@@ -50,6 +82,51 @@ function isJob(context: OpenClawPluginToolContext<2>, agentId: string, jobId: st
   }
   const run = context.sessionKey.slice(prefix.length);
   return run.length > 0 && !run.includes(":");
+}
+
+/**
+ * Project the existing evidence owner into short-term creative context. At most
+ * twelve attempts from the last 24 hours and three scene plans leave this adapter.
+ * Question answers, learning briefs, and lifetime counters are intentionally absent;
+ * source and projection omission counts prevent missing evidence implying inactivity.
+ */
+function artworkContext(context: ActivityPreparationContext) {
+  const until = context.snapshot.now;
+  const since = until - 24 * 60 * 60_000;
+  const attempts = context.recentActivities
+    .flatMap((activity) =>
+      activity.attempts
+        .filter((attempt) => attempt.at >= since && attempt.at <= until)
+        .map((attempt) => ({
+          at: attempt.at,
+          title: activity.title,
+          subject: activity.subject,
+          outcome: attempt.outcome,
+          hintUsed: attempt.hintUsed,
+          independent: attempt.independent,
+        })),
+    )
+    .toSorted((left, right) => right.at - left.at);
+  return {
+    date: context.snapshot.date,
+    currentImageId:
+      context.recentScenes.find((scene) => scene.date === context.snapshot.date)?.scene.normal
+        .imageId ?? null,
+    window: { since, until },
+    recentAttempts: attempts.slice(0, 12),
+    recentScenes: context.recentScenes
+      .slice(0, 3)
+      .map(({ date, scenePrompt }) => ({ date, scenePrompt })),
+    omissions: {
+      sourceActivities: context.activitiesOmitted,
+      sourceAttempts: context.recentActivities.reduce(
+        (count, activity) => count + activity.attemptsOmitted,
+        0,
+      ),
+      windowAttempts: Math.max(0, attempts.length - 12),
+      scenes: Math.max(0, context.recentScenes.length - 3),
+    },
+  };
 }
 
 /** Register only a version-2 tool factory; the service remains its separate lifecycle owner. */
@@ -64,51 +141,36 @@ export function registerActivityTools(
 }
 
 /**
- * Build the narrow tool surface for an admitted cron identity, or return null.
- * Preparation binds exactly one configured child. Evidence jobs may read configured
- * children but cannot publish. Every effect uses the live host-provided assertion.
+ * Bind one admitted cron role at creation, or return null. Configuration admission
+ * has rejected colliding identities. Solve/art bind one child; evidence jobs may
+ * select configured children. Every effect uses the live host-provided assertion.
  */
 function createActivityTool(
   context: OpenClawPluginToolContext<2>,
   options: ActivityToolsOptions,
 ): AnyAgentTool | null {
-  const child = options.children.find((entry) =>
+  const solveChild = options.children.find((entry) =>
     isJob(context, entry.preparationAgentId ?? entry.agentId, entry.preparationJobId),
+  );
+  const artChild = options.children.find(
+    (entry) =>
+      entry.artworkJobId &&
+      isJob(context, entry.preparationAgentId ?? entry.agentId, entry.artworkJobId),
   );
   const evidenceReader =
     options.evidenceJobs?.some((entry) => isJob(context, entry.agentId, entry.jobId)) ?? false;
-  if (!child && !evidenceReader) {
+  if (!solveChild && !artChild && !evidenceReader) {
     return null;
   }
-  const evidenceSchema = Type.Object(
-    {
-      action: Type.Literal("evidence"),
-      ...(evidenceReader ? { childId: text(128) } : {}),
-    },
-    { additionalProperties: false },
-  );
-  const parameters = child
-    ? Type.Union([
-        Type.Object({ action: Type.Literal("prepare_context") }, { additionalProperties: false }),
-        Type.Object(
-          {
-            action: Type.Literal("prepare_daily"),
-            // The host's supported argument extends its ordinary 90-second tool watchdog.
-            timeoutMs: Type.Literal(600_000),
-            ...preparationFields,
-          },
-          { additionalProperties: false },
-        ),
-        evidenceSchema,
-      ])
-    : evidenceSchema;
-
+  const parameters = solveChild ? solveSchema : artChild ? artworkSchema : evidenceSchema;
   return {
     name: "kids_activity",
-    label: "Kids activity preparation",
-    description: child
-      ? "Prepare your creation-bound child's three daily challenges and shared pet scene. First prepare_context for recent quiz evidence and previous scenes; read the child's profile, notes and verified conversations separately. prepare_daily accepts exactly three fully solved three-question challenges, creative directions for normal/excited/bored/sleeping pictures, and brief mood captions. It requires normal/excited artwork, attempts both resting pictures within its remaining budget, and atomically publishes with fixed resting fallbacks when needed. It waits for admitted image calls to settle even if readiness was already published: do not call image_generate separately. A published date is a no-op. No messages are sent. evidence reads the same bounded learning evidence."
-      : "Read saved quiz attempts, support used and dated scene history for a configured child. This read-only evidence supplements transcripts and notes; do not count the same activity twice. No generation, publication or delivery is permitted.",
+    label: artChild ? "Kids artwork preparation" : "Kids activity preparation",
+    description: solveChild
+      ? "Prepare only your creation-bound child's ten-problem daily Solve goal. First prepare_context for recent quiz evidence; read the child's profile, notes and verified conversations separately. prepare_daily accepts one fully solved ten-question activity (at least eight numeric/explanation answers, at most two choice) and a dated learningBrief for adaptive extra batches. It atomically publishes without waiting for artwork. A published date is a no-op. No artwork generation or messages are permitted."
+      : artChild
+        ? "Prepare only your creation-bound child's Rocky artwork. First prepare_context for the current date/image, a bounded last-24-hour activity summary and three recent scene plans. Omission counts mean missing evidence is not inactivity. Read a small recent conversation slice and verified current school/event information separately; do not read the learning profile for artwork. Give relevant holidays/events an appropriate costume or theme, with recent interactions supplying playful context; do not use weather. prepare_art requires four mood prompts/captions and timeoutMs 600000. It generates normal/excited and attempts bored/sleeping, using fixed resting fallbacks if needed. Do not call image_generate separately. Existing art is a no-op unless an explicit refresh supplies currentImageId as replaceImageId; stale IDs publish nothing. No questions, learning updates or messages are permitted."
+        : "Read saved quiz attempts, support used and dated scene history for a configured child. This read-only evidence supplements transcripts and notes; do not count the same activity twice. No generation, publication or delivery is permitted.",
     parameters,
     execute: async (_toolCallId, args, signal) => {
       const runtime = options.getRuntime();
@@ -124,33 +186,34 @@ function createActivityTool(
       };
       try {
         assertCurrent();
-        // Hooks and direct host invocations can bypass the model-loop validation.
-        // Reuse the advertised schema here, before admitting either read or write work.
+        // Direct host invocations can bypass model-loop validation. Reuse this
+        // role's advertised schema before admitting either read or write work.
         if (!Check(parameters, args)) {
           return toolError("Activity arguments do not match this scheduled job's schema.");
         }
-        const input = args;
-        if (input.action === "prepare_daily") {
-          if (!child) {
-            return toolError("This job can read evidence only.");
-          }
-          const { action: _action, timeoutMs: _timeoutMs, ...preparation } = input;
-          const result = await runtime.generation.prepareDaily(child.childId, preparation, {
+        if (args.action === "prepare_daily" && solveChild) {
+          const { action: _action, ...preparation } = args;
+          const result = await runtime.publish(
+            { childId: solveChild.childId, ...preparation },
+            assertCurrent,
+          );
+          assertCurrent();
+          return jsonResult({ ...result, date: args.date });
+        }
+        if (args.action === "prepare_art" && artChild) {
+          const { action: _action, timeoutMs: _timeoutMs, ...preparation } = args;
+          const result = await runtime.generation.prepareArtwork(artChild.childId, preparation, {
             assertCurrent,
             agentDir: context.agentDir,
           });
           assertCurrent();
           return jsonResult(result);
         }
-        let selected = child;
-        if (input.action === "evidence" && evidenceReader && input.childId) {
-          selected = options.children.find((entry) => entry.childId === input.childId);
-        }
-        if (
-          !selected ||
-          (input.action !== "prepare_context" && input.action !== "evidence") ||
-          (input.action === "prepare_context" && !child)
-        ) {
+        const selected =
+          args.action === "evidence"
+            ? options.children.find((entry) => entry.childId === args.childId)
+            : (solveChild ?? artChild);
+        if (!selected) {
           return toolError("This job has no matching activity child.");
         }
         const result = await runtime.prepare(selected.childId, assertCurrent);
@@ -158,7 +221,7 @@ function createActivityTool(
         return jsonResult({
           childId: selected.childId,
           timeZone: selected.timeZone,
-          ...result,
+          ...(artChild ? artworkContext(result) : result),
         });
       } catch {
         // Provider/config failures can contain private paths, prompts or secrets.

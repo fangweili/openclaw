@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActivityMutation } from "@openclaw/kids-activity-contract";
 import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import {
   openSqliteWorkerStore,
@@ -12,8 +11,10 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type {
   ActivityDefinition,
+  ActivityDirectMutation,
   ActivityGrade,
   DailyActivityBundle,
+  DailyArtworkBundle,
 } from "./activity-contract.js";
 import { initialActivityProgress, perfectDayStatus } from "./activity-progress.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
@@ -61,7 +62,7 @@ function activity(child: string, date: string, ordinal: number): ActivityDefinit
     })),
   };
 }
-function bundle(childId: string, date: string): DailyActivityBundle {
+function bundle(childId: string, date: string): DailyActivityBundle & DailyArtworkBundle {
   return {
     childId,
     date,
@@ -82,7 +83,12 @@ const target = (childId: string, date = today) => ({
 function get(childId: string, date = today) {
   return store.execute({ type: "get", input: target(childId, date) });
 }
-function mutate(childId: string, mutation: ActivityMutation, date = today, grade?: ActivityGrade) {
+function mutate(
+  childId: string,
+  mutation: ActivityDirectMutation,
+  date = today,
+  grade?: ActivityGrade,
+) {
   return runSqliteWorkerStoreWrite(
     store,
     (scope) =>
@@ -267,6 +273,79 @@ afterAll(async () => {
 });
 
 describe("durable perfect calendar days", () => {
+  it("splits shipped schema-3 art while preserving brief, optional work and the existing streak", async () => {
+    const file = path.join(directory, "schema-three.sqlite");
+    const fixture = new DatabaseSync(file);
+    const childId = "schema-three";
+    let before: ReturnType<typeof legacyRows>;
+    let pet: unknown;
+    let artwork: Record<string, unknown>;
+    try {
+      createV2Fixture(fixture);
+      seedDay(fixture, childId, today);
+      fixture.exec(`
+        ALTER TABLE kids_day ADD COLUMN required_count INTEGER NOT NULL DEFAULT 1 CHECK(required_count > 0);
+        ALTER TABLE kids_pet ADD COLUMN perfect_day_streak INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE kids_pet ADD COLUMN last_perfect_date TEXT;
+        PRAGMA user_version = 3;
+      `);
+      fixture
+        .prepare("INSERT INTO kids_pet VALUES(?,?,?,?,?,?,?)")
+        .run(childId, null, now, now + 1000, 7, 9, today);
+      fixture
+        .prepare("INSERT INTO kids_request VALUES(?,?,?,?,?)")
+        .run(childId, "receipt", now, '["touch","receipt","chat"]', null);
+      const day = fixture.prepare("SELECT content FROM kids_day").get()!;
+      artwork = {
+        ...JSON.parse(String(day.content)),
+        restImages: { bored: "rest-bored", sleeping: "rest-sleeping" },
+      };
+      fixture
+        .prepare("UPDATE kids_day SET content=?")
+        .run(JSON.stringify({ ...artwork, learningBrief: "Keep the existing teaching context." }));
+      before = legacyRows(fixture);
+      pet = fixture.prepare("SELECT * FROM kids_pet").all();
+    } finally {
+      fixture.close();
+    }
+    const migrated = await openSqliteWorkerStore<ActivityStoreOperations>({
+      moduleUrl,
+      databasePath: file,
+      input: { children: [{ childId, timeZone }], now },
+    });
+    try {
+      const goal = await migrated.execute({ type: "findDaily", input: { childId, date: today } });
+      expect(goal?.learningBrief).toBe("Keep the existing teaching context.");
+      expect(goal?.activities).toHaveLength(1);
+      const art = await migrated.execute({ type: "findArtwork", input: { childId, date: today } });
+      expect(art).toEqual({ childId, date: today, ...artwork });
+      const context = await migrated.execute({ type: "prepare", input: target(childId) });
+      expect(
+        context.recentActivities.filter((evidence) => evidence.scope === "extra"),
+      ).toHaveLength(2);
+      expect(context.snapshot.perfectDayStreak).toBe(9);
+    } finally {
+      await migrated.close();
+    }
+    const check = new DatabaseSync(file, { readOnly: true });
+    try {
+      const after = legacyRows(check);
+      expect({ ...after, days: undefined }).toEqual({ ...before, days: undefined });
+      expect(after.days).toEqual(
+        before.days.map((row) =>
+          Object.assign({}, row, {
+            content: JSON.stringify({ learningBrief: "Keep the existing teaching context." }),
+          }),
+        ),
+      );
+      expect(check.prepare("SELECT * FROM kids_pet").all()).toEqual(pet);
+      expect(check.prepare("SELECT required_count FROM kids_day").get()?.required_count).toBe(1);
+      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+    } finally {
+      check.close();
+    }
+  });
+
   it("migrates version-one questions, evidence and receipts once while preserving saved progress", async () => {
     const file = path.join(directory, "legacy.sqlite");
     const fixture = new DatabaseSync(file);
@@ -414,7 +493,7 @@ describe("durable perfect calendar days", () => {
     }
     const check = new DatabaseSync(file);
     try {
-      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
     } finally {
       check.close();
     }
@@ -470,9 +549,23 @@ describe("durable perfect calendar days", () => {
   it("migrates v2 without changing quiz/evidence/receipts/pet clocks and seeds only known local history", async () => {
     const db = new DatabaseSync(databasePath, { readOnly: true });
     try {
-      expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
       expect(db.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
-      expect(legacyRows(db)).toEqual(originalRows);
+      const migrated = legacyRows(db);
+      expect({ ...migrated, days: undefined }).toEqual({ ...originalRows, days: undefined });
+      expect(migrated.days).toEqual(
+        originalRows.days.map((row) => Object.assign({}, row, { content: "{}" })),
+      );
+      const art = db
+        .prepare("SELECT child_id,date,created_at,content FROM kids_art ORDER BY child_id,date")
+        .all();
+      expect(
+        art.map((row) => Object.assign({}, row, { content: JSON.parse(String(row.content)) })),
+      ).toEqual(
+        originalRows.days.map((row) =>
+          Object.assign({}, row, { content: JSON.parse(String(row.content)) }),
+        ),
+      );
       expect(db.prepare("SELECT DISTINCT required_count FROM kids_day").all()).toEqual([
         { required_count: 3 },
       ]);
@@ -502,7 +595,7 @@ describe("durable perfect calendar days", () => {
     const childId = "clean";
     const activityId = activity(childId, today, 0).id;
     await mutate(childId, { kind: "start", requestId: "start-clean", activityId });
-    const unclear: ActivityMutation = {
+    const unclear: ActivityDirectMutation = {
       kind: "answer",
       requestId: "unclear",
       activityId,
@@ -550,7 +643,7 @@ describe("durable perfect calendar days", () => {
     for (const childId of ["hint", "wrong"]) {
       const activityId = activity(childId, today, 0).id;
       await mutate(childId, { kind: "start", requestId: "start", activityId });
-      const mutation: ActivityMutation =
+      const mutation: ActivityDirectMutation =
         childId === "hint"
           ? { kind: "hint", requestId: "disqualify", activityId, questionId: "q1" }
           : {
@@ -579,7 +672,7 @@ describe("durable perfect calendar days", () => {
     expect((await get(childId, today)).perfectDayStreak).toBe(2);
   });
 
-  it("continues a streak beyond retained history, survives worker restart, and supports additive-copy rollback", async () => {
+  it("continues a streak beyond retained history and restart while distinguishing new daily goals", async () => {
     expect((await get("retention")).perfectDayStreak).toBe(91);
     const complete = await finish("retention");
     expect(complete.perfectDayStreak).toBe(92);
@@ -600,31 +693,46 @@ describe("durable perfect calendar days", () => {
       (scope) =>
         scope.execute({
           type: "publish",
-          input: { ...target("retention", tomorrow), bundle: bundle("retention", tomorrow) },
+          input: {
+            ...target("retention", tomorrow),
+            bundle: {
+              ...bundle("retention", tomorrow),
+              learningBrief: "Fraction relationships at the child's current level.",
+              activities: [
+                {
+                  ...activity("retention", tomorrow, 0),
+                  questions: Array.from({ length: 10 }, (_, index) => ({
+                    ...activity("retention", tomorrow, 0).questions[0]!,
+                    id: `q${index + 1}`,
+                  })),
+                },
+              ],
+            },
+          },
         }),
       () => {},
       [databasePath],
     );
     expect((await finish("retention", tomorrow)).perfectDayStreak).toBe(93);
     await store.close();
-    // Offline task-owned copy rehearsal: dropping only additive columns preserves
-    // every original v2 field and all activity progress made since the upgrade.
-    const rollbackPath = path.join(directory, "rollback.sqlite");
-    await fs.copyFile(databasePath, rollbackPath);
-    const rollback = new DatabaseSync(rollbackPath);
+    const saved = new DatabaseSync(databasePath, { readOnly: true });
     try {
-      const before = legacyRows(rollback);
+      // The historical count stays three; only the new ten-question day uses one
+      // activity. An old schema-2 binary cannot safely infer this new day's goal.
       expect(
-        rollback.prepare("SELECT COUNT(*) AS count FROM kids_day WHERE required_count != 3").get()
-          ?.count,
-      ).toBe(0);
-      rollback.exec(
-        "BEGIN IMMEDIATE; ALTER TABLE kids_pet DROP COLUMN last_perfect_date; ALTER TABLE kids_pet DROP COLUMN perfect_day_streak; ALTER TABLE kids_day DROP COLUMN required_count; PRAGMA user_version = 2; COMMIT;",
-      );
-      expect(legacyRows(rollback)).toEqual(before);
-      expect(rollback.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
+        saved
+          .prepare("SELECT required_count FROM kids_day WHERE child_id = ? AND date = ?")
+          .get("retention", today)?.required_count,
+      ).toBe(3);
+      expect(
+        saved
+          .prepare("SELECT required_count FROM kids_day WHERE child_id = ? AND date = ?")
+          .get("retention", tomorrow)?.required_count,
+      ).toBe(1);
+      expect(saved.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+      expect(saved.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
     } finally {
-      rollback.close();
+      saved.close();
     }
     store = await openSqliteWorkerStore<ActivityStoreOperations>({
       moduleUrl,

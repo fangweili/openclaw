@@ -39,6 +39,7 @@ export type KidsActivityState = {
   answerError: string | null;
   answerEditing: boolean;
   checking: boolean;
+  preparing: boolean;
   imageUrl: string | null;
   imageError: boolean;
 };
@@ -65,6 +66,7 @@ export function emptyKidsActivity(): KidsActivityState {
     answerError: null,
     answerEditing: false,
     checking: false,
+    preparing: false,
     imageUrl: null,
     imageError: false,
   };
@@ -170,7 +172,8 @@ export class KidsActivity {
 
   /**
    * Admit one quiz operation from the displayed snapshot. Starting a completed
-   * quiz consumes its server-advertised next ID; rapid duplicate taps are no-ops.
+   * quiz consumes its server-advertised next ID or requests another adaptive
+   * batch. Rapid duplicate taps are no-ops; one pending request owns retries.
    */
   act(kind: "start" | "hint" | "answer", optionId?: string): Promise<void> {
     const data = this.snapshot.snapshot;
@@ -183,10 +186,13 @@ export class KidsActivity {
     let mutation: ActivityMutation;
     if (kind === "start") {
       const activityId = activity.completed ? data.nextActivity?.id : activity.id;
-      if (!activityId) {
+      if (activityId) {
+        mutation = { kind, ...common, activityId };
+      } else if (activity.completed && data.canContinue) {
+        mutation = { kind: "continue", ...common };
+      } else {
         return Promise.resolve();
       }
-      mutation = { kind, ...common, activityId };
     } else if (question && kind === "hint") {
       mutation = { kind, ...common, questionId: question.id };
     } else if (question && kind === "answer") {
@@ -291,6 +297,7 @@ export class KidsActivity {
     this.publish({
       busy: true,
       checking: pending.mutation.kind === "answer",
+      preparing: pending.mutation.kind === "continue",
       error: null,
       canRetry: false,
       ...(pending.mutation.kind === "answer" ? { answerEditing: false } : {}),
@@ -302,11 +309,13 @@ export class KidsActivity {
         const result = await this.client.request<ActivityResult>(
           `kids.activity.${kind}`,
           { sessionKey: pending.binding.sessionKey, ...params },
-          // The checker gets 30s of inference plus bounded settlement/commit
-          // grace. A later failure still retains this exact request for retry.
-          pending.mutation.kind === "answer" && pending.mutation.answer.kind === "explanation"
-            ? { timeoutMs: 45_000 }
-            : undefined,
+          // Generation and grading need bounded inference/commit grace. An
+          // uncertain response retains this exact predecessor and request ID.
+          pending.mutation.kind === "continue"
+            ? { timeoutMs: 120_000 }
+            : pending.mutation.kind === "answer" && pending.mutation.answer.kind === "explanation"
+              ? { timeoutMs: 45_000 }
+              : undefined,
         );
         if (!this.current(generation)) {
           return;
@@ -349,9 +358,11 @@ export class KidsActivity {
 
   private retryMessage(pending: Pending): string {
     return t(
-      pending.submission && pending.submission.answer.kind !== "choice"
-        ? "kids.answer.checkFailed"
-        : "kids.activity.saveFailed",
+      pending.mutation.kind === "continue"
+        ? "kids.activity.prepareFailed"
+        : pending.submission && pending.submission.answer.kind !== "choice"
+          ? "kids.answer.checkFailed"
+          : "kids.activity.saveFailed",
     );
   }
 
@@ -360,7 +371,7 @@ export class KidsActivity {
       this.admitted.delete(work);
       if (this.current(generation) && this.work === work) {
         this.work = null;
-        this.publish({ busy: false, checking: false });
+        this.publish({ busy: false, checking: false, preparing: false });
         this.flushTouch();
         this.schedule();
       }

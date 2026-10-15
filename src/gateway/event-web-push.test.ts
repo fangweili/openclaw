@@ -2,6 +2,7 @@ import type { StatementSync as NativeStatement } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
+import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import type { BoundWebPushSubscription } from "../infra/push-web.js";
@@ -223,7 +224,7 @@ describe("event Web Push classification", () => {
     );
     await authorityCompleted.promise;
     expect(preparedWebPushSendMock).toHaveBeenCalledOnce();
-    expect(preparedWebPushSendMock.mock.calls[0][0].subscriptions).toEqual(
+    expect(preparedWebPushSendMock.mock.calls[0]?.[0]?.subscriptions).toEqual(
       quiet ? [other] : [own, other],
     );
   });
@@ -600,21 +601,14 @@ describe("event Web Push classification", () => {
       const other = ensureProfileForEmail("tutor-other@example.test");
       setUserProfileRole(owner.id, "student");
       setUserProfileRole(other.id, "student");
-      const cfg: OpenClawConfig = {
-        gateway: {
-          roles: {
-            default: "student",
-            definitions: {
-              student: {
-                scopes: ["operator.sessions.write"],
-                sessions: { others: "none" },
-                agents: ["main"],
-              },
-            },
-          },
-        },
+      const policy: GatewayOperatorRoleDefinition = {
+        scopes: ["operator.sessions.write"],
+        sessions: { others: "none" },
+        agents: ["main"],
       };
-      const policy = cfg.gateway!.roles!.definitions.student;
+      const cfg: OpenClawConfig = {
+        gateway: { roles: { default: "student", definitions: { student: policy } } },
+      };
       const sessionKey = "agent:main:tutor-owner";
       await upsertSessionEntryCore(
         { agentId: "main", sessionKey },

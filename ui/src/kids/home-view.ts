@@ -3,7 +3,7 @@ import { html, svg } from "lit";
 import { strokeIcon } from "../components/icons-tools.ts";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
-import { completedKidsDay } from "./daily-view.ts";
+import { completedKidsDay, kidsDayResults } from "./daily-view.ts";
 import type { KidsPage } from "./navigation.ts";
 import { renderKidsPet } from "./pet-view.ts";
 
@@ -35,6 +35,20 @@ export function renderKidsHome(
 ) {
   const completed = completedKidsDay(activity.snapshot);
   const todayComplete = completed !== null && completed.date === activity.snapshot?.date;
+  const selected = activity.snapshot?.activity;
+  const results = kidsDayResults(activity.snapshot);
+  const detail = activity.preparing
+    ? t("kids.activity.preparing")
+    : selected?.started && !selected.completed && selected.date !== activity.snapshot?.date
+      ? t("kids.home.solveResume")
+      : results && results.date === activity.snapshot?.date
+        ? t(
+            selected?.scope === "extra" && !selected.completed
+              ? "kids.home.solveContinue"
+              : "kids.home.solveProgress",
+            { count: String(results.questionsSolved) },
+          )
+        : t("kids.home.solveDetail");
   return html`<main
     class="kids-today kids-home"
     aria-label=${t("kids.activity.today")}
@@ -67,10 +81,7 @@ export function renderKidsHome(
             ><span aria-hidden="true">${solve}</span
             ><span aria-hidden="true">${todayComplete ? finish : arrow}</span></span
           >
-          <strong>${t("kids.home.solve")}</strong
-          ><span class="kids-home-detail"
-            >${t(todayComplete ? "kids.home.solveComplete" : "kids.home.solveDetail")}</span
-          >
+          <strong>${t("kids.home.solve")}</strong><span class="kids-home-detail">${detail}</span>
         </button>
         ${(
           [

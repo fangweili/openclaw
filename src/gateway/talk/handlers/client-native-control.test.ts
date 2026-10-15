@@ -120,12 +120,12 @@ describe("native Talk through the public OpenAI plugin registration", () => {
           },
         },
       ]);
-      expect(messages[0]?.event.message).toHaveProperty("__openclaw.senderIdentity", {
+      expect(messages[0]?.event).toHaveProperty("message.__openclaw.senderIdentity", {
         type: "profile",
         id: profileId,
       });
-      expect(messages[0]?.event.message).toHaveProperty("__openclaw.senderId", profileId);
-      expect(messages[1]?.event.message).not.toHaveProperty("__openclaw");
+      expect(messages[0]?.event).toHaveProperty("message.__openclaw.senderId", profileId);
+      expect(messages[1]?.event).not.toHaveProperty("message.__openclaw");
       expect(talkEventTypes(broadcast)).not.toContain("turn.ended");
       await invoke("talk.client.close", {});
       expect(socket.readyState).toBe(upstream.NativeSocket.CLOSED);

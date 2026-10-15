@@ -35,18 +35,24 @@ export type ActivitySnapshot = {
   correctStreak: number;
   /** Consecutive local days completed first try without hints; excludes optional practice. */
   perfectDayStreak: number;
-  /** Counts for the latest prepared day, excluding any resumed older challenge. */
+  /** Scheduled goal for the latest prepared day; excludes extras and older carryover. */
   daily: {
     date: string;
     total: number;
     completed: number;
-    /** Questions eventually answered correctly, including corrected answers and extra practice. */
+    /** Immutable number of questions in the scheduled goal, including legacy nine-question days. */
+    questionTotal: number;
+    /** Scheduled questions eventually answered correctly, including corrected answers. */
     questionsSolved: number;
     /** Correct on the first graded attempt, including hints; clarification is ungraded. */
     firstTryCorrect: number;
     /** Distinct questions whose hint was opened, regardless of repeated requests. */
     hintedQuestions: number;
   } | null;
+  /** All optional work on the latest prepared day; same counters as daily, independent of selection. */
+  extras: { questionsSolved: number; firstTryCorrect: number; hintedQuestions: number };
+  /** True only at the completed final batch of the current local day. */
+  canContinue: boolean;
   /** Offered only after completion; start with this ID explicitly to advance. */
   nextActivity: { id: string; title: string } | null;
   activity: {
@@ -54,6 +60,10 @@ export type ActivitySnapshot = {
     date: string;
     title: string;
     subject: string;
+    scope: "daily" | "extra";
+    /** Current batch counters, separate from the scheduled daily recap. */
+    firstTryCorrect: number;
+    hintedQuestions: number;
     started: boolean;
     completed: boolean;
     currentIndex: number;
@@ -74,6 +84,8 @@ export type ActivityResult = { snapshot: ActivitySnapshot; feedback?: ActivityFe
 /** Reuse requestId for uncertain retries; different inputs under that ID are rejected. */
 export type ActivityMutation =
   | { kind: "start"; requestId: string; activityId: string }
+  /** The completed predecessor anchors retries; a saved successor is never regenerated. */
+  | { kind: "continue"; requestId: string; activityId: string }
   | {
       kind: "answer";
       requestId: string;

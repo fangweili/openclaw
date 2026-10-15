@@ -62,8 +62,11 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
       date: "2026-10-14",
       correctStreak: 0,
       perfectDayStreak: 0,
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
+      canContinue: false,
       daily: {
         date: "2026-10-14",
+        questionTotal: 9,
         total: 3,
         completed: 0,
         questionsSolved: 0,
@@ -85,6 +88,9 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
         subject: "Math",
         started: true,
         completed: false,
+        scope: "daily",
+        firstTryCorrect: 0,
+        hintedQuestions: 0,
         currentIndex: 0,
         total: 2,
         currentQuestion: {
@@ -317,6 +323,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     );
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByRole("heading", { name: "Adventure complete!", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     expect(await page.getByLabel("Message Rocky", { exact: true }).inputValue()).toBe(
       "Keep my chat draft.",

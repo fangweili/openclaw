@@ -124,7 +124,11 @@ describe("Talk client agent consult admission", () => {
     async (entry) => {
       const sessionContext = 'Trusted session context: {"selected_agent":{"id":"researcher"}}';
       const runner = createConsultRunner({ sessionContext });
-      await runner[entry]({ question: "check", prompt: "check" });
+      if (entry === "runPrompt") {
+        await runner.runPrompt({ prompt: "check" });
+      } else {
+        await runner[entry]({ question: "check" });
+      }
       expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toBe(sessionContext);
       expect(mocks.consultRealtimeVoiceAgent).toHaveBeenCalledWith(
         expect.objectContaining({ senderIsOwner: false }),
