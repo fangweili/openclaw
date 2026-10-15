@@ -310,7 +310,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
       "iPad landscape — checked reasoning remains visible",
     );
     await page.getByRole("button", { name: "Continue", exact: true }).click();
-    await page.getByRole("heading", { name: "All done for today!", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Adventure complete!", exact: true }).waitFor();
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     expect(await page.getByLabel("Message Rocky", { exact: true }).inputValue()).toBe(
       "Keep my chat draft.",
