@@ -17,17 +17,22 @@ const fixture = vi.hoisted(() => ({
   context: null as RealtimeTalkTransportContext | null,
   request: vi.fn<(method: string, params?: unknown) => Promise<unknown>>(),
   stop: vi.fn<() => Promise<void>>(),
+  renderView: false,
 }));
 
 // Keep the app, conversation, microphone and transcript owners real. Replace
-// only rendering, the authenticated RPC boundary and the provider transport.
-vi.mock("./view.ts", () => ({
-  renderKidsView: (state: KidsViewState, actions: KidsViewActions) => {
-    fixture.state = { ...state };
-    fixture.actions = actions;
-    return null;
-  },
-}));
+// the authenticated RPC boundary and provider transport. Most lifecycle cases
+// observe presentation facts; the scroll integration also renders the real view.
+vi.mock("./view.ts", async (original) => {
+  const actual = await original<typeof import("./view.ts")>();
+  return {
+    renderKidsView: (state: KidsViewState, actions: KidsViewActions) => {
+      fixture.state = { ...state };
+      fixture.actions = actions;
+      return fixture.renderView ? actual.renderKidsView(state, actions) : null;
+    },
+  };
+});
 vi.mock("../api/gateway.ts", async (original) => {
   const actual = await original<typeof import("../api/gateway.ts")>();
   return {
@@ -94,12 +99,188 @@ beforeEach(() => {
   fixture.state = null;
   fixture.actions = null;
   fixture.context = null;
+  fixture.renderView = false;
   fixture.request.mockReset();
   fixture.stop.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => vi.useRealTimers());
 
 describe("kids app voice completion", () => {
+  it("leaves old history for call captions, follows streaming until manual scrollback, and resumes on Latest", async () => {
+    fixture.renderView = true;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const refresh = createDeferred();
+    let closing = false;
+    fixture.request.mockImplementation(async (method, input) => {
+      const params = input as Record<string, unknown>;
+      switch (method) {
+        case "users.self":
+          return { profile: { id: "child-one", displayName: "Child" } };
+        case "agents.list":
+          return { agents: [{ id: "student", name: "Rocky" }] };
+        case "sessions.create":
+        case "sessions.messages.subscribe":
+        case "sessions.messages.unsubscribe":
+          return { key: params.key };
+        case "chat.history": {
+          if (closing) {
+            await refresh.promise;
+          }
+          const offset = Number(params.offset ?? 0);
+          const total = closing ? 1002 : 1000;
+          const count = closing ? 2 : 80;
+          return {
+            ...history(closing ? "after-call" : "before-call"),
+            messages: Array.from({ length: count }, (_, index) => {
+              const seq = total - offset - count + index + 1;
+              return {
+                role: "assistant",
+                content: `Saved message ${seq}`,
+                __openclaw: { id: `saved-${seq}`, seq },
+              };
+            }),
+            totalMessages: total,
+            offset,
+            hasMore: true,
+            nextOffset: offset + count,
+          };
+        }
+        case "talk.client.create":
+          return allocation;
+        case "talk.client.transcript":
+          return { ok: true };
+        case "talk.client.close":
+          closing = true;
+          return { ok: true };
+        default:
+          throw new Error(`Unexpected request: ${method}`);
+      }
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const app = new KidsApp(root);
+    try {
+      app.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await drafts.settle();
+      const thread = root.querySelector<HTMLElement>(".kids-thread")!;
+      const rows = () => [...root.querySelectorAll<HTMLElement>(".kids-message")];
+      const rowHeight = (row: HTMLElement) =>
+        100 + Math.ceil((row.textContent?.length ?? 0) / 40) * 20;
+      const bounds = new Map<HTMLElement, { top: number; height: number }>();
+      const height = () => {
+        let cursor = 100;
+        bounds.clear();
+        for (const row of rows()) {
+          const size = rowHeight(row);
+          bounds.set(row, { top: cursor, height: size });
+          cursor += size;
+        }
+        return cursor;
+      };
+      let top = 0;
+      Object.defineProperties(thread, {
+        clientHeight: { get: () => 200 },
+        scrollHeight: { get: height },
+        scrollTop: {
+          get: () => top,
+          set: (value: number) => {
+            top = Math.max(0, Math.min(value, height() - 200));
+          },
+        },
+      });
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        const box = bounds.get(this);
+        return box ? new DOMRect(0, box.top - top, 400, box.height) : new DOMRect(0, 0, 400, 200);
+      });
+      // Traverse enough real bounded history pages to evict the live tail.
+      for (let index = 0; index < 4; index += 1) {
+        fixture.actions!.older();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(fixture.state!.conversation.history.hasNewer).toBe(true);
+      expect(fixture.state!.awayFromLatest).toBe(true);
+      fixture.actions!.talk();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.state!.voice.status).toBe("listening");
+      expect(fixture.state!.conversation.history.hasNewer).toBe(false);
+      expect(fixture.state!.awayFromLatest).toBe(false);
+      const reads = () =>
+        fixture.request.mock.calls.filter(([method]) => method === "chat.history").length;
+      const readsBeforeCaptions = reads();
+      const caption = (itemId: string, text: string, final = false) =>
+        fixture.context!.callbacks.onTranscript?.({
+          role: "assistant",
+          itemId,
+          text,
+          final,
+        });
+      const createCaption = (
+        itemId: string,
+        previousItemId: string | null,
+        text: string,
+        final = true,
+      ) => {
+        fixture.context!.callbacks.onTranscriptItem?.({
+          type: "created",
+          itemId,
+          previousItemId,
+          role: "assistant",
+        });
+        caption(itemId, text, final);
+      };
+      createCaption("first", null, "A first spoken idea.");
+      createCaption("second", "first", "Another spoken idea.", false);
+      caption("second", " A longer thought that keeps streaming as Rocky explains the next step.");
+      expect(thread.scrollTop).toBe(height() - 200);
+      caption("second", "Another spoken idea with a longer thought about the next step.", true);
+      const scrollBack = (position: number) => {
+        thread.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+        thread.scrollTop = position;
+        thread.dispatchEvent(new Event("scroll"));
+      };
+      scrollBack(0);
+      expect(fixture.state!.awayFromLatest).toBe(true);
+      createCaption("third", "second", "A third idea while you read the first.");
+      expect(thread.scrollTop).toBe(0);
+      expect(reads()).toBe(readsBeforeCaptions);
+      const latest = root.querySelector<HTMLButtonElement>(".kids-latest")!;
+      latest.click();
+      expect(thread.scrollTop).toBe(height() - 200);
+      expect(fixture.state!.awayFromLatest).toBe(false);
+      createCaption("fourth", "third", "The newest spoken idea.");
+      expect(thread.scrollTop).toBe(height() - 200);
+      expect(reads()).toBe(readsBeforeCaptions);
+      fixture.actions!.talk();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.state!.voice.status).toBe("stopping");
+      expect(root.querySelector(".kids-captions")).not.toBeNull();
+      expect(root.querySelector(".kids-messages")).toBeNull();
+      refresh.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(root.querySelector(".kids-captions")).toBeNull();
+      expect(root.querySelector(".kids-messages")!.textContent).toContain("Saved message 1002");
+      expect(thread.scrollTop).toBe(height() - 200);
+      expect(fixture.state!.awayFromLatest).toBe(false);
+      expect(reads()).toBe(readsBeforeCaptions + 1);
+    } finally {
+      refresh.resolve();
+      await app.dispose();
+      root.remove();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(["remote close", "End Call", "provider error", "cleanup error"])(
     "%s drains transcripts and refreshes the branch before admitting the next text",
     async (ending) => {

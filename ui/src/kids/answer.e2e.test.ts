@@ -225,7 +225,12 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
     await page.getByRole("button", { name: "Finish dictation", exact: true }).click();
     await gateway.waitForRequest("kids.transcribe");
-    await page.locator(".kids-solve").getByText("Finishing your words…", { exact: true }).waitFor();
+    await page
+      .locator(".kids-solve")
+      .getByText("Writing what you said…", { exact: true })
+      .waitFor();
+    expect(await words.isDisabled()).toBe(true);
+    expect(await words.evaluate((field) => document.activeElement === field)).toBe(false);
     expect(await page.locator(".kids-footer").isVisible()).toBe(false);
     await gateway.resolveDeferred("kids.transcribe", { text: "No. They are different." });
     await page.waitForFunction(
@@ -235,6 +240,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
     );
     expect(await gateway.getRequests("kids.activity.answer")).toHaveLength(1);
     expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+    expect(await words.isEnabled()).toBe(true);
     await page.setViewportSize({ width: 1024, height: 1366 });
     await capture("explanation-portrait", "iPad portrait — dictated words ready to edit or check");
     await gateway.deferNext("kids.activity.answer");

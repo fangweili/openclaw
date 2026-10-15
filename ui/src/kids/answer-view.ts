@@ -1,4 +1,9 @@
-/** Pure free-answer form. Dictation only edits; the activity owner submits and grades. */
+/**
+ * Pure free-answer form. Dictation only edits; the activity owner submits and grades.
+ * Recording/transcription disables the input so it cannot retain readonly focus
+ * without a mobile keyboard. Completion restores native tap-to-edit, without
+ * asynchronously stealing focus. Graded answers remain readonly and selectable.
+ */
 import {
   ACTIVITY_EXPLANATION_MAX_LENGTH,
   ACTIVITY_NUMERIC_MAX_LENGTH,
@@ -66,7 +71,8 @@ export function renderKidsAnswer(
               aria-describedby=${question.unit ? "kids-answer-unit" : nothing}
               .value=${value}
               @focus=${actions.edit}
-              ?readonly=${state.checking || state.canRetry || correct || recording}
+              ?disabled=${recording}
+              ?readonly=${state.checking || state.canRetry || correct}
               @input=${(event: InputEvent) => actions.draft((event.target as HTMLInputElement).value)}
             />
             ${question.unit ? html`<span id="kids-answer-unit">${question.unit}</span>` : nothing}
@@ -79,7 +85,8 @@ export function renderKidsAnswer(
               placeholder=${t("kids.answer.placeholder")}
               .value=${value}
               @focus=${actions.edit}
-              ?readonly=${state.checking || state.canRetry || correct || recording}
+              ?disabled=${recording}
+              ?readonly=${state.checking || state.canRetry || correct}
               @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
             ></textarea>
             ${!correct ? html`<p class="kids-answer-note">${t("kids.answer.note")}</p>` : nothing}`
@@ -98,7 +105,7 @@ export function renderKidsAnswer(
             : nothing
       }
     </div>
-    ${recording ? html`<p class="kids-dictation-status" role="status">${t(dictation.finishing ? "kids.dictation.finishing" : "kids.dictation.listening")}</p>` : nothing}
+    ${recording ? html`<p class="kids-dictation-status" data-finishing=${dictation.finishing} role="status">${t(dictation.finishing ? "kids.dictation.finishing" : "kids.dictation.listening")}</p>` : nothing}
     ${dictation.detail ? html`<p class="kids-attachment-error" role="alert">${dictation.detail}</p>` : nothing}
     ${state.answerError ? html`<p class="kids-attachment-error" role="alert">${state.answerError}</p>` : nothing}
     <div class="kids-answer-actions">

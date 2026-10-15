@@ -114,6 +114,63 @@ function completedDayState(): KidsViewState {
   return state;
 }
 
+it("shows one current-call transcript through stopping, then returns to saved history", () => {
+  const root = document.createElement("div");
+  const state = readyState();
+  state.conversation.messages = [
+    { id: "saved-user", role: "user", text: "Why does ice float?", media: [] },
+    {
+      id: "saved-rocky",
+      role: "assistant",
+      text: "Ice is less dense than liquid water.",
+      media: [],
+    },
+  ];
+  state.conversation.history = { hasOlder: true, hasNewer: true, loading: null, error: null };
+  const entries = [
+    { id: "call-user", role: "user" as const, text: "Why does ice float?", isStreaming: false },
+    {
+      id: "call-rocky",
+      role: "assistant" as const,
+      text: "Ice is less dense than liquid water.",
+      isStreaming: true,
+    },
+  ];
+  const paint = () => render(renderKidsView(state, viewActions()), root);
+  try {
+    for (const status of ["listening", "stopping"] as const) {
+      state.voice = {
+        status,
+        active: status === "listening",
+        detail: "Keep talking naturally.",
+        entries,
+      };
+      paint();
+      expect(
+        Array.from(root.querySelectorAll(".kids-message-content"), (node) => node.textContent),
+      ).toEqual(entries.map((entry) => entry.text));
+      expect(
+        Array.from(root.querySelectorAll("[data-message-id]"), (node) =>
+          node.getAttribute("data-message-id"),
+        ),
+      ).toEqual(["call-user", "call-rocky"]);
+      expect(root.querySelector(".kids-history-status")).toBeNull();
+      expect(root.querySelector(".kids-voice-notice")?.textContent).toBe("Keep talking naturally.");
+    }
+    state.voice = { status: "idle", active: false, detail: null, entries };
+    paint();
+    expect(root.querySelector(".kids-captions")).toBeNull();
+    expect(
+      Array.from(root.querySelectorAll("[data-message-id]"), (node) =>
+        node.getAttribute("data-message-id"),
+      ),
+    ).toEqual(["saved-user", "saved-rocky"]);
+    expect(root.querySelectorAll(".kids-history-status")).toHaveLength(2);
+  } finally {
+    render(null, root);
+  }
+});
+
 it("keeps final-answer feedback before replacing the question with the full daily recap", () => {
   const root = document.createElement("div");
   const state = completedDayState();
@@ -308,6 +365,15 @@ it.each([false, true])(
       expect(today!.disabled).toBe(true);
       expect(root.querySelector<HTMLElement>(".kids-footer")!.hidden).toBe(false);
       expect(root.querySelector<HTMLButtonElement>(".kids-dictate")!.disabled).toBe(finishing);
+      const composer = root.querySelector<HTMLTextAreaElement>("#kids-message")!;
+      expect(composer.disabled).toBe(true);
+      expect(composer.readOnly).toBe(false);
+      const status = root.querySelector(".kids-dictation-status")!;
+      expect(status.getAttribute("role")).toBe("status");
+      expect(status.getAttribute("data-finishing")).toBe(String(finishing));
+      expect(status.textContent).toBe(
+        finishing ? "Writing what you said…" : "Listening… Tap stop when you’re done.",
+      );
       expect(root.querySelector("#kids-navigation-help")?.textContent).toBe(
         finishing
           ? "Wait for your words to appear before leaving this page."
@@ -315,6 +381,12 @@ it.each([false, true])(
       );
       today!.click();
       expect(actions.navigate).not.toHaveBeenCalled();
+      state.dictation = { active: false, finishing: false, detail: null };
+      state.page = "chat";
+      render(renderKidsView(state, actions), root);
+      expect(root.querySelector("#kids-message")).toBe(composer);
+      expect(composer.disabled).toBe(false);
+      expect(root.querySelector(".kids-dictation-status")).toBeNull();
     } finally {
       render(null, root);
     }
@@ -610,7 +682,7 @@ it("keeps Solve recording controls visible through microphone permission and tra
       expect(root.querySelector<HTMLElement>(".kids-solve")!.hidden).toBe(false);
       expect(root.querySelector<HTMLElement>(".kids-footer")!.hidden).toBe(true);
       expect(root.querySelector<HTMLInputElement>("#kids-answer")!.inputMode).toBe("text");
-      expect(root.querySelector<HTMLInputElement>("#kids-answer")!.readOnly).toBe(true);
+      expect(root.querySelector<HTMLInputElement>("#kids-answer")!.disabled).toBe(true);
       expect(root.querySelector<HTMLButtonElement>(".kids-page-navigation button")!.disabled).toBe(
         true,
       );

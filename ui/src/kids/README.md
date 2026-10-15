@@ -47,6 +47,12 @@ During a live or finishing voice call, or dictation awaiting microphone permissi
 recording, or finishing transcription, the originating Chat or Solve controls
 remain visible and navigation away is disabled with an accessible explanation.
 One dictation owner serves both surfaces, and live voice cannot overlap it.
+Recording and transcription disable their input rather than leaving it focused
+and readonly. Completion restores native tap-to-edit without asynchronous focus
+or keyboard emulation. A highlighted status beside the composer remains visible
+through the entire request: **Writing what you said…** with a progress indicator
+that respects reduced motion. The result only edits the draft; sending/checking
+still requires the child's action. This does not change provider latency.
 Connection, reply and voice status remains in a persistent live region inside
 Chat. Connecting is visible; the other status text is screen-reader-only because
 the reply, call or error already has a visible presentation.
@@ -69,7 +75,6 @@ to screen readers.
 - `app.ts` owns the document, same-origin Gateway client, and the
   lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
-  It starts and disposes the document's touch-gesture owner with the app.
   It also owns the URL page projection and hash/worker-message listeners. Known
   fragments pass the same parser for reload, hash navigation and same-origin
   worker messages. Microphone guards reject leaving the recording surface and restore its URL.
@@ -200,22 +205,16 @@ to screen readers.
   the latest messages until the child scrolls away, then preserves a visible
   message across page changes and media resizing. Paging requires reader scroll
   intent at an edge. A floating Latest button returns to the live tail without
-  altering the draft. Disposal removes listeners and the observer.
-- `touch-gestures.ts` owns Safari pinch cancellation and the narrow double-tap
-  fallback, with listeners installed on start and removed on disposal. CSS keeps
-  native panning at each scrolling boundary. Safari releases before
-  [WebKit's manipulation fix](https://github.com/WebKit/WebKit/commit/504edb5c563f9ad8d0436f60b5a608f0ec384f42)
-  can still zoom on a double tap. The fallback covers the whole kids document,
-  including Today cards and Chat. Capture listeners cancel subsequent nearby
-  stationary taps throughout a rapid burst, even if navigation replaces the
-  tapped content; the first tap stays native. It has no timers or synthetic clicks.
-  Scrolling, long presses, spatially distinct taps and editable fields retain
-  their native touch behavior. Existing text selection does not bypass this policy
-  on other surfaces. Double-tap word selection in plain transcript text may also
-  be suppressed; composer word selection is untouched.
-  Pinch gestures are cancelled across the document, including editable fields.
-  Native iPad gesture recognition needs physical-device verification; synthetic
-  touch tests verify cancellation and lifecycle, not Safari's zoom recognizer.
+  altering the draft. Starting a call discards the browsed history window and
+  switches this same owner to the current-call caption presentation. Captions
+  follow until manual scrollback; Latest resumes following without history reads,
+  and call scrolling never pages saved history. Returning to refreshed Chat uses
+  its own presentation binding and follows the canonical tail. Disposal removes
+  listeners and the observer.
+- Browser defaults own pinch zoom, double-tap, selection and scrolling throughout
+  the app. There are no gesture-cancelling listeners or viewport zoom limits.
+  Kids controls reset the shared Control UI's `touch-action` to `auto` so they
+  retain the same native gestures as the surrounding content.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
   Shared chat admission, read/resize, payload, and encoding owners enforce the
   Gateway's advertised per-file and WebSocket batch limits. The app cancels reads
@@ -241,6 +240,10 @@ to screen readers.
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
   work before transport teardown. Provider credentials stay with existing owners.
+  The view shows exactly one transcript: current-call captions while active or
+  stopping, then saved Chat after joined close and authoritative history refresh.
+  The conversation continues receiving canonical updates throughout the call;
+  the view does not compare or deduplicate text from those two presentations.
   The Gateway captures authenticated caller attribution at transcript/call admission
   and stamps stable caller IDs on user voice rows through the shared metadata
   serializer. Mutable display labels stay out of transcript retry identity.

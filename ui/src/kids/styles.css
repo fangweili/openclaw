@@ -16,29 +16,9 @@ html[data-kids] body {
   -webkit-text-size-adjust: 100%;
 }
 
-html[data-kids],
-html[data-kids] body,
-.kids-thread,
-.kids-today,
-.kids-composer textarea,
-.kids-message-content pre,
-.kids-message-content table {
-  /* Repeat at native scroll boundaries, where inherited touch actions reset. */
-  touch-action: pan-x pan-y;
-}
-
-/* Safari resets touch action at scroll boundaries. Older releases also ignore
-   manipulation for double-tap; touch-gestures.ts owns that fallback and pinch. */
-@supports (-webkit-touch-callout: none) {
-  html[data-kids],
-  html[data-kids] body,
-  .kids-thread,
-  .kids-today,
-  .kids-composer textarea,
-  .kids-message-content pre,
-  .kids-message-content table {
-    touch-action: manipulation;
-  }
+/* Restore native gestures on controls despite the shared Control UI's policy. */
+.kids-shell :is(a, button, label, summary, input, select, textarea, [role="button"]) {
+  touch-action: auto;
 }
 
 .kids-shell {
@@ -1180,10 +1160,39 @@ html[data-kids] body,
 }
 
 .kids-dictation-status {
-  margin: 0 8px 10px;
-  color: var(--kids-muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--kids-tint);
+  color: var(--kids-ink);
   font-size: 14px;
+  font-weight: 600;
   line-height: 1.5;
+}
+
+.kids-dictation-status[data-finishing="true"]::before {
+  content: "";
+  flex: 0 0 14px;
+  height: 14px;
+  border: 2px solid var(--kids-border);
+  border-top-color: var(--kids-accent);
+  border-radius: 50%;
+  animation: kids-dictation-progress 1s linear infinite;
+}
+
+@keyframes kids-dictation-progress {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kids-dictation-status[data-finishing="true"]::before {
+    animation: none;
+  }
 }
 
 /* Solve keeps typed and dictated answers visible through review. Its owner

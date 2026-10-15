@@ -28,7 +28,6 @@ import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
 import { parseKidsPage, type KidsPage } from "./navigation.ts";
 import { KidsNotifications } from "./notifications.ts";
-import { KidsTouchGestures } from "./touch-gestures.ts";
 import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
@@ -53,7 +52,6 @@ export class KidsApp {
   private readonly draft: KidsDraft;
   private readonly media: KidsHistoryMedia;
   private readonly transcript: KidsTranscriptScroll;
-  private readonly touchGestures: KidsTouchGestures;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -69,7 +67,6 @@ export class KidsApp {
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
-    this.touchGestures = new KidsTouchGestures(root.ownerDocument);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -131,8 +128,16 @@ export class KidsApp {
           this.paint();
         }
       },
-      () => void this.conversation.loadOlder(),
-      () => void this.conversation.loadNewer(),
+      () => {
+        if (!this.calling) {
+          void this.conversation.loadOlder();
+        }
+      },
+      () => {
+        if (!this.calling) {
+          void this.conversation.loadNewer();
+        }
+      },
     );
     this.snapshot = {
       page: parseKidsPage(location.hash) ?? "today",
@@ -161,7 +166,6 @@ export class KidsApp {
       return;
     }
     this.started = true;
-    this.touchGestures.start();
     window.addEventListener("hashchange", this.locationChanged);
     navigator.serviceWorker?.addEventListener("message", this.workerMessage);
     this.paint();
@@ -174,7 +178,6 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
-    this.touchGestures.dispose();
     window.removeEventListener("hashchange", this.locationChanged);
     navigator.serviceWorker?.removeEventListener("message", this.workerMessage);
     this.transcript.dispose();
@@ -412,6 +415,7 @@ export class KidsApp {
       if (voice.state.active) {
         await voice.stop();
       } else if (this.snapshot.conversation.sessionKey && !this.snapshot.conversation.busy) {
+        this.conversation.returnToLatest();
         await voice.start(this.snapshot.conversation.sessionKey);
       }
     } catch {
@@ -529,20 +533,28 @@ export class KidsApp {
     }
   }
 
+  /** Caption presentation lasts through joined close and the authoritative history refresh. */
+  private get calling(): boolean {
+    return this.snapshot.voice.active || this.snapshot.voice.status === "stopping";
+  }
+
   private paint(forceScroll = false): void {
     if (this.disposed) {
       return;
     }
     const chat = this.snapshot.conversation;
+    const calling = this.calling;
     const showingChat =
       !this.snapshot.activityEnabled ||
       this.snapshot.page === "chat" ||
-      this.snapshot.voice.active ||
-      this.snapshot.voice.status === "stopping" ||
+      calling ||
       (!this.snapshot.dictationQuestion &&
         (this.snapshot.dictation.active || this.snapshot.dictation.finishing));
     if (showingChat) {
-      this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+      this.transcript.beforeRender(
+        `${chat.sessionKey}\0${chat.sessionId}\0${calling ? "voice" : "chat"}`,
+        !calling && chat.history.hasNewer,
+      );
     }
     this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
@@ -581,7 +593,9 @@ export class KidsApp {
         older: () => void this.conversation.loadOlder(),
         newer: () => void this.conversation.loadNewer(),
         latest: () => {
-          this.conversation.returnToLatest();
+          if (!calling) {
+            this.conversation.returnToLatest();
+          }
           this.paint(true);
         },
         notifications: () => {

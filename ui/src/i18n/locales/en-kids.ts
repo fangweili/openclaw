@@ -120,7 +120,7 @@ const enKids = {
       start: "Dictate a message",
       stop: "Finish dictation",
       listening: "Listening… Tap stop when you’re done.",
-      finishing: "Finishing your words…",
+      finishing: "Writing what you said…",
       unsupported:
         "This browser can’t record a message. You can use your keyboard’s microphone instead.",
       tooLarge: "That recording is too long. Try a shorter message.",

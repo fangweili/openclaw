@@ -3,6 +3,10 @@
  * view emits intentions and never discovers agents, sessions, or credentials.
  * Message HTML comes only from the shared sanitized Markdown renderer.
  * Retained drafts are visible only while the conversation owner reports ready.
+ * Calls show their current captions through stopping; saved history returns
+ * after the app joins the call and refreshes the authoritative conversation.
+ * Dictation disables the composer instead of retaining readonly focus, then
+ * restores native tap-to-edit without asynchronously focusing the field.
  */
 import { html, nothing, svg } from "lit";
 import { repeat } from "lit/directives/repeat.js";
@@ -243,38 +247,49 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                   </section>`
                 : nothing
             }
-            ${ready ? historyEdge(chat, actions, "older") : nothing}
-            <div class="kids-messages" role="log" aria-live="polite" aria-relevant="additions text">
-              ${repeat(
-                chat.messages,
-                (message) => message.id,
-                (message) => html`
-                  <article
-                    class=${`kids-message kids-message--${message.role}`}
-                    data-message-id=${message.id}
-                  >
-                    <span class="kids-sr-only"
-                      >${message.role === "user" ? t("kids.you") : t("kids.name")}:
-                    </span>
-                    ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
-                    <div class="kids-message-media">
-                      ${message.media.map((media) =>
-                        media.artifactId && state.media && ready
-                          ? html`<figure class="kids-media-preview">
-                              ${kidsMediaPreview(state.media, media, state.media.generation)}
-                            </figure>`
-                          : html`<span class="kids-media-tile"
-                              ><span class="kids-sr-only">${media.label}: </span
-                              >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
-                            >`,
+            ${
+              !calling
+                ? html`
+                    ${ready ? historyEdge(chat, actions, "older") : nothing}
+                    <div
+                      class="kids-messages"
+                      role="log"
+                      aria-live="polite"
+                      aria-relevant="additions text"
+                    >
+                      ${repeat(
+                        chat.messages,
+                        (message) => message.id,
+                        (message) => html`
+                          <article
+                            class=${`kids-message kids-message--${message.role}`}
+                            data-message-id=${message.id}
+                          >
+                            <span class="kids-sr-only"
+                              >${message.role === "user" ? t("kids.you") : t("kids.name")}:
+                            </span>
+                            ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
+                            <div class="kids-message-media">
+                              ${message.media.map((media) =>
+                                media.artifactId && state.media && ready
+                                  ? html`<figure class="kids-media-preview">
+                                      ${kidsMediaPreview(state.media, media, state.media.generation)}
+                                    </figure>`
+                                  : html`<span class="kids-media-tile"
+                                      ><span class="kids-sr-only">${media.label}: </span
+                                      >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
+                                    >`,
+                              )}
+                            </div>
+                          </article>
+                        `,
                       )}
+                      ${chat.busy && !chat.canRetrySend ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
                     </div>
-                  </article>
-                `,
-              )}
-              ${chat.busy && !chat.canRetrySend && !calling ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
-            </div>
-            ${ready ? historyEdge(chat, actions, "newer") : nothing}
+                    ${ready ? historyEdge(chat, actions, "newer") : nothing}
+                  `
+                : nothing
+            }
             ${
               calling
                 ? html` <section class="kids-call" aria-label=${t("kids.liveVoice")}>
@@ -286,7 +301,10 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                         voice.entries,
                         (entry) => entry.id,
                         (entry) =>
-                          html`<div class=${`kids-message kids-message--${entry.role}`}>
+                          html`<div
+                            class=${`kids-message kids-message--${entry.role}`}
+                            data-message-id=${entry.id}
+                          >
                             <span class="kids-sr-only"
                               >${entry.role === "user" ? t("kids.you") : t("kids.name")}:
                             </span>
@@ -383,7 +401,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       : nothing
                   }
                   ${ready && state.attachments.error ? html`<p class="kids-attachment-error" role="alert">${state.attachments.error}</p>` : nothing}
-                  ${ready && dictating ? html`<p class="kids-dictation-status" role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
+                  ${ready && dictating ? html`<p class="kids-dictation-status" data-finishing=${state.dictation.finishing} role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
                   ${ready && !state.dictationQuestion && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
                   <form
                     class="kids-composer"
@@ -422,8 +440,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       maxlength="16000"
                       placeholder=${t("kids.placeholder")}
                       .value=${ready ? state.draft : ""}
-                      ?disabled=${!composerReady}
-                      ?readonly=${dictating}
+                      ?disabled=${!composerReady || dictating}
                       @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
                       @keydown=${(event: KeyboardEvent) => {
                         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
