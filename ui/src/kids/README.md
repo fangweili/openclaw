@@ -11,10 +11,27 @@ The name comes only from the verified conversation; an empty name uses
 numeric and short explanation questions. The server alone grades them. Landscape
 tablets place Rocky left of the choices or challenge; portrait and small screens
 stack them. Today and Solve share the same art and panel anchors, sizes, column
-alignment and top row. Today fills that row with its greeting; Solve reserves it
-for the floating navigation. The content below may grow without moving the frame.
+alignment and top row. Landscape uses a viewport-based stage with more space below
+the greeting; its anchors do not depend on the question or recap height. Today fills
+the row with its greeting; active Solve reserves it, and the daily recap uses a
+celebration heading. Longer content still scrolls without moving the frame.
 Phones reserve two heading lines; unusually long names may still wrap further.
 The existing answer-editing layout continues to make room for the keyboard.
+Chat retains the full available height and its bottom composer; it never adopts
+the centered Today/Solve stage.
+
+After the final answer's feedback is dismissed with **Continue**, a finished
+prepared day shows its own recap instead of the old question title, subject and
+progress bar. It displays the server's solved-question and challenge totals,
+first-try correct answers, distinct questions that used a hint, and **Perfect days**.
+Perfect days counts consecutive local days when every scheduled question was
+correct on its first graded attempt without hints; optional parent practice is
+excluded. The server owns that count independently of the correct-answer streak
+used by Rocky. First try includes hinted answers; clarification is not graded. **Chat with Rocky** is the main next action.
+An intermediate challenge still offers **Another challenge**. Today marks Solve
+complete only for the server's current date when all prepared challenges are done
+and no unfinished selected challenge remains. An older finished batch is labeled
+with its own date and never promises today's completion or tomorrow's preparation.
 
 Compact floating **Today** controls return home from Chat or Solve; each scroller
 reserves their safe-area top inset so initial content stays clear. **Talk it
@@ -87,6 +104,10 @@ to screen readers.
   stay mounted but hidden when inactive, preserving their native scroll positions;
   loss of conversation admission removes both private panels immediately.
 - `activity-view.ts` renders the server-selected quiz and feedback.
+- `daily-view.ts` owns stateless completion presentation shared by Home and Solve.
+  It reads the admitted snapshot's dates and counters without recomputing learning
+  evidence or using the browser clock. Solve gives retained answer feedback priority
+  over the recap; this helper owns no state, listeners, resources or lifecycle.
   `answer-view.ts` renders numeric or explanation input with an explicit **Check
   answer** action. Numeric text input allows negative values and fractions, with
   units outside the field; explanation input accepts up to 600 characters. Numeric
@@ -184,12 +205,13 @@ to screen readers.
   native panning at each scrolling boundary. Safari releases before
   [WebKit's manipulation fix](https://github.com/WebKit/WebKit/commit/504edb5c563f9ad8d0436f60b5a608f0ec384f42)
   can still zoom on a double tap. The fallback covers the whole kids document,
-  including Today cards and Chat. It cancels only a second nearby stationary tap
-  on plain surfaces or the same non-editing control (button, link, disclosure or
-  media); the first tap stays native. It has no timers or synthetic clicks.
-  Scrolling, long presses, different controls, existing selections and editable
-  fields retain their native touch behavior. Double-tap word selection in plain
-  transcript text may also be suppressed; composer word selection is untouched.
+  including Today cards and Chat. Capture listeners cancel subsequent nearby
+  stationary taps throughout a rapid burst, even if navigation replaces the
+  tapped content; the first tap stays native. It has no timers or synthetic clicks.
+  Scrolling, long presses, spatially distinct taps and editable fields retain
+  their native touch behavior. Existing text selection does not bypass this policy
+  on other surfaces. Double-tap word selection in plain transcript text may also
+  be suppressed; composer word selection is untouched.
   Pinch gestures are cancelled across the document, including editable fields.
   Native iPad gesture recognition needs physical-device verification; synthetic
   touch tests verify cancellation and lifecycle, not Safari's zoom recognizer.

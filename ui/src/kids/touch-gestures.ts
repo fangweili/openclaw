@@ -4,21 +4,22 @@
  * WebKit 504edb5, a fallback for manipulation's broken double-tap policy.
  *
  * start installs listeners once; dispose removes them synchronously and forgets
- * the current touch and preceding tap. No timers, synthetic clicks, or scrolling
- * are owned here. The first tap stays native; a second stationary tap on the
- * same control or plain surface is cancelled, including duplicate activation.
- * Different controls, editing, existing selections, and long presses stay native.
- * Cancelling a plain-surface double-tap also suppresses double-tap text selection.
+ * the current touch and preceding tap. Capture listeners keep descendant bubble
+ * handlers from bypassing this policy. No timers, synthetic clicks, or scrolling
+ * are owned here. The first tap stays native; subsequent nearby stationary taps
+ * in a rapid burst are cancelled, including after navigation replaces content.
+ * Spatially distinct taps, editing (including word selection), and long presses
+ * stay native. Existing selections do not bypass the policy on other surfaces;
+ * cancelling a plain-surface double-tap also suppresses double-tap text selection.
  */
 
-type Tap = { x: number; y: number; at: number; control: Element | null };
+type Tap = { x: number; y: number; at: number };
 type ActiveTouch = Tap & { id: number };
 
 const TAP_INTERVAL_MS = 350;
 const TAP_DISTANCE_PX = 30;
 const MOVE_DISTANCE_PX = 10;
 const EDITING_CONTROLS = "input, textarea, select, [contenteditable]";
-const TAP_CONTROLS = "button, a, video, audio, summary";
 
 export class KidsTouchGestures {
   private started = false;
@@ -36,13 +37,19 @@ export class KidsTouchGestures {
     }
     this.started = true;
     const document = this.document;
-    document.addEventListener("gesturestart", this.preventPageZoom, { passive: false });
-    document.addEventListener("gesturechange", this.preventPageZoom, { passive: false });
+    document.addEventListener("gesturestart", this.preventPageZoom, {
+      capture: true,
+      passive: false,
+    });
+    document.addEventListener("gesturechange", this.preventPageZoom, {
+      capture: true,
+      passive: false,
+    });
     if (document.defaultView?.CSS?.supports("-webkit-touch-callout", "none")) {
-      document.addEventListener("touchstart", this.touchStart, { passive: true });
-      document.addEventListener("touchmove", this.touchMove, { passive: true });
-      document.addEventListener("touchend", this.touchEnd, { passive: false });
-      document.addEventListener("touchcancel", this.reset, { passive: true });
+      document.addEventListener("touchstart", this.touchStart, { capture: true, passive: true });
+      document.addEventListener("touchmove", this.touchMove, { capture: true, passive: true });
+      document.addEventListener("touchend", this.touchEnd, { capture: true, passive: false });
+      document.addEventListener("touchcancel", this.reset, { capture: true, passive: true });
     }
   }
 
@@ -53,12 +60,12 @@ export class KidsTouchGestures {
     }
     this.disposed = true;
     const document = this.document;
-    document.removeEventListener("gesturestart", this.preventPageZoom);
-    document.removeEventListener("gesturechange", this.preventPageZoom);
-    document.removeEventListener("touchstart", this.touchStart);
-    document.removeEventListener("touchmove", this.touchMove);
-    document.removeEventListener("touchend", this.touchEnd);
-    document.removeEventListener("touchcancel", this.reset);
+    document.removeEventListener("gesturestart", this.preventPageZoom, true);
+    document.removeEventListener("gesturechange", this.preventPageZoom, true);
+    document.removeEventListener("touchstart", this.touchStart, true);
+    document.removeEventListener("touchmove", this.touchMove, true);
+    document.removeEventListener("touchend", this.touchEnd, true);
+    document.removeEventListener("touchcancel", this.reset, true);
     this.reset();
   }
 
@@ -74,8 +81,7 @@ export class KidsTouchGestures {
     if (
       event.touches.length !== 1 ||
       !(target instanceof Element) ||
-      target.closest(EDITING_CONTROLS) ||
-      this.document.getSelection()?.isCollapsed === false
+      target.closest(EDITING_CONTROLS)
     ) {
       this.reset();
       return;
@@ -86,7 +92,6 @@ export class KidsTouchGestures {
       x: touch.clientX,
       y: touch.clientY,
       at: event.timeStamp,
-      control: target.closest(TAP_CONTROLS),
     };
   };
 
@@ -116,8 +121,7 @@ export class KidsTouchGestures {
     if (
       touch.identifier !== active.id ||
       event.timeStamp - active.at > TAP_INTERVAL_MS ||
-      Math.hypot(touch.clientX - active.x, touch.clientY - active.y) > MOVE_DISTANCE_PX ||
-      this.document.getSelection()?.isCollapsed === false
+      Math.hypot(touch.clientX - active.x, touch.clientY - active.y) > MOVE_DISTANCE_PX
     ) {
       this.previousTap = null;
       return;
@@ -127,16 +131,13 @@ export class KidsTouchGestures {
       x: touch.clientX,
       y: touch.clientY,
       at: event.timeStamp,
-      control: active.control,
     };
     if (
       previous &&
-      previous.control === active.control &&
       event.timeStamp - previous.at <= TAP_INTERVAL_MS &&
       Math.hypot(touch.clientX - previous.x, touch.clientY - previous.y) <= TAP_DISTANCE_PX
     ) {
       event.preventDefault();
-      this.previousTap = null;
     }
   };
 }

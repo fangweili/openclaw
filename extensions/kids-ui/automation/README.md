@@ -171,11 +171,11 @@ failure preserves the previous complete activities. Optional render/encoding fai
 use original fixed poses without blocking publication. Daily resting art is shown
 only on its own local date; old batches and missing variants use fixed originals.
 The optional `restImages` field remains optional day content; old days use fixed
-resting poses. Free-answer support separately migrates the existing activity
-database to version 2, preserving saved choice questions, progress, and receipts.
-Take a verified SQLite backup before activation. An older plugin refuses version
-2; rollback requires the matching pre-upgrade database backup, not just switching
-the installation link. Never discard work accepted after the upgrade silently.
+resting poses. The current activity schema is 3; follow the main plugin README's
+[upgrade and rollback contract](../README.md#daily-activities-and-pets) for the
+coordinated backup, retained-history initialization, and compatible copy downgrade.
+Switching binaries alone cannot roll back this database. Never discard work
+accepted after the upgrade silently.
 Artwork
 that loses a confirmed publication race is removed. A publication error with an
 unknown commit outcome retains the image files; retry checks the saved day before

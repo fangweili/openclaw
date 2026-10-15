@@ -201,7 +201,7 @@ beforeAll(async () => {
   store = await openSqliteWorkerStore<ActivityStoreOperations>({
     moduleUrl,
     databasePath,
-    input: undefined,
+    input: { children: [], now: timestamp },
   });
 });
 afterAll(async () => {
@@ -217,7 +217,14 @@ describe("activity worker authority and progress", () => {
     const before = savedRows(childId);
     const offered = await offerPractice(childId);
     expect(offered.published).toBe(true);
-    expect(offered.snapshot.daily).toEqual({ date: "2026-10-13", total: 4, completed: 3 });
+    expect(offered.snapshot.daily).toEqual({
+      date: "2026-10-13",
+      total: 4,
+      completed: 3,
+      questionsSolved: 9,
+      firstTryCorrect: 9,
+      hintedQuestions: 0,
+    });
     expect(offered.snapshot.nextActivity).toEqual({
       id: `${childId}-practice`,
       title: "Explain your idea",
@@ -257,7 +264,14 @@ describe("activity worker authority and progress", () => {
       () => {},
       { outcome: "correct", explanation: "Exactly: the same groups." },
     );
-    expect(answered.snapshot.daily?.completed).toBe(4);
+    expect(answered.snapshot.daily).toEqual({
+      date: "2026-10-13",
+      total: 4,
+      completed: 4,
+      questionsSolved: 10,
+      firstTryCorrect: 10,
+      hintedQuestions: 0,
+    });
     const complete = savedRows(childId);
     const offer = practice(childId);
     // Equivalent JSON objects may arrive with a different property order.
@@ -287,10 +301,10 @@ describe("activity worker authority and progress", () => {
 
   it("refuses missing, incomplete, stale, malformed or conflicting practice offers atomically", async () => {
     const childId = "practice-refusal";
-    await expect(offerPractice(childId)).rejects.toThrow("three challenges");
+    await expect(offerPractice(childId)).rejects.toThrow("scheduled challenges");
     await publish(childId);
     const initial = savedRows(childId);
-    await expect(offerPractice(childId)).rejects.toThrow("three challenges");
+    await expect(offerPractice(childId)).rejects.toThrow("scheduled challenges");
     expect(savedRows(childId)).toEqual(initial);
     await completeDay(childId);
     const completed = savedRows(childId);
@@ -356,10 +370,17 @@ describe("activity worker authority and progress", () => {
       results
         .filter((result) => result.status === "fulfilled")
         .map((result) => result.value.published)
-        .toSorted(),
+        .toSorted((a, b) => Number(a) - Number(b)),
     ).toEqual([false, true]);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
-    expect((await get(childId)).daily).toEqual({ date: "2026-10-13", total: 4, completed: 3 });
+    expect((await get(childId)).daily).toEqual({
+      date: "2026-10-13",
+      total: 4,
+      completed: 3,
+      questionsSolved: 9,
+      firstTryCorrect: 9,
+      hintedQuestions: 0,
+    });
     expect(savedRows(childId).activities).toHaveLength(4);
   });
 
@@ -379,7 +400,14 @@ describe("activity worker authority and progress", () => {
     expect(JSON.stringify(snapshot)).not.toMatch(
       /correctOptionId|explanation|Count one more|scenePrompt|red maple leaf/u,
     );
-    expect(snapshot.daily).toEqual({ date: "2026-10-13", total: 3, completed: 0 });
+    expect(snapshot.daily).toEqual({
+      date: "2026-10-13",
+      total: 3,
+      completed: 0,
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+    });
     expect(snapshot.nextActivity).toBeNull();
     expect((await get("other-child")).activity).toBeNull();
   });
@@ -406,6 +434,17 @@ describe("activity worker authority and progress", () => {
       questionId: "q1",
       requestId: "hint-1",
     });
+    const repeatedHint = await mutate("hints", {
+      kind: "hint",
+      activityId: "hints-2026-10-13",
+      questionId: "q1",
+      requestId: "hint-again",
+    });
+    expect(repeatedHint.snapshot.daily).toMatchObject({
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 1,
+    });
     expect((await get("hints")).activity?.currentQuestion?.hint).toBe("Count one more.");
     expect((await answer("hints", 1, "a1")).feedback?.independent).toBe(false);
     await answer("hints", 2, "a2");
@@ -413,6 +452,11 @@ describe("activity worker authority and progress", () => {
     const finished = await answer("hints", 3, "a3");
     expect(finished.snapshot.pet.state).toBe("excited");
     expect(finished.snapshot.activity?.completed).toBe(true);
+    expect(finished.snapshot.daily).toMatchObject({
+      questionsSolved: 3,
+      firstTryCorrect: 3,
+      hintedQuestions: 1,
+    });
     const context = await store.execute({ type: "prepare", input: target("hints") });
     expect(context.recentActivities[0]?.attempts).toEqual(
       expect.arrayContaining([
@@ -445,6 +489,11 @@ describe("activity worker authority and progress", () => {
     const corrected = await answer("wrong", 2, "correction");
     expect(corrected.feedback).toMatchObject({ outcome: "correct", independent: false });
     expect(corrected.snapshot.correctStreak).toBe(1);
+    expect(corrected.snapshot.daily).toMatchObject({
+      questionsSolved: 2,
+      firstTryCorrect: 1,
+      hintedQuestions: 0,
+    });
   });
 
   it("uses server timestamps for sleep and preserves an ongoing celebration during chat", async () => {
@@ -565,7 +614,14 @@ describe("activity worker authority and progress", () => {
       }
       const completed = await get(childId);
       expect(completed.activity).toMatchObject({ id: quiz.id, completed: true });
-      expect(completed.daily).toEqual({ date: "2026-10-13", total: 3, completed: index + 1 });
+      expect(completed.daily).toEqual({
+        date: "2026-10-13",
+        total: 3,
+        completed: index + 1,
+        questionsSolved: (index + 1) * 3,
+        firstTryCorrect: (index + 1) * 3,
+        hintedQuestions: 0,
+      });
       const next = quizzes[index + 1];
       expect(completed.nextActivity).toEqual(next ? { id: next.id, title: next.title } : null);
       // Reading and idempotent receipt replay never start the offered next quiz.
@@ -591,7 +647,14 @@ describe("activity worker authority and progress", () => {
     await publish(childId, "2026-10-14");
     const carry = await get(childId, now, "2026-10-14");
     expect(carry.activity).toMatchObject({ date: "2026-10-13", currentIndex: 1 });
-    expect(carry.daily).toEqual({ date: "2026-10-14", total: 3, completed: 0 });
+    expect(carry.daily).toEqual({
+      date: "2026-10-14",
+      total: 3,
+      completed: 0,
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+    });
     expect(carry.nextActivity).toBeNull();
     expect(carry.pet.scene?.normal.imageId).toBe(`normal-${childId}-2026-10-14`);
     for (const questionId of ["q2", "q3"]) {
@@ -610,7 +673,8 @@ describe("activity worker authority and progress", () => {
     }
     const current = await get(childId, now, "2026-10-14");
     expect(current.activity).toMatchObject({ date: "2026-10-14", started: false });
-    expect(current.daily?.completed).toBe(0);
+    expect(current.daily).toEqual(carry.daily);
+    expect(current.correctStreak).toBe(3);
     await expect(
       mutate(
         childId,
@@ -775,6 +839,11 @@ describe("activity worker authority and progress", () => {
     };
     const invalid = await mutate(childId, numeric);
     expect(invalid.feedback?.outcome).toBe("clarify");
+    expect(invalid.snapshot.daily).toMatchObject({
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+    });
     const correct = await mutate(childId, {
       ...numeric,
       requestId: "numeric",
@@ -800,6 +869,7 @@ describe("activity worker authority and progress", () => {
     };
     const clarified = await mutate(childId, submission, timestamp, "2026-10-13", () => {}, clarify);
     expect(clarified.snapshot.correctStreak).toBe(1);
+    expect(clarified.snapshot.daily).toEqual(correct.snapshot.daily);
     expect(clarified.snapshot.activity?.currentIndex).toBe(1);
     expect(
       await store.execute({
@@ -833,6 +903,11 @@ describe("activity worker authority and progress", () => {
       explanation: "You explained it.",
     });
     expect(hinted.feedback?.independent).toBe(false);
+    expect(hinted.snapshot.daily).toMatchObject({
+      questionsSolved: 3,
+      firstTryCorrect: 3,
+      hintedQuestions: 1,
+    });
     // A different request cannot commit the old plan after another answer advanced progress.
     await expect(
       mutate(childId, { ...third, requestId: "stale-grade" }, timestamp, "2026-10-13", () => {}, {
@@ -852,219 +927,6 @@ describe("activity worker authority and progress", () => {
     });
   });
 
-  it("migrates version-one questions, evidence and receipts once while preserving saved progress", async () => {
-    const file = path.join(directory, "legacy.sqlite");
-    const fixture = new DatabaseSync(file);
-    const oldQuestion = {
-      id: "q1",
-      prompt: "One plus one?",
-      options: [
-        { id: "yes", text: "2" },
-        { id: "no", text: "3" },
-      ],
-      correctOptionId: "yes",
-      hint: "Count on.",
-      explanation: "One plus one is two.",
-    };
-    const oldDefinition = {
-      id: "legacy-activity",
-      title: "Adding",
-      subject: "Math",
-      questions: [oldQuestion, { ...oldQuestion, id: "q2" }, { ...oldQuestion, id: "q3" }],
-    };
-    const oldProgress = {
-      started: true,
-      completed: false,
-      completedAt: null,
-      index: 1,
-      questions: oldDefinition.questions.map((q, index) => ({
-        questionId: q.id,
-        prompt: q.prompt,
-        attempts: index === 0 ? 1 : 0,
-        hintUsed: false,
-        correct: index === 0,
-        independent: index === 0,
-      })),
-      attempts: [
-        {
-          id: "legacy-answer",
-          at: timestamp,
-          activityId: oldDefinition.id,
-          questionId: "q1",
-          optionId: "yes",
-          answerText: "2",
-          ordinal: 1,
-          hintUsed: false,
-          correct: true,
-          independent: true,
-        },
-      ],
-    };
-    const oldFeedback = {
-      questionId: "q1",
-      correct: true,
-      independent: true,
-      explanation: oldQuestion.explanation,
-    };
-    fixture.exec(`
-      CREATE TABLE kids_pet(child_id TEXT PRIMARY KEY,active_id TEXT,last_interaction INTEGER,excited_until INTEGER,streak INTEGER NOT NULL) STRICT;
-      CREATE TABLE kids_day(child_id TEXT NOT NULL,date TEXT NOT NULL,created_at INTEGER NOT NULL,content TEXT NOT NULL,PRIMARY KEY(child_id,date)) STRICT;
-      CREATE TABLE kids_activity(child_id TEXT NOT NULL,activity_id TEXT NOT NULL,date TEXT NOT NULL,ordinal INTEGER NOT NULL,updated_at INTEGER NOT NULL,definition TEXT NOT NULL,progress TEXT NOT NULL,PRIMARY KEY(child_id,activity_id),UNIQUE(child_id,date,ordinal),FOREIGN KEY(child_id,date) REFERENCES kids_day(child_id,date) ON DELETE CASCADE) STRICT;
-      CREATE TABLE kids_request(child_id TEXT NOT NULL,request_id TEXT NOT NULL,created_at INTEGER NOT NULL,input TEXT NOT NULL,feedback TEXT,PRIMARY KEY(child_id,request_id)) STRICT;
-      PRAGMA user_version = 1;
-    `);
-    try {
-      const daily = bundle("legacy");
-      fixture.prepare("INSERT INTO kids_day VALUES(?,?,?,?)").run(
-        "legacy",
-        daily.date,
-        timestamp,
-        JSON.stringify({
-          scene: daily.scene,
-          stateText: daily.stateText,
-          scenePrompt: daily.scenePrompt,
-        }),
-      );
-      fixture
-        .prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)")
-        .run(
-          "legacy",
-          oldDefinition.id,
-          daily.date,
-          0,
-          timestamp,
-          JSON.stringify(oldDefinition),
-          JSON.stringify(oldProgress),
-        );
-      fixture
-        .prepare("INSERT INTO kids_pet VALUES(?,?,?,?,?)")
-        .run("legacy", oldDefinition.id, timestamp, null, 1);
-      fixture.prepare("INSERT INTO kids_request VALUES(?,?,?,?,?)").run(
-        "legacy",
-        "legacy-answer",
-        timestamp,
-        JSON.stringify({
-          kind: "answer",
-          requestId: "legacy-answer",
-          activityId: oldDefinition.id,
-          questionId: "q1",
-          optionId: "yes",
-        }),
-        JSON.stringify(oldFeedback),
-      );
-    } finally {
-      fixture.close();
-    }
-    const migrated = await openSqliteWorkerStore<ActivityStoreOperations>({
-      moduleUrl,
-      databasePath: file,
-      input: undefined,
-    });
-    try {
-      const context = await migrated.execute({ type: "prepare", input: target("legacy") });
-      expect(context.snapshot).toMatchObject({
-        correctStreak: 1,
-        pet: { lastInteractionAt: timestamp },
-        activity: { started: true, currentIndex: 1, currentQuestion: { id: "q2", kind: "choice" } },
-      });
-      expect(context.recentActivities[0]?.questions).toEqual(oldProgress.questions);
-      expect(context.recentActivities[0]?.attempts[0]).toMatchObject({
-        answer: { kind: "choice", optionId: "yes" },
-        outcome: "correct",
-        at: timestamp,
-      });
-      const replay = await runSqliteWorkerStoreWrite(
-        migrated,
-        (scope) =>
-          scope.execute({
-            type: "mutate",
-            input: {
-              ...target("legacy"),
-              mutation: {
-                kind: "answer",
-                requestId: "legacy-answer",
-                activityId: oldDefinition.id,
-                questionId: "q1",
-                answer: { kind: "choice", optionId: "yes" },
-              },
-            },
-          }),
-        () => {},
-        [file],
-      );
-      expect(replay.feedback).toEqual({
-        questionId: "q1",
-        outcome: "correct",
-        independent: true,
-        explanation: oldQuestion.explanation,
-      });
-      expect(replay.snapshot.activity?.currentIndex).toBe(1);
-    } finally {
-      await migrated.close();
-    }
-    const check = new DatabaseSync(file);
-    try {
-      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
-    } finally {
-      check.close();
-    }
-    const reopened = await openSqliteWorkerStore<ActivityStoreOperations>({
-      moduleUrl,
-      databasePath: file,
-      input: undefined,
-    });
-    try {
-      expect((await reopened.execute({ type: "get", input: target("legacy") })).correctStreak).toBe(
-        1,
-      );
-    } finally {
-      await reopened.close();
-    }
-    // A malformed later row must not leave an earlier row half-migrated.
-    const damaged = new DatabaseSync(file);
-    try {
-      damaged
-        .prepare("UPDATE kids_activity SET definition = ?, progress = ?")
-        .run(JSON.stringify(oldDefinition), JSON.stringify(oldProgress));
-      damaged
-        .prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)")
-        .run(
-          "legacy",
-          "broken",
-          "2026-10-13",
-          1,
-          timestamp,
-          "not-json",
-          JSON.stringify(oldProgress),
-        );
-      damaged.exec("PRAGMA user_version = 1");
-    } finally {
-      damaged.close();
-    }
-    await expect(
-      openSqliteWorkerStore<ActivityStoreOperations>({
-        moduleUrl,
-        databasePath: file,
-        input: undefined,
-      }),
-    ).rejects.toThrow();
-    const rolledBack = new DatabaseSync(file);
-    try {
-      expect(rolledBack.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
-      expect(
-        JSON.parse(
-          String(
-            rolledBack
-              .prepare("SELECT definition FROM kids_activity WHERE activity_id = ?")
-              .get(oldDefinition.id)?.definition,
-          ),
-        ),
-      ).toEqual(oldDefinition);
-    } finally {
-      rolledBack.close();
-    }
-  });
-
   it("persists state across worker close and refuses work through a retired store", async () => {
     const before = await get("hints");
     const retired = store;
@@ -1073,7 +935,7 @@ describe("activity worker authority and progress", () => {
     store = await openSqliteWorkerStore<ActivityStoreOperations>({
       moduleUrl,
       databasePath,
-      input: undefined,
+      input: { children: [], now: timestamp },
     });
     expect(await get("hints")).toEqual(before);
   });

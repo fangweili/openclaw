@@ -61,7 +61,15 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
       now: 1,
       date: "2026-10-14",
       correctStreak: 0,
-      daily: { date: "2026-10-14", total: 3, completed: 0 },
+      perfectDayStreak: 0,
+      daily: {
+        date: "2026-10-14",
+        total: 3,
+        completed: 0,
+        questionsSolved: 0,
+        firstTryCorrect: 0,
+        hintedQuestions: 0,
+      },
       nextActivity: null,
       pet: {
         state: "normal",

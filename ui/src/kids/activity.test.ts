@@ -28,7 +28,15 @@ function snapshot(): ActivitySnapshot {
     now: 1000,
     date: "2026-10-13",
     correctStreak: 0,
-    daily: { date: "2026-10-13", total: 3, completed: 0 },
+    perfectDayStreak: 0,
+    daily: {
+      date: "2026-10-13",
+      total: 3,
+      completed: 0,
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+    },
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
     activity: {

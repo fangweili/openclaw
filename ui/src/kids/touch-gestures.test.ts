@@ -59,17 +59,42 @@ afterEach(() => {
 });
 
 describe("kids Safari touch gestures", () => {
-  it("cancels only the second nearby stationary tap on a message or blank area", () => {
+  it("cancels nearby stationary follow-up taps on a message or blank area", () => {
     const { root, target, owner } = fixture();
     owner.start();
     expect(tap(target, 0)).toBe(false);
     expect(tap(target, 150, 105, 104)).toBe(true);
-    expect(tap(root, 500)).toBe(false);
-    expect(tap(root, 650)).toBe(true);
+    expect(tap(root, 600)).toBe(false);
+    expect(tap(root, 750)).toBe(true);
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
     target.dispatchEvent(click);
     expect(click.defaultPrevented).toBe(false);
   });
+
+  it.each(["<p>A puzzle</p>", "<button>Solve</button>"])(
+    "suppresses every continuation in a rapid burst after its first native tap: %s",
+    (markup) => {
+      const { target, owner } = fixture(markup);
+      owner.start();
+      expect([0, 150, 300, 450].map((at) => tap(target, at))).toEqual([false, true, true, true]);
+      expect(tap(target, 900)).toBe(false);
+    },
+  );
+
+  it.each(["<button>Start challenge</button>", "<p>A chat message</p>"])(
+    "keeps a same-position tap burst suppressed after navigation replaces the control: %s",
+    (nextPage) => {
+      const { root, target, owner } = fixture("<button>Solve</button>");
+      owner.start();
+      expect(tap(target, 0)).toBe(false);
+      target.addEventListener("click", () => {
+        root.innerHTML = nextPage;
+      });
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(tap(root.firstElementChild!, 150)).toBe(true);
+      expect(tap(root.firstElementChild!, 300)).toBe(true);
+    },
+  );
 
   it("leaves separated taps and long-press selection native", () => {
     const { target, owner } = fixture();
@@ -103,16 +128,52 @@ describe("kids Safari touch gestures", () => {
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 
-  it("allows consecutive taps on different controls and normalizes a control's children", () => {
+  it("allows spatially distinct controls while treating a control's children as one tap area", () => {
     const { root, owner } = fixture(
       "<button><span>Solve</span><small>Ready</small></button><button>Chat</button>",
     );
     owner.start();
     expect(tap(root.querySelector("span")!, 0)).toBe(false);
     expect(tap(root.querySelector("small")!, 150)).toBe(true);
-    expect(tap(root.querySelector("span")!, 400)).toBe(false);
-    expect(tap(root.lastElementChild!, 550)).toBe(false);
-    expect(tap(root, 700)).toBe(false);
+    expect(tap(root.lastElementChild!, 300, 220)).toBe(false);
+    expect(tap(root, 450, 340)).toBe(false);
+    expect(tap(root.querySelector("span")!, 600, 100)).toBe(false);
+  });
+
+  it("observes gestures before descendant bubble handlers and removes protection on disposal", () => {
+    const { target, owner } = fixture();
+    for (const type of [
+      "touchstart",
+      "touchmove",
+      "touchend",
+      "touchcancel",
+      "gesturestart",
+      "gesturechange",
+    ]) {
+      target.addEventListener(type, (event) => event.stopPropagation());
+    }
+    const pinch = (type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    owner.start();
+    expect(tap(target, 0)).toBe(false);
+    expect(tap(target, 150)).toBe(true);
+    expect(dispatch(target, "touchstart", 200, [touch(target)])).toBe(false);
+    expect(dispatch(target, "touchmove", 220, [touch(target, 100, 180)])).toBe(false);
+    expect(dispatch(target, "touchend", 240, [touch(target, 100, 180)])).toBe(false);
+    expect(tap(target, 260, 100, 180)).toBe(false);
+    expect(dispatch(target, "touchstart", 350, [touch(target, 100, 180)])).toBe(false);
+    expect(dispatch(target, "touchcancel", 380, [touch(target, 100, 180)])).toBe(false);
+    expect(tap(target, 400, 100, 180)).toBe(false);
+    expect(pinch("gesturestart")).toBe(true);
+    expect(pinch("gesturechange")).toBe(true);
+    owner.dispose();
+    expect(tap(target, 550, 100, 180)).toBe(false);
+    expect(tap(target, 700, 100, 180)).toBe(false);
+    expect(pinch("gesturestart")).toBe(false);
+    expect(pinch("gesturechange")).toBe(false);
   });
 
   it("protects the document outside the app root and removes protection on disposal", () => {
@@ -172,19 +233,32 @@ describe("kids Safari touch gestures", () => {
     expect(tap(summaryLabel, 0)).toBe(false);
     expect(tap(summaryLabel, 150)).toBe(true);
     const body = root.querySelector("p")!;
-    expect(tap(body, 500)).toBe(false);
-    expect(tap(body, 650)).toBe(true);
+    expect(tap(body, 600)).toBe(false);
+    expect(tap(body, 750)).toBe(true);
   });
 
-  it("leaves existing text selection gestures native", () => {
-    const { target, owner } = fixture();
-    owner.start();
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    document.getSelection()!.addRange(range);
-    expect(tap(target, 0)).toBe(false);
-    expect(tap(target, 150)).toBe(false);
-  });
+  it.each([
+    { markup: "<p>Selected words</p><button>Solve</button>", secondCancelled: true },
+    {
+      markup: "<div contenteditable>Selected words</div><button>Solve</button>",
+      secondCancelled: false,
+    },
+  ])(
+    "preserves editing selection without letting plain selection disable app policy: $markup",
+    ({ markup, secondCancelled }) => {
+      const { root, target, owner } = fixture(markup);
+      owner.start();
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      document.getSelection()!.addRange(range);
+      expect(tap(target, 0)).toBe(false);
+      expect(tap(target, 150)).toBe(secondCancelled);
+      expect(document.getSelection()!.toString()).toBe("Selected words");
+      const button = root.querySelector("button")!;
+      expect(tap(button, 600)).toBe(false);
+      expect(tap(button, 750)).toBe(true);
+    },
+  );
 
   it("does not install the tap fallback on other engines", () => {
     const { target, owner } = fixture(undefined, false);

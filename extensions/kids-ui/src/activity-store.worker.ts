@@ -1,11 +1,13 @@
 /**
  * Sole SQLite owner for published quizzes, grading evidence, idempotency receipts,
- * and pet clocks. Runs only in the SQLite broker worker. Admission creates schema
+ * pet clocks, and the durable perfect-day checkpoint. Runs only in the SQLite broker worker. Admission creates/migrates schema
  * once; all state changes use one synchronous transaction with host authority at
  * BEGIN/COMMIT. Each day owns three daily quizzes, at most one parent-requested
  * practice question, and immutable mood artwork; quiz progress is independent.
  * Completing a quiz offers an explicit next start. An unfinished quiz survives
  * newer days; unstarted old extras cease being offered.
+ * Perfect-day credit excludes optional practice and late carryover; its compact
+ * checkpoint survives history pruning independently of the pet answer streak.
  * Ninety-day history and the newest 512 receipts are retained. Day-level pruning
  * keeps all definitions while any evidence is recent or a quiz is unfinished.
  */
@@ -38,8 +40,6 @@ import {
   type ActivityDefinition,
   type ActivityPracticeOffer,
   type ActivityEvidence,
-  type ActivityAttemptEvidence,
-  type ActivityQuestionEvidence,
   type DailyActivityBundle,
   type ActivityGrade,
 } from "./activity-contract.js";
@@ -47,7 +47,16 @@ import { ActivityInputError } from "./activity-error.js";
 import { gradeActivityAnswer } from "./activity-grading.js";
 import { migrateActivityDatabase, type ActivityDatabase } from "./activity-migration.js";
 import {
+  initialActivityProgress,
+  perfectDayStatus,
+  projectActivityProgress,
+  readActivityProgress,
+  updatePerfectDayCheckpoint,
+  visiblePerfectDayStreak,
+} from "./activity-progress.js";
+import {
   encodeActivityMutation,
+  type ActivityStoreAdmission,
   type ActivityStoreOperations,
   type ActivityStoreTarget,
 } from "./activity-store-contract.js";
@@ -56,15 +65,6 @@ import { validateActivityDefinition, validateDailyActivityBundle } from "./activ
 type PetRow = ActivityDatabase["kids_pet"];
 type DayRow = ActivityDatabase["kids_day"];
 type ActivityRow = ActivityDatabase["kids_activity"];
-type Progress = {
-  started: boolean;
-  completed: boolean;
-  completedAt: number | null;
-  index: number;
-  questions: ActivityQuestionEvidence[];
-  attempts: ActivityAttemptEvidence[];
-  submissionCount: number;
-};
 type DayContent = Pick<DailyActivityBundle, "scene" | "scenePrompt" | "stateText" | "restImages">;
 const HISTORY_MS = 90 * 24 * 60 * 60_000;
 
@@ -75,28 +75,6 @@ function readDay(row: DayRow): DayContent {
 function readActivity(row: ActivityRow): ActivityDefinition {
   // SAFETY: publication paths validate each definition before its immutable write.
   return JSON.parse(row.definition) as ActivityDefinition;
-}
-function readProgress(row: ActivityRow): Progress {
-  // SAFETY: only this worker writes progress, through typed initialProgress() and mutate().
-  return JSON.parse(row.progress) as Progress;
-}
-function initialProgress(activity: ActivityDefinition): Progress {
-  return {
-    started: false,
-    completed: false,
-    completedAt: null,
-    index: 0,
-    attempts: [],
-    submissionCount: 0,
-    questions: activity.questions.map((q) => ({
-      questionId: q.id,
-      prompt: q.prompt,
-      attempts: 0,
-      hintUsed: false,
-      correct: false,
-      independent: false,
-    })),
-  };
 }
 
 class ActivityDatabaseOwner {
@@ -116,6 +94,8 @@ class ActivityDatabaseOwner {
         last_interaction: null,
         excited_until: null,
         streak: 0,
+        perfect_day_streak: 0,
+        last_perfect_date: null,
       }
     );
   }
@@ -158,16 +138,18 @@ class ActivityDatabaseOwner {
     latest: ActivityRow[],
   ): ActivityRow | undefined {
     const active = pet.active_id ? this.byId(target.childId, pet.active_id) : undefined;
-    if (active && (!readProgress(active).completed || active.date === latest[0]?.date)) {
+    if (active && (!readActivityProgress(active).completed || active.date === latest[0]?.date)) {
       return active;
     }
     return latest[0];
   }
   private next(current: ActivityRow | undefined, latest: ActivityRow[]): ActivityRow | undefined {
-    if (!current || !readProgress(current).completed || current.date !== latest[0]?.date) {
+    if (!current || !readActivityProgress(current).completed || current.date !== latest[0]?.date) {
       return undefined;
     }
-    return latest.find((row) => row.ordinal > current.ordinal && !readProgress(row).started);
+    return latest.find(
+      (row) => row.ordinal > current.ordinal && !readActivityProgress(row).started,
+    );
   }
 
   /** Read projections never reveal grading keys or hints not yet requested. */
@@ -177,6 +159,8 @@ class ActivityDatabaseOwner {
     const activities = latest ? this.dayActivities(target.childId, latest.date) : [];
     const row = this.current(target, pet, activities);
     const next = this.next(row, activities);
+    const dayProgress = activities.map(readActivityProgress);
+    const dayQuestions = dayProgress.flatMap((progress) => progress.questions);
     const idle =
       pet.last_interaction === null
         ? ACTIVITY_SLEEP_MS
@@ -217,43 +201,22 @@ class ActivityDatabaseOwner {
           pet.excited_until !== null && pet.excited_until > target.now ? pet.excited_until : null,
       },
       correctStreak: pet.streak,
+      perfectDayStreak: visiblePerfectDayStreak(pet, target.date),
       daily: latest
         ? {
             date: latest.date,
             total: activities.length,
-            completed: activities.filter((entry) => readProgress(entry).completed).length,
+            completed: dayProgress.filter((progress) => progress.completed).length,
+            questionsSolved: dayQuestions.filter((q) => q.correct).length,
+            firstTryCorrect: dayQuestions.filter((q) => q.correct && q.attempts === 1).length,
+            hintedQuestions: dayQuestions.filter((q) => q.hintUsed).length,
           }
         : null,
       nextActivity: next ? { id: next.activity_id, title: readActivity(next).title } : null,
-      activity: null,
+      activity: row
+        ? projectActivityProgress(readActivity(row), readActivityProgress(row), row.date)
+        : null,
     };
-    if (row) {
-      const activity = readActivity(row);
-      const progress = readProgress(row);
-      const question = progress.completed ? undefined : activity.questions[progress.index];
-      snapshot.activity = {
-        id: row.activity_id,
-        date: row.date,
-        title: activity.title,
-        subject: activity.subject,
-        started: progress.started,
-        completed: progress.completed,
-        currentIndex: progress.index,
-        total: activity.questions.length,
-        currentQuestion: question
-          ? {
-              id: question.id,
-              prompt: question.prompt,
-              ...(question.kind === "choice"
-                ? { kind: "choice" as const, options: question.options }
-                : question.kind === "numeric"
-                  ? { kind: "numeric" as const, unit: question.unit }
-                  : { kind: "explanation" as const }),
-              hint: progress.questions[progress.index]?.hintUsed ? question.hint : null,
-            }
-          : null,
-      };
-    }
     return snapshot;
   }
 
@@ -272,7 +235,7 @@ class ActivityDatabaseOwner {
     ).rows;
     const recentActivities: ActivityEvidence[] = rows.map((row) => {
       const activity = readActivity(row);
-      const progress = readProgress(row);
+      const progress = readActivityProgress(row);
       return {
         id: row.activity_id,
         date: row.date,
@@ -338,7 +301,7 @@ class ActivityDatabaseOwner {
           date,
           ...readDay(row),
           activities: this.dayActivities(childId, date)
-            .filter((activity) => activity.ordinal < 3)
+            .filter((activity) => activity.ordinal < row.required_count)
             .map(readActivity),
         }
       : null;
@@ -373,6 +336,7 @@ class ActivityDatabaseOwner {
           date: bundle.date,
           created_at: target.now,
           content: JSON.stringify(content),
+          required_count: bundle.activities.length,
         }),
       );
       executeSqliteQuerySync(
@@ -385,7 +349,7 @@ class ActivityDatabaseOwner {
             ordinal,
             updated_at: target.now,
             definition: JSON.stringify(activity),
-            progress: JSON.stringify(initialProgress(activity)),
+            progress: JSON.stringify(initialActivityProgress(activity)),
           })),
         ),
       );
@@ -406,10 +370,11 @@ class ActivityDatabaseOwner {
   ): { published: boolean; snapshot: ActivitySnapshot } {
     validateActivityDefinition(offer.activity, 1);
     return this.transaction(() => {
+      const day = this.latestDay({ ...target, date: offer.date });
       const existing = this.byId(target.childId, offer.activity.id);
       if (existing) {
         if (
-          existing.ordinal !== 3 ||
+          existing.ordinal !== day?.required_count ||
           existing.date !== offer.date ||
           !isDeepStrictEqual(readActivity(existing), offer.activity)
         ) {
@@ -421,9 +386,13 @@ class ActivityDatabaseOwner {
         throw new ActivityInputError("Offer practice only for the child's current local date.");
       }
       const activities = this.dayActivities(target.childId, offer.date);
-      if (activities.length !== 3 || activities.some((row) => !readProgress(row).completed)) {
+      if (
+        day?.date !== offer.date ||
+        activities.length !== day.required_count ||
+        activities.some((row) => !readActivityProgress(row).completed)
+      ) {
         throw new ActivityInputError(
-          "Finish today's three challenges before offering its one extra practice question.",
+          "Finish today's scheduled challenges before offering its one extra practice question.",
         );
       }
       executeSqliteQuerySync(
@@ -432,10 +401,10 @@ class ActivityDatabaseOwner {
           child_id: target.childId,
           activity_id: offer.activity.id,
           date: offer.date,
-          ordinal: 3,
+          ordinal: day.required_count,
           updated_at: target.now,
           definition: JSON.stringify(offer.activity),
-          progress: JSON.stringify(initialProgress(offer.activity)),
+          progress: JSON.stringify(initialActivityProgress(offer.activity)),
         }),
       );
       return { published: true, snapshot: this.snapshot(target) };
@@ -485,7 +454,7 @@ class ActivityDatabaseOwner {
       );
     }
     const activity = readActivity(row);
-    const progress = readProgress(row);
+    const progress = readActivityProgress(row);
     if (progress.completed) {
       throw new ActivityInputError("This activity is already complete.");
     }
@@ -505,7 +474,7 @@ class ActivityDatabaseOwner {
     if (mutation.kind === "answer" && mutation.answer.kind !== question.kind) {
       throw new ActivityInputError("This answer does not match the current question.");
     }
-    return { row, activity, progress, question, evidence };
+    return { row, activity, progress, question, evidence, day: latest, dayActivities: activities };
   }
 
   /** Read-only inference admission. A completed retry never starts another model call. */
@@ -538,11 +507,8 @@ class ActivityDatabaseOwner {
       const pet = this.pet(target.childId);
       let feedback: ActivityFeedback | undefined;
       if (mutation.kind !== "touch") {
-        const { row, activity, progress, question, evidence } = this.currentMutation(
-          target,
-          mutation,
-          pet,
-        );
+        const { row, activity, progress, question, evidence, day, dayActivities } =
+          this.currentMutation(target, mutation, pet);
         progress.started = true;
         pet.active_id = row.activity_id;
         if (mutation.kind === "hint") {
@@ -614,6 +580,28 @@ class ActivityDatabaseOwner {
             .where("child_id", "=", target.childId)
             .where("activity_id", "=", row.activity_id),
         );
+        // Only today's scheduled work can affect the day checkpoint. Older
+        // carryover and optional practice never award or disqualify a day.
+        if (
+          day?.date === target.date &&
+          row.date === target.date &&
+          row.ordinal < day.required_count
+        ) {
+          updatePerfectDayCheckpoint(
+            pet,
+            target.date,
+            perfectDayStatus(
+              dayActivities
+                .filter((candidate) => candidate.ordinal < day.required_count)
+                .map((candidate) =>
+                  candidate.activity_id === row.activity_id
+                    ? progress
+                    : readActivityProgress(candidate),
+                ),
+              day.required_count,
+            ),
+          );
+        }
       }
       if (mutation.kind !== "start") {
         pet.last_interaction = target.now;
@@ -655,7 +643,7 @@ class ActivityDatabaseOwner {
       .where("created_at", "<", target.now - HISTORY_MS)
       .where("date", "not in", recentDates);
     const active = pet.active_id ? this.byId(target.childId, pet.active_id) : undefined;
-    if (active && !readProgress(active).completed) {
+    if (active && !readActivityProgress(active).completed) {
       history = history.where("date", "!=", active.date);
     }
     executeSqliteQuerySync(this.db, history);
@@ -678,7 +666,7 @@ class ActivityDatabaseOwner {
 
 /** Broker admission owns this connection until joined close; no module-global handles. */
 export function createSqliteWorkerBackend(
-  _input: undefined,
+  input: ActivityStoreAdmission,
   context: { databasePath: string },
 ): SqliteWorkerBackend<ActivityStoreOperations> {
   fs.mkdirSync(path.dirname(context.databasePath), { recursive: true, mode: 0o700 });
@@ -695,10 +683,10 @@ export function createSqliteWorkerBackend(
       busyTimeoutMs: 5000,
     });
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (typeof version !== "number" || version > 2) {
+    if (typeof version !== "number" || version > 3) {
       throw new Error("Activities database needs a newer plugin version.");
     }
-    migrateActivityDatabase(db, version);
+    migrateActivityDatabase(db, version, input);
     const owner = new ActivityDatabaseOwner(db);
     return {
       execute(command: SqliteWorkerCommand<ActivityStoreOperations>) {

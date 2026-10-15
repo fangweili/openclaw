@@ -3,6 +3,7 @@ import { html, svg } from "lit";
 import { strokeIcon } from "../components/icons-tools.ts";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
+import { completedKidsDay } from "./daily-view.ts";
 import type { KidsPage } from "./navigation.ts";
 import { renderKidsPet } from "./pet-view.ts";
 
@@ -32,12 +33,14 @@ export function renderKidsHome(
   retry: () => void,
   hidden: boolean,
 ) {
+  const completed = completedKidsDay(activity.snapshot);
+  const todayComplete = completed !== null && completed.date === activity.snapshot?.date;
   return html`<main
     class="kids-today kids-home"
     aria-label=${t("kids.activity.today")}
     ?hidden=${hidden}
   >
-    <h1 class="kids-home-title" id="kids-home-title">
+    <h1 class="kids-page-title kids-home-title" id="kids-home-title">
       ${childName ? t("kids.home.personalTitle", { name: childName }) : t("kids.home.title")}
     </h1>
     ${renderKidsPet(activity, retry)}
@@ -61,10 +64,13 @@ export function renderKidsHome(
           @click=${() => navigate("solve")}
         >
           <span class="kids-home-card-top"
-            ><span aria-hidden="true">${solve}</span><span aria-hidden="true">${arrow}</span></span
+            ><span aria-hidden="true">${solve}</span
+            ><span aria-hidden="true">${todayComplete ? finish : arrow}</span></span
           >
           <strong>${t("kids.home.solve")}</strong
-          ><span class="kids-home-detail">${t("kids.home.solveDetail")}</span>
+          ><span class="kids-home-detail"
+            >${t(todayComplete ? "kids.home.solveComplete" : "kids.home.solveDetail")}</span
+          >
         </button>
         ${(
           [

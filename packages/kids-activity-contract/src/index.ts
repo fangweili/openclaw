@@ -31,9 +31,22 @@ export type ActivitySnapshot = {
     lastInteractionAt: number | null;
     excitedUntil: number | null;
   };
+  /** Consecutive graded correct activity answers across days; hints/clarification do not reset it. */
   correctStreak: number;
+  /** Consecutive local days completed first try without hints; excludes optional practice. */
+  perfectDayStreak: number;
   /** Counts for the latest prepared day, excluding any resumed older challenge. */
-  daily: { date: string; total: number; completed: number } | null;
+  daily: {
+    date: string;
+    total: number;
+    completed: number;
+    /** Questions eventually answered correctly, including corrected answers and extra practice. */
+    questionsSolved: number;
+    /** Correct on the first graded attempt, including hints; clarification is ungraded. */
+    firstTryCorrect: number;
+    /** Distinct questions whose hint was opened, regardless of repeated requests. */
+    hintedQuestions: number;
+  } | null;
   /** Offered only after completion; start with this ID explicitly to advance. */
   nextActivity: { id: string; title: string } | null;
   activity: {

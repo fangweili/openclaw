@@ -203,6 +203,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
               ${renderKidsHome(state.activity, chat.childName, actions.navigate, actions.activity.retry, page !== "today")}
               ${renderKidsActivity(
                 state.activity,
+                chat.childName,
                 actions.activity,
                 {
                   dictation: state.dictationQuestion

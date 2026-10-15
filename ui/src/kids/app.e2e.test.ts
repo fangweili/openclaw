@@ -500,6 +500,7 @@ it("records dictation into an editable draft and sends only on request", async (
       now: 1000,
       date: "2026-10-13",
       correctStreak: 0,
+      perfectDayStreak: 0,
       daily: null,
       nextActivity: null,
       activity: null,

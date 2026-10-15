@@ -11,6 +11,11 @@ import type {
   DailyActivityBundle,
 } from "./activity-contract.js";
 
+/** Admission-only migration context; never grants runtime mutation authority. */
+export type ActivityStoreAdmission = {
+  children: readonly { childId: string; timeZone: string }[];
+  now: number;
+};
 export type ActivityStoreTarget = { childId: string; date: string; now: number };
 export type ActivityStoreOperations = {
   get: { input: ActivityStoreTarget; output: ActivitySnapshot };

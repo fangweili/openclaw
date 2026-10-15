@@ -108,7 +108,10 @@ export function registerKidsActivityService(
         distWorkerPath: "extensions/kids-ui/src/activity-store.worker.js",
       }),
       databasePath,
-      input: undefined,
+      input: {
+        children: options.children.map(({ childId, timeZone }) => ({ childId, timeZone })),
+        now: now(),
+      },
     });
     if (scheduler.signal.aborted) {
       await store.close();

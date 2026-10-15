@@ -81,6 +81,118 @@ function viewActions(): KidsViewActions {
   };
 }
 
+function completedDayState(): KidsViewState {
+  const state = readyState();
+  state.page = "solve";
+  state.activity.snapshot = {
+    now: 1,
+    date: "2026-10-14",
+    correctStreak: 12,
+    perfectDayStreak: 0,
+    daily: {
+      date: "2026-10-14",
+      total: 4,
+      completed: 4,
+      questionsSolved: 10,
+      firstTryCorrect: 8,
+      hintedQuestions: 2,
+    },
+    nextActivity: null,
+    pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
+    activity: {
+      id: "last-challenge",
+      date: "2026-10-14",
+      title: "The last question",
+      subject: "Science",
+      started: true,
+      completed: true,
+      currentIndex: 1,
+      total: 1,
+      currentQuestion: null,
+    },
+  };
+  return state;
+}
+
+it("keeps final-answer feedback before replacing the question with the full daily recap", () => {
+  const root = document.createElement("div");
+  const state = completedDayState();
+  const actions = viewActions();
+  state.activity.feedback = {
+    questionId: "q1",
+    outcome: "correct",
+    independent: true,
+    explanation: "A broad leaf spreads the weight.",
+  };
+  state.activity.submission = {
+    activity: { id: "last-challenge", title: "The last question", subject: "Science" },
+    question: { id: "q1", kind: "choice", prompt: "Which leaf floats?", options: [], hint: null },
+    answer: { kind: "choice", optionId: "wide" },
+  };
+  const paint = () => render(renderKidsView(state, actions), root);
+  try {
+    paint();
+    expect(root.querySelector(".kids-daily-recap")).toBeNull();
+    expect(root.querySelector(".kids-solve")!.textContent).toContain(
+      "A broad leaf spreads the weight.",
+    );
+    expect(root.querySelector(".kids-solve")!.textContent).toContain("The last question");
+    state.activity.feedback = null;
+    state.activity.submission = null;
+    paint();
+    const solve = root.querySelector(".kids-solve")!;
+    expect(solve.querySelector("h1")!.textContent?.trim()).toBe("You did it, Child!");
+    expect(solve.querySelector("h2")!.textContent).toBe("Look what you figured out!");
+    expect(solve.textContent).toContain("4 challenges · 10 questions solved");
+    expect(
+      Array.from(solve.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
+    ).toEqual(["8", "2", "0"]);
+    expect(
+      Array.from(solve.querySelectorAll(".kids-daily-stats dt"), (item) => item.textContent),
+    ).toEqual(["First try", "Hints", "Perfect days"]);
+    expect(solve.textContent).not.toContain("The last question");
+    expect(solve.textContent).not.toContain("Science");
+    expect(solve.querySelector(".kids-activity-count, [role=progressbar]")).toBeNull();
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today complete");
+    solve.querySelector<HTMLButtonElement>(".kids-daily-footer button")!.click();
+    expect(actions.activity.chat).toHaveBeenCalledOnce();
+  } finally {
+    render(null, root);
+  }
+});
+
+it("dates an older completed batch and does not mark today complete while carryover or daily work remains", () => {
+  const root = document.createElement("div");
+  const state = completedDayState();
+  const snapshot = state.activity.snapshot!;
+  const paint = () => render(renderKidsView(state, viewActions()), root);
+  try {
+    snapshot.daily!.date = "2026-10-13";
+    snapshot.activity!.date = "2026-10-13";
+    paint();
+    const solve = root.querySelector(".kids-solve")!;
+    expect(solve.querySelector("h1")!.textContent?.trim()).toBe("Nice exploring, Child!");
+    expect(solve.textContent).toContain("Completed for Oct 13, 2026");
+    expect(solve.textContent).not.toContain("tomorrow");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+    snapshot.daily!.date = snapshot.date;
+    snapshot.activity!.completed = false;
+    paint();
+    expect(solve.querySelector(".kids-daily-recap")).toBeNull();
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+    snapshot.activity!.completed = true;
+    snapshot.daily!.completed = 3;
+    snapshot.nextActivity = { id: "next", title: "One more adventure" };
+    paint();
+    expect(solve.querySelector(".kids-daily-recap")).toBeNull();
+    expect(solve.textContent).toContain("Adventure complete!");
+    expect(solve.textContent).toContain("Another challenge");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today complete");
+  } finally {
+    render(null, root);
+  }
+});
+
 it("opens Today choices and retains the Chat, home, and Solve panels across navigation", () => {
   const root = document.createElement("div");
   const state = readyState();
@@ -374,6 +486,7 @@ it("keeps the submitted free answer and live result mounted while checking and r
     now: 1,
     date: "2026-10-14",
     correctStreak: 0,
+    perfectDayStreak: 0,
     daily: null,
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
@@ -467,6 +580,7 @@ it("keeps Solve recording controls visible through microphone permission and tra
     now: 1,
     date: "2026-10-14",
     correctStreak: 0,
+    perfectDayStreak: 0,
     daily: null,
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },

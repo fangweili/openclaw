@@ -32,6 +32,7 @@ const prepared: ActivityPreparationContext = {
       excitedUntil: null,
     },
     correctStreak: 0,
+    perfectDayStreak: 0,
     activity: null,
     daily: null,
     nextActivity: null,

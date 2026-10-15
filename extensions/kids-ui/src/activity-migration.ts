@@ -1,11 +1,11 @@
 /**
- * Admission-only SQLite schema, row types and migration. Runtime state remains
- * exclusively owned by the worker. Version 2 adds explicit question kinds,
- * submitted free answers, ungraded outcomes, and an evidence submission counter
- * inside the existing canonical JSON rows. One synchronous transaction rewrites
- * v1 rows and receipts without changing progress, timestamps, retention, or pet
- * clocks. Failure rolls back the entire migration. Older binaries reject v2;
- * rollback requires the coordinated pre-upgrade database backup.
+ * Admission-only schema, row types and atomic migration; the worker remains the
+ * sole runtime owner. Version 2 preserves legacy choices/evidence/receipts while
+ * adding free-answer kinds. Version 3 records each day's required activity count
+ * and a durable perfect-day checkpoint, seeded once from retained history in the
+ * configured child's timezone. Older pruned history receives no initial credit;
+ * future streaks survive pruning. Unknown children retain data with zero credit.
+ * Failure rolls back the whole upgrade; older binaries reject the new version.
  */
 import type { DatabaseSync } from "node:sqlite";
 import type { ActivityFeedback, ActivityMutation } from "@openclaw/kids-activity-contract";
@@ -15,7 +15,14 @@ import type {
   ActivityDefinition,
   ActivityQuestionDefinition,
 } from "./activity-contract.js";
-import { encodeActivityMutation } from "./activity-store-contract.js";
+import {
+  perfectDayStatus,
+  readActivityProgress,
+  updatePerfectDayCheckpoint,
+  type PerfectDayCheckpoint,
+} from "./activity-progress.js";
+import { encodeActivityMutation, type ActivityStoreAdmission } from "./activity-store-contract.js";
+import { activityDate } from "./activity-validation.js";
 
 type PetRow = {
   child_id: string;
@@ -23,8 +30,16 @@ type PetRow = {
   last_interaction: number | null;
   excited_until: number | null;
   streak: number;
+  perfect_day_streak: number;
+  last_perfect_date: string | null;
 };
-type DayRow = { child_id: string; date: string; created_at: number; content: string };
+type DayRow = {
+  child_id: string;
+  date: string;
+  created_at: number;
+  content: string;
+  required_count: number;
+};
 type ActivityRow = {
   child_id: string;
   activity_id: string;
@@ -51,10 +66,13 @@ export type ActivityDatabase = {
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS kids_pet (
     child_id TEXT PRIMARY KEY, active_id TEXT, last_interaction INTEGER,
-    excited_until INTEGER, streak INTEGER NOT NULL
+    excited_until INTEGER, streak INTEGER NOT NULL,
+    perfect_day_streak INTEGER NOT NULL DEFAULT 0 CHECK(perfect_day_streak >= 0),
+    last_perfect_date TEXT
   ) STRICT;
   CREATE TABLE IF NOT EXISTS kids_day (
     child_id TEXT NOT NULL, date TEXT NOT NULL, created_at INTEGER NOT NULL, content TEXT NOT NULL,
+    required_count INTEGER NOT NULL DEFAULT 3 CHECK(required_count > 0),
     PRIMARY KEY(child_id,date)
   ) STRICT;
   CREATE TABLE IF NOT EXISTS kids_activity (
@@ -82,9 +100,53 @@ type LegacyMutation =
   | Exclude<ActivityMutation, { kind: "answer" }>
   | (Omit<Extract<ActivityMutation, { kind: "answer" }>, "answer"> & { optionId: string });
 
+/**
+ * Bootstrap only: stream retained days in calendar order using immutable original
+ * counts. Full question counters survive evidence truncation. A closed unfinished
+ * day or a late completion breaks the chain; a clean unfinished today does not.
+ * No previously pruned history is inferred. Only existing pet checkpoints change.
+ */
+function seedPerfectDays(db: DatabaseSync, admission: ActivityStoreAdmission): void {
+  const days = db.prepare(
+    "SELECT date, required_count FROM kids_day WHERE child_id = ? AND date <= ? ORDER BY date",
+  );
+  const activities = db.prepare(
+    "SELECT progress FROM kids_activity WHERE child_id = ? AND date = ? AND ordinal < ? ORDER BY ordinal",
+  );
+  const save = db.prepare(
+    "UPDATE kids_pet SET perfect_day_streak = ?, last_perfect_date = ? WHERE child_id = ?",
+  );
+  for (const child of admission.children) {
+    const today = activityDate(admission.now, child.timeZone);
+    const checkpoint: PerfectDayCheckpoint = { perfect_day_streak: 0, last_perfect_date: null };
+    for (const row of days.iterate(child.childId, today)) {
+      const date = String(row.date);
+      const progress = activities
+        .all(child.childId, date, row.required_count!)
+        .map((activity) => readActivityProgress({ progress: String(activity.progress) }));
+      let status = perfectDayStatus(progress, Number(row.required_count));
+      const lateCompletion = progress.some(
+        (activity) =>
+          activity.completed &&
+          (activity.completedAt === null ||
+            activityDate(activity.completedAt, child.timeZone) !== date),
+      );
+      if (lateCompletion || (date < today && status === "incomplete")) {
+        status = "imperfect";
+      }
+      updatePerfectDayCheckpoint(checkpoint, date, status);
+    }
+    save.run(checkpoint.perfect_day_streak, checkpoint.last_perfect_date, child.childId);
+  }
+}
+
 /** Called exactly once on worker admission, with the admitted version and no runtime users. */
-export function migrateActivityDatabase(db: DatabaseSync, version: number): void {
-  if (version === 2) {
+export function migrateActivityDatabase(
+  db: DatabaseSync,
+  version: number,
+  admission: ActivityStoreAdmission,
+): void {
+  if (version === 3) {
     return;
   }
   runSqliteImmediateTransactionSync(db, () => {
@@ -159,6 +221,16 @@ export function migrateActivityDatabase(db: DatabaseSync, version: number): void
         );
       }
     }
-    db.exec("PRAGMA user_version = 2");
+    if (version > 0) {
+      // Shipped schemas 1 and 2 always published exactly three scheduled activities;
+      // ordinal 3 was exclusively optional parent practice.
+      db.exec(`
+        ALTER TABLE kids_day ADD COLUMN required_count INTEGER NOT NULL DEFAULT 3 CHECK(required_count > 0);
+        ALTER TABLE kids_pet ADD COLUMN perfect_day_streak INTEGER NOT NULL DEFAULT 0 CHECK(perfect_day_streak >= 0);
+        ALTER TABLE kids_pet ADD COLUMN last_perfect_date TEXT;
+      `);
+      seedPerfectDays(db, admission);
+    }
+    db.exec("PRAGMA user_version = 3");
   });
 }

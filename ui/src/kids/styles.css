@@ -120,19 +120,13 @@ html[data-kids] body,
   padding: max(24px, env(safe-area-inset-top)) 32px max(32px, env(safe-area-inset-bottom));
 }
 
-/* Today and Solve keep one frame. Solve reserves the title row for its floating
-   navigation, so entering a challenge cannot move Rocky or the card panel. */
-.kids-home-title,
-.kids-solve::before {
+/* Today and Solve reserve the same title row, even during an active question. */
+.kids-page-title {
   display: grid;
   place-items: center;
   grid-column: 1 / -1;
   min-height: var(--kids-page-title-height);
   margin: 0 0 24px;
-}
-
-.kids-solve::before {
-  content: "";
 }
 
 .kids-solve {
@@ -465,6 +459,85 @@ html[data-kids] body,
   border-bottom: 1px solid var(--kids-border);
 }
 
+.kids-activity-card--recap {
+  display: flex;
+  flex-direction: column;
+}
+
+.kids-daily-recap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.kids-daily-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--kids-accent);
+  font-size: 15px;
+}
+
+.kids-daily-recap h2 {
+  margin: 14px 0 8px;
+  font-size: 30px;
+}
+
+.kids-daily-summary {
+  margin: 0;
+  color: var(--kids-muted);
+  line-height: 1.6;
+}
+
+.kids-daily-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 28px 0 0;
+  padding: 24px 0;
+  border-block: 1px solid var(--kids-border);
+}
+
+.kids-daily-stats > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kids-daily-stats dt {
+  margin-top: 7px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kids-daily-stats dd {
+  margin: 0;
+}
+
+.kids-daily-stats .kids-daily-value {
+  order: -1;
+  font-size: 34px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.kids-daily-footer {
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.kids-daily-footer p {
+  margin: 0 0 16px;
+  color: var(--kids-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.kids-daily-footer button {
+  width: 100%;
+}
+
 @keyframes kids-pet-breathe {
   50% {
     transform: scale(1.025);
@@ -495,19 +568,31 @@ html[data-kids] body,
   }
 }
 
-/* Landscape tablets share one Today scroller: Rocky on the left, the full
-   challenge on the right. Taller content remains reachable instead of clipped. */
+/* Only Today/Solve use this landscape stage. Its viewport-based anchors do not
+   depend on question/recap height; overflow still scrolls on compact screens.
+   Chat keeps its existing full-height transcript and bottom composer. */
 @media (orientation: landscape) and (min-width: 933px) and (min-height: 560px) {
   .kids-today {
+    --kids-stage-height: 520px;
+    --kids-stage-gap: clamp(24px, calc(100dvh - 704px), 64px);
+
     box-sizing: border-box;
     display: grid;
     align-self: center;
     width: min(100vw, 1100px);
-    grid-template-columns: minmax(0, 260px) minmax(0, 580px);
+    grid-template-columns: minmax(0, 300px) minmax(0, 540px);
     justify-content: center;
     align-items: start;
     align-content: start;
-    gap: 12px 36px;
+    gap: var(--kids-stage-gap) 36px;
+    padding-top: max(
+      24px,
+      env(safe-area-inset-top),
+      calc(
+        (100dvh - var(--kids-page-title-height) - var(--kids-stage-gap) - var(--kids-stage-height)) /
+          2
+      )
+    );
     padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
 
@@ -515,6 +600,7 @@ html[data-kids] body,
     min-width: 0;
     width: 100%;
     margin: 0;
+    padding-top: 48px;
   }
 
   .kids-pet-picture {
@@ -529,6 +615,21 @@ html[data-kids] body,
   .kids-home-content,
   .kids-activity-card {
     margin: 0;
+    min-height: var(--kids-stage-height);
+  }
+
+  .kids-home-content {
+    display: grid;
+    grid-template-rows: 104px 1fr;
+    gap: 16px;
+  }
+
+  .kids-home .kids-home-chat {
+    margin: 0;
+  }
+
+  .kids-home .kids-home-card {
+    justify-content: center;
   }
 
   .kids-activity-card {
@@ -564,9 +665,16 @@ html[data-kids] body,
     margin-top: 10px;
   }
 
-  .kids-home-title,
-  .kids-solve::before {
+  .kids-page-title {
     margin: 0;
+  }
+
+  .kids-activity-card--recap {
+    padding: 32px;
+  }
+
+  .kids-daily-recap h2 {
+    margin: 14px 0 8px;
   }
 }
 
@@ -1157,6 +1265,8 @@ html[data-kids] body,
 
 .kids-solve--editing {
   grid-template-columns: minmax(0, 1fr);
+  padding-top: max(24px, env(safe-area-inset-top));
+  row-gap: 24px;
 }
 
 .kids-solve--editing .kids-pet {
@@ -1167,4 +1277,5 @@ html[data-kids] body,
   width: 100%;
   max-width: 700px;
   margin: 0 auto;
+  min-height: 0;
 }

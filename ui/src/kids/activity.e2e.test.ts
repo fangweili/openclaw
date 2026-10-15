@@ -85,6 +85,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     page.on("pageerror", (error) => errors.push(error.message));
     const capture = async (id: string, label: string) => {
       await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      await page
+        .locator(".kids-solve .kids-pet-picture img")
+        .evaluate((element: HTMLImageElement) => element.decode());
       await page.screenshot({ path: path.join(proof, `${id}.png`), fullPage: true });
       examples.push({ id, label });
     };
@@ -131,7 +134,15 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       now: 1000,
       date: "2026-10-13",
       correctStreak: 0,
-      daily: { date: "2026-10-13", total: 3, completed: 0 },
+      perfectDayStreak: 0,
+      daily: {
+        date: "2026-10-13",
+        total: 3,
+        completed: 0,
+        questionsSolved: 0,
+        firstTryCorrect: 0,
+        hintedQuestions: 0,
+      },
       nextActivity: null,
       pet: {
         state: "normal",
@@ -227,11 +238,17 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           overflow: element.scrollWidth - element.clientWidth,
           centered: Math.abs((title.left + title.right) / 2 - (bounds.left + bounds.right) / 2),
           aboveBoth: title.bottom <= pet.top && title.bottom <= cards.top,
+          stageCenter: Math.abs((title.top + cards.bottom) / 2 - innerHeight / 2),
+          greetingGap: cards.top - title.bottom,
         };
       });
       expect(layout.overflow).toBeLessThanOrEqual(1);
       expect(layout.centered).toBeLessThanOrEqual(1);
       expect(layout.aboveBoth).toBe(true);
+      if (viewport.width > viewport.height) {
+        expect(layout.stageCenter).toBeLessThanOrEqual(2);
+        expect(layout.greetingGap).toBeGreaterThanOrEqual(40);
+      }
       const homeFrame = await readKidsFrame(page);
       await page.getByRole("button", { name: "Solve", exact: true }).click();
       await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
@@ -432,6 +449,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     completed.activity!.completed = true;
     completed.activity!.currentQuestion = null;
     completed.daily!.completed = 1;
+    completed.daily!.questionsSolved = 3;
+    completed.daily!.firstTryCorrect = 2;
+    completed.daily!.hintedQuestions = 1;
     completed.nextActivity = { id: "shadow-play", title: "The moving-shadow mystery" };
     // Another device can finish the current challenge while this one is in Chat.
     await page.evaluate(() => {
@@ -461,6 +481,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       selected.activity!.id = offer.id;
       selected.activity!.title = offer.title;
       selected.daily!.completed = ordinal - 1;
+      selected.daily!.questionsSolved = (ordinal - 1) * 3;
+      selected.daily!.firstTryCorrect = selected.daily!.questionsSolved - 1;
+      selected.daily!.hintedQuestions = 1;
       await gateway.setMethodResponse("kids.activity.start", { snapshot: selected });
       await page.getByRole("button", { name: "Another challenge", exact: true }).click();
       await page.getByRole("heading", { name: offer.title }).waitFor();
@@ -475,6 +498,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         const submitted = selected.activity!.currentQuestion!;
         selected = structuredClone(selected);
         selected.activity!.currentIndex = index + 1;
+        selected.daily!.questionsSolved += 1;
+        selected.daily!.firstTryCorrect += 1;
+        selected.correctStreak = selected.daily!.questionsSolved;
         selected.activity!.completed = index === 2;
         selected.activity!.currentQuestion =
           index === 2
@@ -502,15 +528,41 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         await page.getByRole("heading", { name: "You figured it out!" }).waitFor();
         await gateway.setMethodResponse("kids.activity.get", selected);
         expect(await page.locator(".kids-activity-daily").count()).toBe(0);
+        expect(await page.locator(".kids-daily-recap").count()).toBe(0);
         await page.getByRole("button", { name: "Continue", exact: true }).click();
       }
-      await page.getByText(`${ordinal} of 3 challenges complete`, { exact: true }).waitFor();
+      if (ordinal === 2) {
+        await page.getByText("2 of 3 challenges complete", { exact: true }).waitFor();
+      }
     }
-    await page.getByRole("heading", { name: "All done for today!" }).waitFor();
+    await page.getByRole("heading", { name: "You did it, Alex!" }).waitFor();
+    await page.getByRole("heading", { name: "Look what you figured out!" }).waitFor();
+    await page.getByText("3 challenges · 9 questions solved", { exact: true }).waitFor();
+    expect(await page.locator(".kids-daily-value").allTextContents()).toEqual(["8", "1", "0"]);
+    expect(await page.getByRole("heading", { name: selected.activity!.title }).count()).toBe(0);
+    expect(await page.locator(".kids-activity-subject, .kids-activity-count").count()).toBe(0);
+    expect(await page.getByRole("progressbar").count()).toBe(0);
     expect(await page.getByRole("button", { name: "Another challenge", exact: true }).count()).toBe(
       0,
     );
     await capture("today-all-done-ipad", "iPad — all three complete, chat stays available");
+    await landscape("daily-recap");
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1024, height: 1366 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const recapFrame = await readKidsFrame(page);
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      await page.getByText("Today complete · See how you did", { exact: true }).waitFor();
+      expect(await readKidsFrame(page)).toEqual(recapFrame);
+      const id = `home-complete-${viewport.width}-${viewport.height}`;
+      await page.screenshot({ path: path.join(proof, `${id}.png`) });
+      examples.push({ id, label: "Today — completed Solve opens the saved recap" });
+      await page.getByRole("button", { name: "Solve", exact: true }).click();
+      await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      expect(await readKidsFrame(page)).toEqual(recapFrame);
+    }
     await page.setViewportSize({ width: 320, height: 844 });
     await capture("today-complete-phone", "Phone — all three challenges complete");
     expect(
@@ -518,6 +570,13 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     ).toBe(true);
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
+    expect(
+      await page.evaluate(() => {
+        const threadArea = document.querySelector(".kids-thread-area")!.getBoundingClientRect();
+        const footer = document.querySelector(".kids-footer")!.getBoundingClientRect();
+        return threadArea.top === 0 && Math.abs(footer.bottom - innerHeight) <= 1;
+      }),
+    ).toBe(true);
     expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).isVisible()).toBe(
       true,
     );
@@ -606,6 +665,7 @@ it("shows recoverable Today loading and failure states while chat remains usable
       now: 1000,
       date: "2026-10-13",
       correctStreak: 0,
+      perfectDayStreak: 0,
       daily: null,
       nextActivity: null,
       activity: null,

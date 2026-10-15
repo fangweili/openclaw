@@ -33,6 +33,7 @@ const snapshot: ActivitySnapshot = {
   date: "2026-10-13",
   pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
   correctStreak: 0,
+  perfectDayStreak: 0,
   activity: null,
   daily: null,
   nextActivity: null,
@@ -86,6 +87,14 @@ describe("activity service lifetime", () => {
     const service = harness();
     await expect(service.owner.get("child", () => {})).rejects.toThrow("restarting");
     await service.start();
+    expect(mocks.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          children: [{ childId: "child", timeZone: "America/Chicago" }],
+          now: Date.parse("2026-10-14T02:00:00Z"),
+        },
+      }),
+    );
     await service.owner.get("child", () => {});
     expect(mocks.execute).toHaveBeenCalledWith(
       expect.objectContaining({
