@@ -564,10 +564,24 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       expect(await readKidsFrame(page)).toEqual(recapFrame);
     }
     await page.setViewportSize({ width: 320, height: 844 });
+    const phoneRecapFrame = await readKidsFrame(page);
+    expect(
+      await page.locator(".kids-solve h1").evaluate((heading) => {
+        const text = document.createRange();
+        text.selectNodeContents(heading);
+        const navigation = document.querySelector(".kids-page-navigation")!.getBoundingClientRect();
+        return text.getBoundingClientRect().top >= navigation.bottom;
+      }),
+    ).toBe(true);
     await capture("today-complete-phone", "Phone — all three challenges complete");
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    expect(await readKidsFrame(page)).toEqual(phoneRecapFrame);
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    expect(await readKidsFrame(page)).toEqual(phoneRecapFrame);
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
     expect(

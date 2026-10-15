@@ -680,10 +680,15 @@ html[data-kids] body,
 
 @media (max-width: 560px) {
   .kids-today {
-    /* Reserve two title lines on phones without moving Solve's matching frame. */
-    --kids-page-title-height: 70px;
+    /* Reserve two title lines plus a clear row for floating navigation on every
+       page, so wrapped recap greetings cannot move the shared frame. */
+    --kids-page-title-height: 114px;
 
     padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  .kids-page-title {
+    box-sizing: border-box;
+    padding-top: 44px;
   }
   .kids-pet-picture {
     width: 240px;

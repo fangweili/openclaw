@@ -15,7 +15,8 @@ alignment and top row. Landscape uses a viewport-based stage with more space bel
 the greeting; its anchors do not depend on the question or recap height. Today fills
 the row with its greeting; active Solve reserves it, and the daily recap uses a
 celebration heading. Longer content still scrolls without moving the frame.
-Phones reserve two heading lines; unusually long names may still wrap further.
+Phones reserve two heading lines below the floating navigation; unusually long
+names may still wrap further.
 The existing answer-editing layout continues to make room for the keyboard.
 Chat retains the full available height and its bottom composer; it never adopts
 the centered Today/Solve stage.
