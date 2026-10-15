@@ -252,7 +252,6 @@
         "./packages/session-url-contract/src/share-build.ts"
       ],
       "@openclaw/session-url-contract/*": ["./packages/session-url-contract/src/*"],
-      "@openclaw/kids-activity-contract": ["./packages/kids-activity-contract/src/index.ts"],
       "@openclaw/workboard-contract": ["./packages/workboard-contract/src/index.ts"],
       "@openclaw/acp-core": ["./packages/acp-core/src/index.ts"],
       "@openclaw/acp-core/meta": ["./packages/acp-core/src/meta.ts"],

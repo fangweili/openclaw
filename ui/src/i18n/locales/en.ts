@@ -4,7 +4,6 @@ import type { TranslationMap } from "../lib/types.ts";
 import * as agentEn from "./en-agents.ts";
 
 export const en: TranslationMap & {
-  kids: TranslationMap;
   mcpApp: TranslationMap;
   linkReader: TranslationMap;
   agentTools: TranslationMap;
@@ -94,7 +93,6 @@ export const en: TranslationMap & {
   systems: TranslationMap;
   usage: TranslationMap & { overview: TranslationMap };
 } = {
-  kids: {},
   pluginUi: {
     sessionRecentMessages: "Recent messages",
     sessionHistoryUnavailable: "Session history could not be loaded. Try again.",
