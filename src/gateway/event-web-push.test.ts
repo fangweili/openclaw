@@ -2,7 +2,6 @@ import type { StatementSync as NativeStatement } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
-import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import type { BoundWebPushSubscription } from "../infra/push-web.js";
@@ -12,11 +11,6 @@ import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import type { HumanMentionWebPush } from "./event-web-push.js";
-import {
-  boundSubscription,
-  pairedOperator,
-  foregroundBrowser,
-} from "./event-web-push.test-support.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 
 const {
@@ -140,6 +134,32 @@ vi.mock("./session-sharing.js", async (importOriginal) => ({
 const { createEventWebPushDelivery } = await import("./event-web-push.js");
 let authorityCompleted = createDeferred();
 
+function boundSubscription(
+  deviceId: string,
+  userProfileId: string | null = null,
+): BoundWebPushSubscription {
+  return {
+    subscriptionId: `subscription-${deviceId}`,
+    endpoint: `https://push.example.test/${deviceId}`,
+    keys: { p256dh: `p256dh-${deviceId}`, auth: `auth-${deviceId}` },
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    deviceId,
+    userProfileId,
+    devicePreferences: {
+      enabled: true,
+      label: "",
+      detailLevel: "identified",
+      categories: {
+        agentFinished: true,
+        agentQuestion: true,
+        humanMentioned: true,
+        scheduledTaskFailed: true,
+      },
+    },
+  };
+}
+
 function humanMention(overrides: Partial<HumanMentionWebPush> = {}): HumanMentionWebPush {
   return {
     id: "mention-1",
@@ -151,6 +171,19 @@ function humanMention(overrides: Partial<HumanMentionWebPush> = {}): HumanMentio
     prepare: async () => {},
     isCurrent: mentionCurrentMock,
     ...overrides,
+  };
+}
+
+function pairedOperator(deviceId: string, scopes = ["operator.read"]) {
+  return {
+    deviceId,
+    roles: ["operator"],
+    role: "operator",
+    scopes,
+    approvedScopes: scopes,
+    tokens: {
+      operator: { token: `token-${deviceId}`, role: "operator", scopes },
+    },
   };
 }
 
@@ -189,43 +222,38 @@ describe("event Web Push classification", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it.each([
-    ["foreground", true],
-    ["different session", false],
-    ["different endpoint", false],
-    ["multiple sessions", false],
-    ["background", false],
-    ["expired", false],
-    ["disconnected", false],
-    ["revoked", false],
-    ["profile replaced", false],
-  ] as const)("%s only quiets the exact subscription and conversation", async (state, quiet) => {
-    const own = boundSubscription("browser-device", "owner");
-    const other = boundSubscription("second-device", "owner");
-    listBoundWebPushSubscriptionsMock.mockResolvedValue([own, other]);
+  it("requires standard read authority for completion delivery to existing subscriptions", async () => {
+    const standard = boundSubscription("standard-browser");
+    const narrow = boundSubscription("session-browser");
+    listBoundWebPushSubscriptionsMock.mockResolvedValue([standard, narrow]);
     listDevicePairingMock.mockReturnValue({
-      paired: [pairedOperator("browser-device"), pairedOperator("second-device")],
+      paired: [
+        pairedOperator("standard-browser"),
+        pairedOperator("session-browser", ["operator.sessions.write"]),
+      ],
     });
-    const client = foregroundBrowser(own, state);
-    const delivery = createEventWebPushDelivery({
-      getRuntimeConfig: () => ({}),
-      clients: [client],
+    const sessionKey = "agent:main:push-authority";
+    prepareSessionMutationFactsMock.mockResolvedValue({
+      readCurrent: () => ({
+        target: {
+          agentId: "main",
+          sessionKey,
+          storePath: "/fixture/sessions.sqlite",
+          entry: { sessionId: "push-authority", updatedAt: 1 },
+        },
+        membership: new Set<string>(),
+      }),
+      release: () => {},
     });
+    const delivery = createEventWebPushDelivery({ getRuntimeConfig: () => ({}) });
     delivery.handleEvent(
       "chat",
-      { state: "final", runId: "foreground-run" },
-      {
-        agentId: "tutor",
-        sessionKeys:
-          state === "multiple sessions"
-            ? ["agent:tutor:kids:fixture", "agent:tutor:other"]
-            : [state === "different session" ? "agent:tutor:other" : "agent:tutor:kids:fixture"],
-      },
+      { state: "final", runId: "push-authority" },
+      { agentId: "main", sessionKeys: [sessionKey] },
     );
     await authorityCompleted.promise;
-    expect(preparedWebPushSendMock).toHaveBeenCalledOnce();
-    expect(preparedWebPushSendMock.mock.calls[0]?.[0]?.subscriptions).toEqual(
-      quiet ? [other] : [own, other],
+    expect(preparedWebPushSendMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ subscriptions: [standard] }),
     );
   });
 
@@ -574,106 +602,6 @@ describe("event Web Push classification", () => {
       );
     },
   );
-
-  it("delivers narrow completion pushes only to current owners of an allowed agent", async () => {
-    const [profiles, preferences, sessions, roles, sharing] = await Promise.all([
-      vi.importActual<typeof import("../state/user-profile-list.js")>(
-        "../state/user-profile-list.js",
-      ),
-      vi.importActual<typeof import("../state/user-preferences.js")>(
-        "../state/user-preferences.js",
-      ),
-      vi.importActual<typeof import("./session-sharing-preparation.js")>(
-        "./session-sharing-preparation.js",
-      ),
-      vi.importActual<typeof import("./operator-role-policy.js")>("./operator-role-policy.js"),
-      vi.importActual<typeof import("./session-sharing.js")>("./session-sharing.js"),
-    ]);
-    prepareUserProfileCatalogMock.mockImplementation(profiles.prepareUserProfileCatalog);
-    getUserPreferenceValuesMock.mockImplementation(preferences.getUserPreferenceValues);
-    prepareSessionMutationFactsMock.mockImplementation(sessions.prepareSessionMutationFacts);
-    resolveOperatorRolePolicyForAssignmentMock.mockImplementation(
-      roles.resolveOperatorRolePolicyForAssignment,
-    );
-    canReceiveSessionEventMock.mockImplementation(sharing.canReceiveSessionEvent);
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const owner = ensureProfileForEmail("tutor-owner@example.test");
-      const other = ensureProfileForEmail("tutor-other@example.test");
-      setUserProfileRole(owner.id, "student");
-      setUserProfileRole(other.id, "student");
-      const policy: GatewayOperatorRoleDefinition = {
-        scopes: ["operator.sessions.write"],
-        sessions: { others: "none" },
-        agents: ["main"],
-      };
-      const cfg: OpenClawConfig = {
-        gateway: { roles: { default: "student", definitions: { student: policy } } },
-      };
-      const sessionKey = "agent:main:tutor-owner";
-      await upsertSessionEntryCore(
-        { agentId: "main", sessionKey },
-        {
-          sessionId: "tutor-owner",
-          updatedAt: 1,
-          visibility: "shared",
-          createdActor: { type: "human", source: "profile", id: owner.id },
-        },
-      );
-      const own = boundSubscription("own-browser", owner.id);
-      const foreign = boundSubscription("other-browser", other.id);
-      listBoundWebPushSubscriptionsMock.mockResolvedValue([own, foreign]);
-      const paired = [
-        pairedOperator("own-browser", ["operator.sessions.write"]),
-        pairedOperator("other-browser", ["operator.sessions.write"]),
-      ];
-      listDevicePairingMock.mockReturnValue({ paired });
-      const delivery = createEventWebPushDelivery({ getRuntimeConfig: () => cfg });
-      const send = async (keys: string[], event = "chat") => {
-        authorityCompleted = createDeferred();
-        preparedWebPushSendMock.mockClear();
-        delivery.handleEvent(
-          event,
-          { state: "final", runId: "tutor-run", id: "tutor-question" },
-          { sessionKeys: keys, agentId: "main" },
-        );
-        await authorityCompleted.promise;
-      };
-
-      await send([sessionKey]);
-      expect(preparedWebPushSendMock).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ subscriptions: [own] }),
-      );
-      await send([]);
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-      await send(["agent:main:missing"]);
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-      await send([sessionKey], "question.requested");
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-
-      policy.agents = [];
-      await send([sessionKey]);
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-      policy.agents = ["main"];
-      policy.scopes = [];
-      await send([sessionKey]);
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-      policy.scopes = ["operator.sessions.write"];
-      listDevicePairingMock.mockReturnValue({ paired: [paired[1]] });
-      await send([sessionKey]);
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-
-      // Revoke the owning role while sender preparation is pending. The final
-      // synchronous recipient check must use the new policy, not the prior send.
-      listDevicePairingMock.mockReturnValue({ paired });
-      const ready = createDeferred<typeof preparedWebPushSendMock>();
-      prepareWebPushNotificationSenderMock.mockReturnValueOnce(ready.promise);
-      const pending = send([sessionKey]);
-      policy.agents = [];
-      ready.resolve(preparedWebPushSendMock);
-      await pending;
-      expect(preparedWebPushSendMock).not.toHaveBeenCalled();
-    });
-  });
 
   describe("human mention delivery", () => {
     beforeEach(() => {

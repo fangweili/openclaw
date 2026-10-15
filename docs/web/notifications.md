@@ -38,25 +38,6 @@ Behind the scenes, enabling creates a push subscription in this browser and regi
 
 Browser registration and notification settings reads do not wait for background notifications to load conversation access data. The Gateway still rechecks current access before sending each notification.
 
-Verified users with `operator.sessions.write` can register or remove their own
-browser subscription and change its notification preferences without general
-operator write access. Reading those preferences also accepts
-`operator.sessions.read`. Subscriptions remain bound to both the authenticated
-profile and the paired device; these scopes cannot run the global push test.
-Narrow users receive **Agent finished** notifications only for producer-bound
-sessions they can currently read and whose agent remains allowed by their role.
-Missing session keys, removed pairing, revoked scopes, and lost session access
-stop delivery. Other attention categories retain their existing scope rules.
-
-Creation-bound `current` cron jobs also produce **Agent finished** notifications
-after committing their final response to the source conversation, including when
-all browsers are offline. The Gateway rereads the canonical automation result and
-rejects stale session generations before sending. It coalesces 256 recent run
-identities per Gateway lifetime and admits at most 16 pending automation pushes;
-overflow and transport failure leave the committed conversation result available
-in history. A push is best effort, not a delivery receipt or a replacement for the
-cron job's configured channel delivery.
-
 Approval notifications use generic lock-screen text. Command, working-directory, prompt, and plugin details stay out of the push payload. Selecting the notification opens the authenticated `/approve/<approvalId>` page. Before each send, the Gateway rechecks the paired device's current approval scopes, operator role, user profile, and approval visibility. A revoked or downgraded browser stops receiving approval pushes without needing to unsubscribe first.
 
 ### Choose what reaches each device

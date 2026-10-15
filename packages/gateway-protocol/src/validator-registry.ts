@@ -5,7 +5,6 @@ import type {
   AuditActivityListParams,
   AuditRunInspectParams,
   WebPushSubscribeParams,
-  WebPushForegroundParams,
   WebPushPreferencesGetParams,
   WebPushPreferencesSetParams,
   WebPushTestParams,
@@ -240,9 +239,6 @@ export const validateWebPushSubscribeParams = compile<WebPushSubscribeParams>(
 );
 export const validateWebPushUnsubscribeParams = compile<WebPushUnsubscribeParams>(
   S.WebPushUnsubscribeParamsSchema,
-);
-export const validateWebPushForegroundParams = compile<WebPushForegroundParams>(
-  S.WebPushForegroundParamsSchema,
 );
 export const validateWebPushTestParams = compile<WebPushTestParams>(S.WebPushTestParamsSchema);
 export const validateWebPushPreferencesGetParams = compile<WebPushPreferencesGetParams>(

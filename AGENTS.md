@@ -32,6 +32,7 @@ Update instructions at their owner instead of adding competing rules here.
 - Separate product bugs from tool/fixture failures.
 - Check relevant prerequisites early. Parallelize independent work.
 - New check needs named unknown, risk, or required gate. Reuse valid proof.
+- Finish focused tests, formatting/lint, and applicable static checks before starting the full release build. Build once from the final reviewed source, reusing the supported shared artifact cache across isolated release checkouts. Repeat only for changed build inputs, a failure, or a required gate; documentation-only edits do not need an application rebuild. Cache coverage is partial, so do not assume a warm full build skips every phase.
 - Two identical tooling failures without new evidence, or 10 min without progress: switch to an authorized supported alternative with the reviewed head pinned; reconcile uncertain writes first. No blind retries or guard bypasses.
 - Behavior proven + required gates green: finish/land. No optional proof polish or speculative scope growth.
 - Check mergeability first; don't rebase or merge `main` just because it advanced. Integrate for conflicts, a named failing gate, or material base risk, then rerun affected checks. Prior-head CI stays prior-head evidence; admin exceptions belong to the native landing workflow ([landing](.agents/skills/openclaw-pr-maintainer/references/landing.md)).
