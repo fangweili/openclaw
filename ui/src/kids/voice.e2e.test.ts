@@ -242,7 +242,7 @@ it("records dictation into an editable draft and sends only on request", async (
       date: "2026-10-13",
       correctStreak: 0,
       perfectDayStreak: 0,
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       canContinue: false,
       daily: null,
       nextActivity: null,

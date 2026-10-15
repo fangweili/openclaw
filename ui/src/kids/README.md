@@ -27,10 +27,11 @@ recorded learning notes, previous Solve work, and bounded recent conversation. N
 the app or reading a recap. Existing saved three-part days keep their original
 nine-question goal and use **Keep going** between their already-prepared parts.
 After the final answer's feedback is dismissed with **Continue**, a completed
-batch shows its recap instead of the old question title, subject and progress bar.
-The daily recap contains scheduled results; **This extra batch** shows only that batch's
-solved questions, first-try answers and distinct hinted questions. **Perfect days**
-is the server's separate day streak and does not change for optional work.
+batch shows the cumulative day recap instead of the old question title, subject
+and progress bar, once the scheduled daily goal is complete. **Today so far** sums
+the server's scheduled and optional counts for the same prepared date: solved
+questions, first-try answers and distinct hinted questions. **Perfect days** is
+the server's separate day streak and does not change for optional work.
 Perfect days counts consecutive local days when every scheduled question was
 correct on its first graded attempt without hints; optional practice is
 excluded. The server owns that count independently of the correct-answer streak
@@ -39,8 +40,10 @@ Completion has one **Keep going** action; the existing **Today** navigation retu
 home. During generation it reads **Preparing your next problems…**; a failed or
 uncertain request keeps the recap and changes that action to **Try again**. It
 reuses the original request and completed predecessor instead of generating twice.
-Today keeps the fixed daily solved count visible while extra practice is in progress
-and shows saved extra work separately. An older finished batch is dated explicitly.
+Home shows the same cumulative solved count, including progress in unfinished
+extra batches, while its goal-complete check still uses only scheduled work.
+Older results are dated explicitly. The server's local-midnight cutoff for
+**Keep going** is unchanged.
 An unfinished carryover stays resumable; after its last feedback, the server's
 newest prepared work appears without counting the old work toward today's goal.
 
@@ -124,8 +127,8 @@ to screen readers.
   loss of conversation admission removes both private panels immediately.
 - `activity-view.ts` renders the server-selected quiz and feedback.
 - `daily-view.ts` owns stateless completion presentation shared by Home and Solve.
-  It reads the admitted snapshot's dates and counters without recomputing learning
-  evidence or using the browser clock. Solve gives retained answer feedback priority
+  It combines the admitted snapshot's disjoint scheduled and optional day counts
+  without recomputing learning evidence or using the browser clock. Solve gives retained answer feedback priority
   over the recap; this helper owns no state, listeners, resources or lifecycle.
   `answer-view.ts` renders numeric or explanation input with an explicit **Check
   answer** action. Numeric text input allows negative values and fractions, with
@@ -150,8 +153,8 @@ to screen readers.
   Feedback keeps the submitted question's heading until **Continue**, including
   when finishing yesterday's quiz reveals today's invitation on the server.
   Progress is hidden during feedback; Continue displays the latest server snapshot.
-  Daily counts describe the fixed scheduled goal; extra totals and selected-batch
-  counters remain separate. Completion offers only **Keep going**, which never
+  Daily counts describe the fixed scheduled goal; optional aggregates remain
+  separate on the wire and are added only for presentation. Completion offers only **Keep going**, which never
   runs on a read or page change. Starting an advertised saved part or generating
   the next optional batch uses the same serialized, idempotent operation owner.
   A started unfinished

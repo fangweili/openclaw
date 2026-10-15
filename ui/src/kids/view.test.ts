@@ -89,7 +89,7 @@ function completedDayState(): KidsViewState {
     date: "2026-10-14",
     correctStreak: 12,
     perfectDayStreak: 0,
-    extras: { questionsSolved: 0 },
+    extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
     canContinue: true,
     daily: {
       date: "2026-10-14",
@@ -216,7 +216,7 @@ it("keeps final-answer feedback before replacing the question with the full dail
     expect(solve.textContent).not.toContain("The last question");
     expect(solve.textContent).not.toContain("Science");
     expect(solve.querySelector(".kids-activity-count, [role=progressbar]")).toBeNull();
-    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Daily goal: 10 solved");
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today · 10 solved");
     expect(solve.querySelectorAll(".kids-activity-card button")).toHaveLength(1);
     solve.querySelector<HTMLButtonElement>(".kids-daily-footer button")!.click();
     expect(actions.activity.start).toHaveBeenCalledOnce();
@@ -237,16 +237,16 @@ it("dates older work and preserves the nine-question goal of a saved multi-part 
     paint();
     const solve = root.querySelector(".kids-solve")!;
     expect(solve.querySelector("h1")!.textContent?.trim()).toBe("Nice exploring, Child!");
-    expect(solve.textContent).toContain("Completed for Oct 13, 2026");
+    expect(solve.textContent).toContain("Results for Oct 13, 2026");
     expect(solve.textContent).not.toContain("tomorrow");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today ·");
     snapshot.daily!.date = snapshot.date;
     snapshot.daily!.completed = 0;
     snapshot.activity!.completed = false;
     paint();
     expect(solve.querySelector(".kids-daily-recap")).toBeNull();
     expect(solve.textContent).toContain("Continuing from Oct 13, 2026");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Today ·");
     snapshot.activity!.date = snapshot.date;
     snapshot.activity!.completed = true;
     snapshot.daily!.total = 3;
@@ -259,13 +259,13 @@ it("dates older work and preserves the nine-question goal of a saved multi-part 
     expect(solve.textContent).toContain("Adventure complete!");
     expect(solve.textContent).toContain("Keep going");
     expect(solve.textContent).toContain("Daily goal · 3 of 9 solved");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today · 3 solved");
   } finally {
     render(null, root);
   }
 });
 
-it("keeps one completion action through generation and retry, then separates extra results from the daily goal", () => {
+it("keeps one completion action through retry and accumulates all extras without changing the daily goal", () => {
   const root = document.createElement("div");
   const state = completedDayState();
   const actions = viewActions();
@@ -304,7 +304,7 @@ it("keeps one completion action through generation and retry, then separates ext
       total: 3,
       completed: 3,
     };
-    data.extras.questionsSolved = 1;
+    data.extras = { questionsSolved: 1, firstTryCorrect: 1, hintedQuestions: 0 };
     data.activity = {
       ...data.activity!,
       id: "extra-sample",
@@ -315,32 +315,29 @@ it("keeps one completion action through generation and retry, then separates ext
       hintedQuestions: 0,
     };
     paint();
-    expect(card.textContent).toContain("Extra practice complete!");
-    expect(card.querySelector("h2")!.textContent).toBe("This extra batch");
-    expect(card.textContent).toContain("1 question solved");
+    expect(card.textContent).toContain("Today so far");
+    expect(card.querySelector("h2")!.textContent).toBe("Look what you figured out!");
+    expect(card.textContent).toContain("10 questions solved");
     expect(
       Array.from(card.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
-    ).toEqual(["1", "0", "0"]);
-    expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
-      "Daily goal: 9 solved · 1 extra solved",
-    );
-    data.extras.questionsSolved = 11;
+    ).toEqual(["7", "2", "0"]);
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today · 10 solved");
+    data.extras = { questionsSolved: 11, firstTryCorrect: 8, hintedQuestions: 3 };
     paint();
-    expect(card.textContent).toContain("1 question solved");
+    expect(card.textContent).toContain("20 questions solved");
     expect(
       Array.from(card.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
-    ).toEqual(["1", "0", "0"]);
-    expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
-      "Daily goal: 9 solved · 11 extra solved",
-    );
+    ).toEqual(["14", "5", "0"]);
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Today · 20 solved");
     data.activity.completed = false;
     data.activity.total = 10;
     data.activity.currentIndex = 4;
+    data.extras = { questionsSolved: 14, firstTryCorrect: 10, hintedQuestions: 4 };
     data.canContinue = false;
     paint();
     expect(card.querySelector(".kids-daily-recap")).toBeNull();
     expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
-      "Daily goal: 9 solved · Continue extra practice",
+      "Continue · 23 solved today",
     );
   } finally {
     render(null, root);
@@ -656,7 +653,7 @@ it("keeps the submitted free answer and live result mounted while checking and r
     date: "2026-10-14",
     correctStreak: 0,
     perfectDayStreak: 0,
-    extras: { questionsSolved: 0 },
+    extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
     canContinue: false,
     daily: null,
     nextActivity: null,
@@ -755,7 +752,7 @@ it("keeps Solve recording controls visible through microphone permission and tra
     date: "2026-10-14",
     correctStreak: 0,
     perfectDayStreak: 0,
-    extras: { questionsSolved: 0 },
+    extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
     canContinue: false,
     daily: null,
     nextActivity: null,

@@ -5,7 +5,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
 import { renderKidsAnswer, type KidsAnswerInput } from "./answer-view.ts";
-import { completedKidsBatch, renderKidsActivityProgress, renderKidsRecap } from "./daily-view.ts";
+import { completedKidsResults, renderKidsActivityProgress, renderKidsRecap } from "./daily-view.ts";
 import { renderKidsPet } from "./pet-view.ts";
 
 export type KidsActivityActions = {
@@ -43,7 +43,7 @@ export function renderKidsActivity(
   const recording = input.dictation.active || input.dictation.finishing;
   const locked = state.busy || state.canRetry || state.error !== null;
   const completed = Boolean(activity?.completed && !state.feedback && !retainingAnswer);
-  const recap = completed ? completedKidsBatch(data) : null;
+  const recap = completed ? completedKidsResults(data) : null;
   const currentDay = recap?.date === data?.date;
   return html`<main
     class=${state.answerEditing ? "kids-today kids-solve kids-solve--editing" : "kids-today kids-solve"}

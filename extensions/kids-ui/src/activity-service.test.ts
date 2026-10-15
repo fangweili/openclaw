@@ -40,7 +40,7 @@ const snapshot: ActivitySnapshot = {
   activity: null,
   daily: null,
   nextActivity: null,
-  extras: { questionsSolved: 0 },
+  extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
   canContinue: false,
 };
 

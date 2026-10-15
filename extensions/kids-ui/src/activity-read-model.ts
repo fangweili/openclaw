@@ -81,6 +81,9 @@ export function projectActivitySnapshot({
     .filter((activity) => activity.ordinal < requiredCount)
     .map(readActivityProgress);
   const dayQuestions = dayProgress.flatMap((progress) => progress.questions);
+  const extraQuestions = activities
+    .filter((activity) => activity.ordinal >= requiredCount)
+    .flatMap((activity) => readActivityProgress(activity).questions);
   const idle =
     pet.last_interaction === null
       ? ACTIVITY_SLEEP_MS
@@ -134,10 +137,9 @@ export function projectActivitySnapshot({
         }
       : null,
     extras: {
-      questionsSolved: activities
-        .filter((activity) => activity.ordinal >= requiredCount)
-        .flatMap((activity) => readActivityProgress(activity).questions)
-        .filter((question) => question.correct).length,
+      questionsSolved: extraQuestions.filter((q) => q.correct).length,
+      firstTryCorrect: extraQuestions.filter((q) => q.correct && q.attempts === 1).length,
+      hintedQuestions: extraQuestions.filter((q) => q.hintUsed).length,
     },
     canContinue: canContinueActivity(target, row, latest, activities),
     nextActivity: next ? { id: next.activity_id, title: readActivity(next).title } : null,

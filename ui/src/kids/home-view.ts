@@ -3,7 +3,7 @@ import { html, svg } from "lit";
 import { strokeIcon } from "../components/icons-tools.ts";
 import { t } from "../i18n/index.ts";
 import type { KidsActivityState } from "./activity.ts";
-import { completedKidsDay } from "./daily-view.ts";
+import { completedKidsDay, kidsDayResults } from "./daily-view.ts";
 import type { KidsPage } from "./navigation.ts";
 import { renderKidsPet } from "./pet-view.ts";
 
@@ -36,25 +36,19 @@ export function renderKidsHome(
   const completed = completedKidsDay(activity.snapshot);
   const todayComplete = completed !== null && completed.date === activity.snapshot?.date;
   const selected = activity.snapshot?.activity;
-  const daily = activity.snapshot?.daily;
-  const dailySolved = String(daily?.questionsSolved ?? 0);
-  const extras = activity.snapshot?.extras.questionsSolved ?? 0;
+  const results = kidsDayResults(activity.snapshot);
   const detail = activity.preparing
     ? t("kids.activity.preparing")
-    : todayComplete
-      ? selected?.scope === "extra" && !selected.completed
-        ? t("kids.home.solveExtraResume", { count: dailySolved })
-        : extras > 0
-          ? t("kids.home.solveExtraComplete", { daily: dailySolved, extra: String(extras) })
-          : t("kids.home.solveComplete", { count: dailySolved })
-      : selected?.started && !selected.completed && selected.date !== activity.snapshot?.date
-        ? t("kids.home.solveResume")
-        : daily && daily.date === activity.snapshot?.date
-          ? t("kids.home.solveProgress", {
-              completed: String(daily.questionsSolved),
-              total: String(daily.questionTotal),
-            })
-          : t("kids.home.solveDetail");
+    : selected?.started && !selected.completed && selected.date !== activity.snapshot?.date
+      ? t("kids.home.solveResume")
+      : results && results.date === activity.snapshot?.date
+        ? t(
+            selected?.scope === "extra" && !selected.completed
+              ? "kids.home.solveContinue"
+              : "kids.home.solveProgress",
+            { count: String(results.questionsSolved) },
+          )
+        : t("kids.home.solveDetail");
   return html`<main
     class="kids-today kids-home"
     aria-label=${t("kids.activity.today")}

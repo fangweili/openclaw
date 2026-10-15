@@ -1,7 +1,7 @@
 /**
- * Stateless daily-goal and selected-batch presentation. The plugin owns every
- * count and the current date. Optional work never changes daily completion;
- * its recap uses only that activity's counters. Retained answer feedback takes
+ * Stateless day-results presentation. The plugin owns every count and date;
+ * scheduled and optional aggregates cover the same prepared day. Summing them
+ * never changes goal completion or streaks. Retained answer feedback takes
  * precedence at the Solve caller until the child continues.
  */
 import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
@@ -10,9 +10,21 @@ import { t } from "../i18n/index.ts";
 import { formatDateMs } from "../lib/format.ts";
 
 type Daily = NonNullable<ActivitySnapshot["daily"]>;
-type Recap = Pick<Daily, "date" | "questionsSolved" | "firstTryCorrect" | "hintedQuestions"> & {
-  scope: "daily" | "extra";
-};
+type DayResults = Pick<Daily, "date" | "questionsSolved" | "firstTryCorrect" | "hintedQuestions">;
+
+/** Combine the server's disjoint day aggregates, including progress in unfinished extras. */
+export function kidsDayResults(snapshot: ActivitySnapshot | null): DayResults | null {
+  if (!snapshot?.daily) {
+    return null;
+  }
+  const { daily, extras } = snapshot;
+  return {
+    date: daily.date,
+    questionsSolved: daily.questionsSolved + extras.questionsSolved,
+    firstTryCorrect: daily.firstTryCorrect + extras.firstTryCorrect,
+    hintedQuestions: daily.hintedQuestions + extras.hintedQuestions,
+  };
+}
 
 /** The immutable scheduled goal stays complete even while extra practice is unfinished. */
 export function completedKidsDay(snapshot: ActivitySnapshot | null): Daily | null {
@@ -23,23 +35,14 @@ export function completedKidsDay(snapshot: ActivitySnapshot | null): Daily | nul
   return daily.completed === daily.total ? daily : null;
 }
 
-/** Only the selected finished batch has a recap; old multi-part days finish as one daily goal. */
-export function completedKidsBatch(snapshot: ActivitySnapshot | null): Recap | null {
+/** A finished selected activity reveals the day recap only after its scheduled goal is complete. */
+export function completedKidsResults(snapshot: ActivitySnapshot | null): DayResults | null {
   const activity = snapshot?.activity;
   if (!activity?.completed) {
     return null;
   }
-  if (activity.scope === "extra") {
-    return {
-      scope: "extra",
-      date: activity.date,
-      questionsSolved: activity.currentIndex,
-      firstTryCorrect: activity.firstTryCorrect,
-      hintedQuestions: activity.hintedQuestions,
-    };
-  }
   const daily = completedKidsDay(snapshot);
-  return daily?.date === activity.date ? { ...daily, scope: "daily" } : null;
+  return daily?.date === activity.date ? kidsDayResults(snapshot) : null;
 }
 
 function dayLabel(date: string) {
@@ -76,9 +79,9 @@ export function renderKidsActivityProgress(snapshot: ActivitySnapshot) {
   </p>`;
 }
 
-/** Render recorded batch results; the caller supplies the single completion action. */
+/** Render cumulative day results; the caller supplies the unchanged completion action. */
 export function renderKidsRecap(
-  recap: Recap,
+  recap: DayResults,
   currentDate: string,
   perfectDayStreak: number,
   action: TemplateResult | typeof nothing,
@@ -89,11 +92,11 @@ export function renderKidsRecap(
       <span aria-hidden="true">✓</span>
       ${
         current
-          ? t(recap.scope === "daily" ? "kids.activity.allDone" : "kids.daily.extraComplete")
+          ? t("kids.daily.soFar")
           : t("kids.daily.completedDate", { date: dayLabel(recap.date) })
       }
     </p>
-    <h2>${t(recap.scope === "extra" ? "kids.daily.extraTitle" : "kids.daily.title")}</h2>
+    <h2>${t("kids.daily.title")}</h2>
     <p class="kids-daily-summary">
       ${t(recap.questionsSolved === 1 ? "kids.daily.questionOne" : "kids.daily.questions", {
         count: String(recap.questionsSolved),

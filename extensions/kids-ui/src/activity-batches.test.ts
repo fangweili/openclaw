@@ -165,7 +165,7 @@ describe("adaptive ten-question batches", () => {
         questionsSolved: 10,
         firstTryCorrect: 10,
       },
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       perfectDayStreak: 1,
       canContinue: true,
       activity: { scope: "daily", total: 10, firstTryCorrect: 10, hintedQuestions: 0 },
@@ -287,7 +287,7 @@ describe("adaptive ten-question batches", () => {
     );
   });
 
-  it("keeps extra hints and corrected answers out of the goal while preserving their evidence", async () => {
+  it("totals every extra batch's hints and corrected answers without changing the daily goal", async () => {
     const childId = "extra-evidence";
     await publish(childId);
     const dailyResult = await finish(childId);
@@ -303,6 +303,7 @@ describe("adaptive ten-question batches", () => {
     });
     const done = await finish(childId);
     expect(done.daily).toEqual(dailyResult.daily);
+    expect(done.extras).toEqual({ questionsSolved: 10, firstTryCorrect: 9, hintedQuestions: 1 });
     expect(done.perfectDayStreak).toBe(1);
     expect(done.activity).toMatchObject({ scope: "extra", firstTryCorrect: 9, hintedQuestions: 1 });
     const prepared = await plan(childId, continuation(id));
@@ -328,6 +329,67 @@ describe("adaptive ten-question batches", () => {
       outcome: "revise",
       hintUsed: true,
     });
+    const secondId = "extra-evidence-second";
+    await append(childId, continuation(id), batch(secondId));
+    for (const requestId of ["second-hint", "second-hint-again"]) {
+      await mutate(childId, {
+        kind: "hint",
+        activityId: secondId,
+        questionId: "q1",
+        requestId,
+      });
+    }
+    const clarified = await mutate(childId, {
+      kind: "answer",
+      activityId: secondId,
+      questionId: "q1",
+      requestId: "second-clarification",
+      answer: { kind: "numeric", text: "half" },
+    });
+    expect(clarified.feedback?.outcome).toBe("clarify");
+    expect(clarified.snapshot.extras).toEqual({
+      questionsSolved: 10,
+      firstTryCorrect: 9,
+      hintedQuestions: 2,
+    });
+    const secondDone = await finish(childId);
+    expect(secondDone.extras).toEqual({
+      questionsSolved: 20,
+      firstTryCorrect: 19,
+      hintedQuestions: 2,
+    });
+    expect(secondDone.activity).toMatchObject({ firstTryCorrect: 10, hintedQuestions: 1 });
+
+    const thirdId = "extra-evidence-third";
+    await append(childId, continuation(secondId), batch(thirdId));
+    await mutate(childId, {
+      kind: "hint",
+      activityId: thirdId,
+      questionId: "q1",
+      requestId: "third-hint",
+    });
+    await mutate(childId, {
+      kind: "answer",
+      activityId: thirdId,
+      questionId: "q1",
+      requestId: "third-answer",
+      answer: { kind: "numeric", text: "1/2" },
+    });
+    const partial = await get(childId);
+    expect(partial.extras).toEqual({
+      questionsSolved: 21,
+      firstTryCorrect: 20,
+      hintedQuestions: 3,
+    });
+    expect(partial.activity).toMatchObject({
+      id: thirdId,
+      completed: false,
+      currentIndex: 1,
+      firstTryCorrect: 1,
+      hintedQuestions: 1,
+    });
+    expect(partial.daily).toEqual(dailyResult.daily);
+    expect(partial.perfectDayStreak).toBe(1);
   });
 
   it("preserves an unfinished extra across a new day and then resumes the new daily goal", async () => {
@@ -355,6 +417,7 @@ describe("adaptive ten-question batches", () => {
       questionTotal: 10,
       questionsSolved: 0,
     });
+    expect(tomorrow.extras).toEqual({ questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 });
     const history = await store.execute({ type: "prepare", input: target(childId, "2026-10-15") });
     expect(history.recentActivities.map(({ id, scope }) => ({ id, scope }))).toEqual([
       { id: daily(childId, "2026-10-15").activities[0]!.id, scope: "daily" },

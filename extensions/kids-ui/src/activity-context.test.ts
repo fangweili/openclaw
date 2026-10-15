@@ -37,7 +37,7 @@ const prepared: ActivityPreparationContext = {
     daily: null,
     nextActivity: null,
     canContinue: false,
-    extras: { questionsSolved: 0 },
+    extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
   },
   recentActivities: [],
   recentScenes: [],

@@ -91,7 +91,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       date: "2026-10-13",
       correctStreak: 0,
       perfectDayStreak: 0,
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       canContinue: false,
       daily: {
         date: "2026-10-13",
@@ -499,7 +499,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       await page.setViewportSize(viewport);
       const recapFrame = await readKidsFrame(page);
       await page.getByRole("button", { name: "Today", exact: true }).click();
-      await page.getByText("Daily goal: 9 solved", { exact: true }).waitFor();
+      await page.getByText("Today · 9 solved", { exact: true }).waitFor();
       expect(await readKidsFrame(page)).toEqual(recapFrame);
       const id = `home-complete-${viewport.width}-${viewport.height}`;
       await page.screenshot({ path: path.join(proof, `${id}.png`) });
@@ -625,7 +625,7 @@ it("shows recoverable Today loading and failure states while chat remains usable
       date: "2026-10-13",
       correctStreak: 0,
       perfectDayStreak: 0,
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       canContinue: false,
       daily: null,
       nextActivity: null,
@@ -676,7 +676,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
         firstTryCorrect: 10,
         hintedQuestions: 0,
       },
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       canContinue: true,
       nextActivity: null,
       pet: {
@@ -798,9 +798,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     // The mock request log is page-owned; reopening must issue no new generation.
     expect(await gateway.getRequests("kids.activity.continue")).toHaveLength(0);
     await page.getByRole("button", { name: "Today", exact: true }).click();
-    await page
-      .getByText("Daily goal: 10 solved · Continue extra practice", { exact: true })
-      .waitFor();
+    await page.getByText("Continue · 10 solved today", { exact: true }).waitFor();
     const almost = structuredClone(extra);
     almost.activity!.currentIndex = 9;
     almost.activity!.currentQuestion!.id = "q10";
@@ -814,7 +812,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     finished.activity!.currentQuestion = null;
     finished.activity!.firstTryCorrect = 7;
     finished.activity!.hintedQuestions = 2;
-    finished.extras.questionsSolved = 10;
+    finished.extras = { questionsSolved: 10, firstTryCorrect: 7, hintedQuestions: 2 };
     finished.canContinue = true;
     await gateway.setMethodResponse("kids.activity.answer", {
       snapshot: finished,
@@ -829,24 +827,24 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     await card.getByText("Each step adds two.", { exact: true }).waitFor();
     await gateway.setMethodResponse("kids.activity.get", finished);
     await card.getByRole("button", { name: "Continue", exact: true }).click();
-    await card.locator(".kids-daily-mark", { hasText: "Extra practice complete!" }).waitFor();
-    await card.getByRole("heading", { name: "This extra batch", exact: true }).waitFor();
-    expect(await card.locator(".kids-daily-value").allTextContents()).toEqual(["7", "2", "4"]);
+    await card.locator(".kids-daily-mark", { hasText: "Today so far" }).waitFor();
+    await card.getByText("20 questions solved", { exact: true }).waitFor();
+    expect(await card.locator(".kids-daily-value").allTextContents()).toEqual(["17", "2", "4"]);
     expect(await card.locator("button").count()).toBe(1);
     await capture(
       "extra-batch-complete-landscape",
-      "iPad landscape — extra results keep the perfect-day streak unchanged",
+      "iPad landscape — cumulative day results keep the perfect-day streak unchanged",
     );
     const extraFrame = await readKidsFrame(page);
     await page.getByRole("button", { name: "Today", exact: true }).click();
-    await page.getByText("Daily goal: 10 solved · 10 extra solved", { exact: true }).waitFor();
+    await page.getByText("Today · 20 solved", { exact: true }).waitFor();
     expect(await readKidsFrame(page)).toEqual(extraFrame);
-    await capture("home-extra-complete-landscape", "Today — fixed daily goal plus extra practice");
+    await capture("home-extra-complete-landscape", "Today — cumulative solved questions");
     await page.getByRole("button", { name: "Solve", exact: true }).click();
     await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
     const second = structuredClone(extra);
     second.activity!.id = "extra-two";
-    second.extras.questionsSolved = 10;
+    second.extras = { ...finished.extras };
     await gateway.setMethodResponse("kids.activity.continue", { snapshot: second });
     await card.getByRole("button", { name: "Keep going", exact: true }).click();
     const another = await gateway.waitForRequest("kids.activity.continue");

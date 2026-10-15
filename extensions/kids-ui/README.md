@@ -236,8 +236,10 @@ admits exactly ten questions with no more than two choice items.
 A started incomplete activity remains resumable across midnight. Completing it
 moves to the newest day's work; old unstarted extras are not offered. `daily`
 contains only the newest day's originally scheduled work, including its
-`questionTotal`. Extras never enlarge that goal. `extras.questionsSolved` counts
-optional solved questions; selected-batch counters supply its own recap. Counters
+`questionTotal`. Extras never enlarge that goal. `extras` totals solved questions,
+first-try correctness and hinted questions across all optional batches belonging
+to that same prepared day, including partial work. Adding `daily` and `extras`
+gives the day's overall results; selected-batch counters describe only that batch. Counters
 use complete saved per-question progress, not truncated attempt history.
 `firstTryCorrect` includes hinted first answers; `hintedQuestions` counts distinct
 hinted questions. Clarification is ungraded. `correctStreak` remains the pet's

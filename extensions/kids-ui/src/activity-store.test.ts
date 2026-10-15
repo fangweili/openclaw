@@ -286,7 +286,11 @@ describe("activity worker authority and progress", () => {
       firstTryCorrect: 9,
       hintedQuestions: 0,
     });
-    expect(answered.snapshot.extras.questionsSolved).toBe(1);
+    expect(answered.snapshot.extras).toEqual({
+      questionsSolved: 1,
+      firstTryCorrect: 1,
+      hintedQuestions: 0,
+    });
     expect(answered.snapshot.activity).toMatchObject({
       scope: "extra",
       firstTryCorrect: 1,

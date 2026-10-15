@@ -49,8 +49,8 @@ export type ActivitySnapshot = {
     /** Distinct questions whose hint was opened, regardless of repeated requests. */
     hintedQuestions: number;
   } | null;
-  /** Optional questions solved on the latest prepared day, outside the daily goal. */
-  extras: { questionsSolved: number };
+  /** All optional work on the latest prepared day; same counters as daily, independent of selection. */
+  extras: { questionsSolved: number; firstTryCorrect: number; hintedQuestions: number };
   /** True only at the completed final batch of the current local day. */
   canContinue: boolean;
   /** Offered only after completion; start with this ID explicitly to advance. */

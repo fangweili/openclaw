@@ -62,7 +62,7 @@ it("checks typed and dictated answers explicitly, keeps feedback editable, and r
       date: "2026-10-14",
       correctStreak: 0,
       perfectDayStreak: 0,
-      extras: { questionsSolved: 0 },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
       canContinue: false,
       daily: {
         date: "2026-10-14",
