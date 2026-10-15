@@ -13,6 +13,7 @@ import type {
   ActivityPracticeOffer,
   ActivityQuestionDefinition,
   DailyActivityBundle,
+  DailyArtworkBundle,
 } from "./activity-contract.js";
 
 /** Admission-only migration context; never grants runtime mutation authority. */
@@ -25,6 +26,7 @@ export type ActivityStoreOperations = {
   get: { input: ActivityStoreTarget; output: ActivitySnapshot };
   prepare: { input: ActivityStoreTarget; output: ActivityPreparationContext };
   findDaily: { input: { childId: string; date: string }; output: DailyActivityBundle | null };
+  findArtwork: { input: { childId: string; date: string }; output: DailyArtworkBundle | null };
   /** Read-only preflight avoids inference on a committed retry; private rubric stays inside the owner. */
   planAnswer: {
     input: ActivityStoreTarget & { mutation: Extract<ActivityMutation, { kind: "answer" }> };
@@ -68,6 +70,11 @@ export type ActivityStoreOperations = {
   };
   publish: {
     input: ActivityStoreTarget & { bundle: DailyActivityBundle };
+    output: { published: boolean };
+  };
+  /** Publish once, or compare-and-replace today's art by its existing normal image ID. */
+  publishArtwork: {
+    input: ActivityStoreTarget & { bundle: DailyArtworkBundle; replaceImageId?: string };
     output: { published: boolean };
   };
 };

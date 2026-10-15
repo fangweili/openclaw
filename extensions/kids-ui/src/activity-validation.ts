@@ -2,7 +2,11 @@
  * Checks model-authored content once per boundary; no provider calls or state. */
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { ActivityDefinition, DailyActivityBundle } from "./activity-contract.js";
+import type {
+  ActivityDefinition,
+  DailyActivityBundle,
+  DailyArtworkBundle,
+} from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import { parseActivityNumber } from "./activity-grading.js";
 import type { ActivityStoreTarget } from "./activity-store-contract.js";
@@ -104,12 +108,10 @@ export function validateActivityDefinition(
 }
 
 /** Reject malformed model output once, before it becomes immutable trusted quiz content. */
-export function validateDailyActivityBundle(
-  bundle: DailyActivityBundle,
+function validatePublicationDate(
+  bundle: Pick<DailyActivityBundle, "childId" | "date">,
   target: ActivityStoreTarget,
 ): void {
-  const bounded = (value: unknown, max: number) =>
-    typeof value === "string" && value.trim().length > 0 && value.length <= max;
   if (
     bundle.childId !== target.childId ||
     !/^\d{4}-\d{2}-\d{2}$/u.test(bundle.date) ||
@@ -120,6 +122,17 @@ export function validateDailyActivityBundle(
   ) {
     throw new Error("Activity publication has an invalid child or date.");
   }
+}
+
+const bounded = (value: unknown, max: number) =>
+  typeof value === "string" && value.trim().length > 0 && value.length <= max;
+
+/** Validate one independent daily learning goal before durable publication. */
+export function validateDailyActivityBundle(
+  bundle: DailyActivityBundle,
+  target: ActivityStoreTarget,
+): void {
+  validatePublicationDate(bundle, target);
   if (!Array.isArray(bundle.activities) || bundle.activities.length !== 1) {
     throw new Error("Prepare one ten-question batch for the day.");
   }
@@ -128,7 +141,14 @@ export function validateDailyActivityBundle(
   if (!bounded(bundle.learningBrief, 8000)) {
     throw new Error("Prepare a bounded teaching brief for the next batch.");
   }
+}
 
+/** Validate a complete art pair and optional rest poses, without learning content. */
+export function validateDailyArtworkBundle(
+  bundle: DailyArtworkBundle,
+  target: ActivityStoreTarget,
+): void {
+  validatePublicationDate(bundle, target);
   for (const image of [bundle.scene?.normal, bundle.scene?.excited]) {
     if (!image || !/^[a-zA-Z0-9_-]{1,160}$/u.test(image.imageId) || !bounded(image.caption, 400)) {
       throw new Error("The daily scene is incomplete.");

@@ -28,13 +28,18 @@ export type ActivityDefinition = {
 };
 /** One optional extra question for an existing completed local day; never replaces daily work. */
 export type ActivityPracticeOffer = { date: string; activity: ActivityDefinition };
-/** Atomic daily publication; existing stored bundles may retain legacy activity sizes. */
+/** Atomic daily Solve publication; saved history may retain legacy activity sizes. */
 export type DailyActivityBundle = {
   childId: string;
   date: string;
   activities: ActivityDefinition[];
   /** Bounded private teaching context for extra sets; absent only on older saved days. */
   learningBrief?: string;
+};
+/** Independent child/date artwork; never creates a learning goal or changes progress. */
+export type DailyArtworkBundle = {
+  childId: string;
+  date: string;
   scene: NonNullable<ActivitySnapshot["pet"]["scene"]>;
   /** Absent in older batches or after optional rendering failure; use the fixed pose. */
   restImages?: { bored?: string; sleeping?: string };
@@ -91,9 +96,9 @@ export type ActivityPreparationContext = {
   activitiesOmitted: number;
   recentScenes: {
     date: string;
-    scene: DailyActivityBundle["scene"];
+    scene: DailyArtworkBundle["scene"];
     scenePrompt: string;
-    stateText: DailyActivityBundle["stateText"];
+    stateText: DailyArtworkBundle["stateText"];
   }[];
 };
 

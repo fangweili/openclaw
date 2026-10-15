@@ -1,8 +1,11 @@
 /** Synthetic immutable definitions for saved schema-3 history and current publication tests. */
-import type { DailyActivityBundle } from "./activity-contract.js";
+import type { DailyActivityBundle, DailyArtworkBundle } from "./activity-contract.js";
 
 /** The shipped three-by-three format is loaded as history, never republished through today's validator. */
-export function legacyActivityBundle(childId: string, date = "2026-10-13"): DailyActivityBundle {
+export function legacyActivityBundle(
+  childId: string,
+  date = "2026-10-13",
+): DailyActivityBundle & DailyArtworkBundle {
   return {
     childId,
     date,
@@ -32,7 +35,10 @@ export function legacyActivityBundle(childId: string, date = "2026-10-13"): Dail
   };
 }
 /** Candidate-format fixture for real publication validation and atomicity tests. */
-export function dailyActivityBundle(childId: string, date = "2026-10-13"): DailyActivityBundle {
+export function dailyActivityBundle(
+  childId: string,
+  date = "2026-10-13",
+): DailyActivityBundle & DailyArtworkBundle {
   const value = legacyActivityBundle(childId, date);
   const activity = value.activities[0]!;
   activity.questions = Array.from({ length: 10 }, (_, index) => ({

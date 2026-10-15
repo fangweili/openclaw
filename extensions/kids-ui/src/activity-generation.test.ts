@@ -3,10 +3,10 @@ import path from "node:path";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { optimizeImageToPng } from "openclaw/plugin-sdk/web-media";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DailyActivityBundle } from "./activity-contract.js";
+import type { DailyArtworkBundle } from "./activity-contract.js";
 import {
   createActivityGeneration,
-  type ActivityDailyPreparation,
+  type ActivityArtworkPreparation,
   type ActivityGenerationChild,
   type ActivityGenerationOptions,
 } from "./activity-generation.js";
@@ -29,37 +29,8 @@ const sibling: ActivityGenerationChild = {
   sessionKey: "agent:tutor-two:kids:profile-two",
   preparationJobId: "prepare-two",
 };
-const input: ActivityDailyPreparation = {
+const input: ActivityArtworkPreparation = {
   date: "2026-10-14",
-  learningBrief: "Dated synthetic learner: practicing equal parts with support.",
-  activities: [1].map((index) => ({
-    id: `activity-${index}`,
-    title: "A tiny boat",
-    subject: "science",
-    questions: Array.from({ length: 10 }, (_, n) =>
-      n < 2
-        ? {
-            kind: "choice" as const,
-            id: `q${n}`,
-            prompt: "Which object floats?",
-            options: [
-              { id: "a", text: "A cork" },
-              { id: "b", text: "A coin" },
-            ],
-            correctOptionId: "a",
-            hint: "Think of a light cork.",
-            explanation: "Cork is less dense than water.",
-          }
-        : {
-            kind: "explanation" as const,
-            id: `q${n}`,
-            prompt: "Why does cork float?",
-            rubric: "Cork is less dense than water.",
-            hint: "Think about density.",
-            explanation: "Cork is less dense than water.",
-          },
-    ),
-  })),
   normalPrompt: "Rocky builds a leaf boat after a conversation about floating objects.",
   excitedPrompt: "Rocky raises its arms beside the same boat.",
   boredPrompt: "Rocky rests its chin in its hands beside the little leaf boat.",
@@ -88,19 +59,21 @@ async function harness() {
   for (const state of ["reference", "bored", "sleeping"]) {
     await writeFile(path.join(references, `rocky-${state}.webp`), `fixed-${state}`);
   }
-  const published = new Map<string, DailyActivityBundle>();
+  const published = new Map<string, DailyArtworkBundle>();
   const generate = vi
     .fn<Runtime["imageGeneration"]["generate"]>()
     .mockResolvedValueOnce(image("normal"))
     .mockResolvedValueOnce(image("excited"))
     .mockResolvedValueOnce(image("bored"))
     .mockResolvedValueOnce(image("sleeping"));
-  const publish = vi.fn<ActivityGenerationOptions["store"]["publish"]>(async (bundle, guard) => {
-    guard();
-    published.set(bundle.date, bundle);
-    return { published: true };
-  });
-  const findDaily = vi.fn<ActivityGenerationOptions["store"]["findDaily"]>(
+  const publish = vi.fn<ActivityGenerationOptions["store"]["publishArtwork"]>(
+    async (bundle, _replaceImageId, guard) => {
+      guard();
+      published.set(bundle.date, bundle);
+      return { published: true };
+    },
+  );
+  const findArtwork = vi.fn<ActivityGenerationOptions["store"]["findArtwork"]>(
     async (_child, date, guard) => {
       guard();
       return published.get(date) ?? null;
@@ -126,41 +99,22 @@ async function harness() {
     children: [child, sibling],
     mediaRoot: path.join(dir, "images"),
     referenceRoot: references,
-    store: { findDaily, publish },
+    store: { findArtwork, publishArtwork: publish },
     now: () => Date.parse("2026-10-14T12:00:00Z"),
   });
-  return { owner, generate, published, publish, findDaily, optimize, config, dir };
+  return { owner, generate, published, publish, findArtwork, optimize, config, dir };
 }
 
 describe("daily pet artwork owner", () => {
-  it("rejects a malformed quiz before spending on image generation", async () => {
+  it("rejects incomplete artwork before spending, independently of quizzes", async () => {
     const h = await harness();
-    const malformed = structuredClone(input);
-    const question = malformed.activities[0]!.questions[0]!;
-    if (question.kind === "choice") {
-      question.correctOptionId = "missing-option";
-    }
     await expect(
-      h.owner.prepareDaily(child.childId, malformed, { assertCurrent() {} }),
-    ).rejects.toThrow("correct answer");
-    expect(h.generate).not.toHaveBeenCalled();
-    expect(h.publish).not.toHaveBeenCalled();
-    await h.owner.close();
-  });
-
-  it("rejects incomplete or duplicate ten-question batches before provider calls", async () => {
-    const h = await harness();
-    const missing = structuredClone(input);
-    missing.activities.pop();
-    const extraQuestion = structuredClone(input);
-    extraQuestion.activities[0]!.questions.push(extraQuestion.activities[0]!.questions[0]!);
-    const duplicate = structuredClone(input);
-    duplicate.activities[0]!.questions[1]!.id = duplicate.activities[0]!.questions[0]!.id;
-    for (const malformed of [missing, extraQuestion, duplicate]) {
-      await expect(
-        h.owner.prepareDaily(child.childId, malformed, { assertCurrent() {} }),
-      ).rejects.toThrow();
-    }
+      h.owner.prepareArtwork(
+        child.childId,
+        { ...input, normalCaption: "" },
+        { assertCurrent() {} },
+      ),
+    ).rejects.toThrow("scene");
     expect(h.generate).not.toHaveBeenCalled();
     expect(h.publish).not.toHaveBeenCalled();
     await h.owner.close();
@@ -169,7 +123,7 @@ describe("daily pet artwork owner", () => {
   it("uses the canonical pet then exact normal artwork, publishes once, and scopes image reads", async () => {
     const h = await harness();
     const authority = { assertCurrent: vi.fn() };
-    await expect(h.owner.prepareDaily(child.childId, input, authority)).resolves.toEqual({
+    await expect(h.owner.prepareArtwork(child.childId, input, authority)).resolves.toEqual({
       published: true,
       date: input.date,
     });
@@ -191,7 +145,8 @@ describe("daily pet artwork owner", () => {
       bored: input.boredCaption,
       sleeping: input.sleepingCaption,
     });
-    expect(bundle.activities).toEqual(input.activities);
+    expect(bundle).not.toHaveProperty("activities");
+    expect(bundle).not.toHaveProperty("learningBrief");
     expect(bundle.scenePrompt).toBe(input.normalPrompt);
     expect(h.optimize).toHaveBeenCalledTimes(4);
     expect(h.optimize).toHaveBeenCalledWith(Buffer.from("normal"), 512 * 1024, {
@@ -228,11 +183,49 @@ describe("daily pet artwork owner", () => {
         });
       }
     }
-    await expect(h.owner.prepareDaily(child.childId, input, authority)).resolves.toEqual({
+    await expect(h.owner.prepareArtwork(child.childId, input, authority)).resolves.toEqual({
       published: false,
       date: input.date,
     });
     expect(h.generate).toHaveBeenCalledTimes(4);
+    await h.owner.close();
+  });
+
+  it("refreshes only the expected current picture and makes a lost-ack retry a no-op", async () => {
+    const h = await harness();
+    const authority = { assertCurrent() {} };
+    await h.owner.prepareArtwork(child.childId, input, authority);
+    const oldImageId = h.published.get(input.date)!.scene.normal.imageId;
+    h.generate.mockResolvedValue(image("refreshed"));
+    h.publish.mockImplementation(async (bundle, expected, guard) => {
+      guard();
+      expect(expected).toBe(oldImageId);
+      h.published.set(bundle.date, bundle);
+      throw new Error("lost acknowledgment");
+    });
+    const refresh = { ...input, replaceImageId: oldImageId };
+    await expect(h.owner.prepareArtwork(child.childId, refresh, authority)).rejects.toThrow(
+      "lost acknowledgment",
+    );
+    expect(h.published.get(input.date)!.scene.normal.imageId).not.toBe(oldImageId);
+    await expect(h.owner.prepareArtwork(child.childId, refresh, authority)).resolves.toEqual({
+      published: false,
+      date: input.date,
+    });
+    expect(h.generate).toHaveBeenCalledTimes(8);
+    await h.owner.close();
+  });
+
+  it("does not spend on a refresh whose expected artwork is missing", async () => {
+    const h = await harness();
+    await expect(
+      h.owner.prepareArtwork(
+        child.childId,
+        { ...input, replaceImageId: "missing" },
+        { assertCurrent() {} },
+      ),
+    ).resolves.toEqual({ published: false, date: input.date });
+    expect(h.generate).not.toHaveBeenCalled();
     await h.owner.close();
   });
 
@@ -243,7 +236,7 @@ describe("daily pet artwork owner", () => {
       .mockResolvedValueOnce(image("normal"))
       .mockRejectedValueOnce(new Error("private provider failure"));
     await expect(
-      h.owner.prepareDaily(child.childId, input, { assertCurrent() {} }),
+      h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} }),
     ).rejects.toThrow("private provider failure");
     expect(h.publish).not.toHaveBeenCalled();
     await expect(readdir(path.join(h.dir, "images"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -251,7 +244,7 @@ describe("daily pet artwork owner", () => {
   });
 
   it.each([{ failed: ["bored"] }, { failed: ["sleeping"] }, { failed: ["bored", "sleeping"] }])(
-    "publishes ready challenges when optional renders fail: $failed",
+    "publishes artwork when optional renders fail: $failed",
     async ({ failed }) => {
       const h = await harness();
       h.generate
@@ -266,13 +259,14 @@ describe("daily pet artwork owner", () => {
         }
       }
       await expect(
-        h.owner.prepareDaily(child.childId, input, { assertCurrent() {} }),
+        h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} }),
       ).resolves.toEqual({
         published: true,
         date: input.date,
       });
       const bundle = h.published.get(input.date)!;
-      expect(bundle.activities).toEqual(input.activities);
+      expect(bundle).not.toHaveProperty("activities");
+      expect(bundle).not.toHaveProperty("learningBrief");
       for (const mood of ["bored", "sleeping"] as const) {
         expect(Boolean(bundle.restImages?.[mood])).toBe(!failed.includes(mood));
       }
@@ -289,7 +283,7 @@ describe("daily pet artwork owner", () => {
       resizeSide: 512,
       compressionLevel: 6,
     }));
-    await h.owner.prepareDaily(child.childId, input, { assertCurrent() {} });
+    await h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} });
     expect(h.published.get(input.date)?.restImages).toEqual({ sleeping: expect.any(String) });
     await h.owner.close();
   });
@@ -315,13 +309,13 @@ describe("daily pet artwork owner", () => {
           entered.resolve();
           return late.promise;
         });
-      h.publish.mockImplementation(async (bundle, guard) => {
+      h.publish.mockImplementation(async (bundle, _replaceImageId, guard) => {
         guard();
         h.published.set(bundle.date, bundle);
         publication.resolve();
         return { published: true };
       });
-      const operation = h.owner.prepareDaily(child.childId, input, { assertCurrent() {} });
+      const operation = h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} });
       let finished = false;
       void operation.then(() => {
         finished = true;
@@ -369,7 +363,7 @@ describe("daily pet artwork owner", () => {
           return image("normal");
         })
         .mockResolvedValue(image("next"));
-      await h.owner.prepareDaily(child.childId, input, { assertCurrent() {} });
+      await h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} });
       expect(h.generate).toHaveBeenCalledTimes(elapsed < 540_000 ? 4 : 2);
       for (const [request] of h.generate.mock.calls.slice(2)) {
         expect(request.timeoutMs).toBe(540_000 - elapsed);
@@ -393,7 +387,7 @@ describe("daily pet artwork owner", () => {
         entered.resolve();
         return provider.promise;
       });
-    const operation = h.owner.prepareDaily(child.childId, input, {
+    const operation = h.owner.prepareArtwork(child.childId, input, {
       assertCurrent() {
         if (!allowed) {
           throw new Error("revoked");
@@ -419,10 +413,10 @@ describe("daily pet artwork owner", () => {
       entered.resolve();
       return provider.promise;
     });
-    const operation = h.owner.prepareDaily(child.childId, input, { assertCurrent() {} });
+    const operation = h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} });
     const rejected = expect(operation).rejects.toThrow("closing");
     await entered.promise;
-    expect(() => h.owner.prepareDaily(child.childId, input, { assertCurrent() {} })).toThrow(
+    expect(() => h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} })).toThrow(
       "busy",
     );
     let closed = false;
@@ -449,7 +443,7 @@ describe("daily pet artwork owner", () => {
       return image("revoked");
     });
     await expect(
-      h.owner.prepareDaily(child.childId, input, {
+      h.owner.prepareArtwork(child.childId, input, {
         assertCurrent() {
           if (!allowed) {
             throw new Error("revoked");
@@ -465,7 +459,7 @@ describe("daily pet artwork owner", () => {
   it("cleans a confirmed losing publication but preserves an uncertain committed pair", async () => {
     const h = await harness();
     h.publish.mockImplementation(async () => ({ published: false }));
-    await h.owner.prepareDaily(child.childId, input, { assertCurrent() {} });
+    await h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} });
     const images = path.join(h.dir, "images");
     const [directory] = await readdir(images);
     expect(await readdir(path.join(images, directory!))).toEqual([]);
@@ -475,11 +469,11 @@ describe("daily pet artwork owner", () => {
       throw new Error("lost acknowledgment");
     });
     await expect(
-      h.owner.prepareDaily(child.childId, input, { assertCurrent() {} }),
+      h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} }),
     ).rejects.toThrow("lost acknowledgment");
     expect(await readdir(path.join(images, directory!))).toHaveLength(4);
     await expect(
-      h.owner.prepareDaily(child.childId, input, { assertCurrent() {} }),
+      h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} }),
     ).resolves.toMatchObject({ published: false });
     expect(h.generate).toHaveBeenCalledTimes(8);
     await h.owner.close();
@@ -494,7 +488,7 @@ describe("daily pet artwork owner", () => {
       compressionLevel: 6,
     });
     await expect(
-      h.owner.prepareDaily(child.childId, input, { assertCurrent() {} }),
+      h.owner.prepareArtwork(child.childId, input, { assertCurrent() {} }),
     ).rejects.toThrow("image limit");
     expect(h.optimize).toHaveBeenCalledTimes(1);
     expect(h.publish).not.toHaveBeenCalled();

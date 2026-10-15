@@ -25,6 +25,7 @@ import type {
   ActivityPreparationContext,
   ActivityPracticeOffer,
   DailyActivityBundle,
+  DailyArtworkBundle,
 } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import { gradeActivityExplanation } from "./activity-grading.js";
@@ -48,6 +49,12 @@ export type ActivityOwner = {
     date: string,
     assertCurrent: () => void,
   ): Promise<DailyActivityBundle | null>;
+  /** Read art independently of whether this date has a published learning goal. */
+  findArtwork(
+    childId: string,
+    date: string,
+    assertCurrent: () => void,
+  ): Promise<DailyArtworkBundle | null>;
   /**
    * Atomically saves evidence, progress, pet clocks, and the request receipt after
    * checking caller authority at commit. A retained request ID replays its original
@@ -75,8 +82,22 @@ export type ActivityOwner = {
     offer: ActivityPracticeOffer,
     assertCurrent: () => void,
   ): Promise<{ published: boolean; snapshot: ActivitySnapshot }>;
-  /** Atomically accepts a daily goal and its mood art; later calls return published:false. */
-  publish(bundle: DailyActivityBundle, assertCurrent: () => void): Promise<{ published: boolean }>;
+  /** Atomically accepts only the daily goal and brief; a saved date is a no-op. */
+  publish(
+    this: void,
+    bundle: DailyActivityBundle,
+    assertCurrent: () => void,
+  ): Promise<{ published: boolean }>;
+  /**
+   * Publish art once independently of Solve. Explicit refresh compares the saved
+   * normal image ID and is limited to today; missing/stale expected IDs are no-ops.
+   * Commit rechecks authority/date, and never changes learning or pet state.
+   */
+  publishArtwork(
+    bundle: DailyArtworkBundle,
+    replaceImageId: string | undefined,
+    assertCurrent: () => void,
+  ): Promise<{ published: boolean }>;
 };
 type ActiveOwner = {
   store: SqliteWorkerStore<ActivityStoreOperations>;
@@ -371,10 +392,30 @@ export function registerKidsActivityService(
     prepare: (childId, assertCurrent) => run(childId, "prepare", (target) => target, assertCurrent),
     findDaily: (childId, date, assertCurrent) =>
       run(childId, "findDaily", () => ({ childId, date }), assertCurrent),
+    findArtwork: (childId, date, assertCurrent) =>
+      run(childId, "findArtwork", () => ({ childId, date }), assertCurrent),
     mutate,
     offerPractice: (childId, offer, assertCurrent) =>
       run(childId, "offerPractice", (target) => ({ ...target, offer }), assertCurrent, true),
     publish: (bundle, assertCurrent) =>
       run(bundle.childId, "publish", (target) => ({ ...target, bundle }), assertCurrent, true),
+    publishArtwork: (bundle, replaceImageId, assertCurrent) =>
+      run(
+        bundle.childId,
+        "publishArtwork",
+        (target) => ({ ...target, bundle, replaceImageId }),
+        assertCurrent,
+        true,
+        replaceImageId === undefined
+          ? undefined
+          : () => {
+              const child = bindings.get(bundle.childId)!;
+              if (activityDate(now(), child.timeZone) !== bundle.date) {
+                throw new ActivityInputError(
+                  "Refresh artwork only for the child's current local date.",
+                );
+              }
+            },
+      ),
   };
 }

@@ -9,6 +9,7 @@ import type { ActivityChildBinding } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import { registerKidsActivityService } from "./activity-service.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
+import { legacyActivityBundle } from "./activity-test-helpers.js";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -96,6 +97,25 @@ beforeEach(() => {
 });
 
 describe("activity service lifetime", () => {
+  it("fences a queued artwork refresh at local midnight and admits its committed acknowledgment", async () => {
+    let now = Date.parse("2026-10-14T04:59:59Z");
+    const service = harness({ now: () => now });
+    await service.start();
+    const pending = Promise.withResolvers<{ published: boolean }>();
+    mocks.execute.mockReturnValue(pending.promise);
+    const artwork = legacyActivityBundle("child");
+    const operation = service.owner.publishArtwork(artwork, "old-normal", () => {});
+    const guard = mocks.write.mock.calls[0]![2] as () => void;
+    expect(guard).not.toThrow();
+    now += 2000;
+    expect(guard).toThrow("current local date");
+    // A commit admitted before midnight remains valid even if its acknowledgment
+    // arrives after midnight; only the effect boundary checks the local date.
+    pending.resolve({ published: true });
+    await expect(operation).resolves.toEqual({ published: true });
+    await service.stop();
+  });
+
   it("does not admit calls before activation and uses the child's date", async () => {
     const service = harness();
     await expect(service.owner.get("child", () => {})).rejects.toThrow("restarting");

@@ -13,6 +13,7 @@ import {
   type ActivityDefinition,
   type ActivityEvidence,
   type DailyActivityBundle,
+  type DailyArtworkBundle,
 } from "./activity-contract.js";
 import type { ActivityDatabase } from "./activity-migration.js";
 import {
@@ -25,10 +26,7 @@ import type { ActivityStoreTarget } from "./activity-store-contract.js";
 type PetRow = ActivityDatabase["kids_pet"];
 type DayRow = ActivityDatabase["kids_day"];
 type ActivityRow = ActivityDatabase["kids_activity"];
-export type DayContent = Pick<
-  DailyActivityBundle,
-  "scene" | "scenePrompt" | "stateText" | "restImages" | "learningBrief"
->;
+export type DayContent = Pick<DailyActivityBundle, "learningBrief">;
 /** Decode immutable content already admitted by the database owner. */
 export function readDay(row: DayRow): DayContent {
   // SAFETY: publish() validates day content before its sole immutable write.
@@ -64,6 +62,7 @@ export function projectActivitySnapshot({
   target,
   pet,
   latest,
+  latestArtwork,
   activities,
   selected,
   next,
@@ -71,6 +70,7 @@ export function projectActivitySnapshot({
   target: ActivityStoreTarget;
   pet: PetRow;
   latest: DayRow | undefined;
+  latestArtwork: DailyArtworkBundle | null;
   activities: readonly ActivityRow[];
   selected: { row: ActivityRow; requiredCount: number } | undefined;
   next: ActivityRow | undefined;
@@ -96,19 +96,19 @@ export function projectActivitySnapshot({
         : idle >= ACTIVITY_BORED_MS
           ? "bored"
           : "normal";
-  const daily = latest ? readDay(latest) : undefined;
-  const currentDay = latest?.date === target.date ? daily : undefined;
+  const artwork = latestArtwork;
+  const currentArtwork = latestArtwork?.date === target.date ? artwork : undefined;
   const image =
     state === "bored" || state === "sleeping"
       ? {
-          imageId: currentDay?.restImages?.[state] ?? state,
+          imageId: currentArtwork?.restImages?.[state] ?? state,
           caption:
-            currentDay?.stateText[state] ??
+            currentArtwork?.stateText[state] ??
             (state === "sleeping"
               ? "Resting until our next adventure."
               : "Wondering what we will explore next."),
         }
-      : (daily?.scene[state] ?? {
+      : (artwork?.scene[state] ?? {
           imageId: "reference",
           caption: "Ready for our next adventure.",
         });
@@ -117,7 +117,7 @@ export function projectActivitySnapshot({
     date: target.date,
     pet: {
       state,
-      scene: daily?.scene ?? null,
+      scene: artwork?.scene ?? null,
       image,
       lastInteractionAt: pet.last_interaction,
       excitedUntil:

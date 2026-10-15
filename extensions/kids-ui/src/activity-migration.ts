@@ -5,6 +5,8 @@
  * and a durable perfect-day checkpoint, seeded once from retained history in the
  * configured child's timezone. Older pruned history receives no initial credit;
  * future streaks survive pruning. Unknown children retain data with zero credit.
+ * Version 4 moves mood art into independent child/date rows without changing
+ * learning state or image files; a picture no longer establishes a daily goal.
  * Failure rolls back the whole upgrade; older binaries reject the new version.
  */
 import type { DatabaseSync } from "node:sqlite";
@@ -14,6 +16,8 @@ import type {
   ActivityAttemptEvidence,
   ActivityDefinition,
   ActivityQuestionDefinition,
+  DailyActivityBundle,
+  DailyArtworkBundle,
 } from "./activity-contract.js";
 import {
   perfectDayStatus,
@@ -40,6 +44,7 @@ type DayRow = {
   content: string;
   required_count: number;
 };
+type ArtworkRow = Omit<DayRow, "required_count">;
 type ActivityRow = {
   child_id: string;
   activity_id: string;
@@ -60,6 +65,7 @@ type ReceiptRow = {
 export type ActivityDatabase = {
   kids_pet: PetRow;
   kids_day: DayRow;
+  kids_art: ArtworkRow;
   kids_activity: ActivityRow;
   kids_request: ReceiptRow;
 };
@@ -75,6 +81,10 @@ const SCHEMA = `
     required_count INTEGER NOT NULL DEFAULT 3 CHECK(required_count > 0),
     PRIMARY KEY(child_id,date)
   ) STRICT;
+  CREATE TABLE IF NOT EXISTS kids_art (
+    child_id TEXT NOT NULL, date TEXT NOT NULL, created_at INTEGER NOT NULL, content TEXT NOT NULL,
+    PRIMARY KEY(child_id,date)
+  ) STRICT;
   CREATE TABLE IF NOT EXISTS kids_activity (
     child_id TEXT NOT NULL, activity_id TEXT NOT NULL, date TEXT NOT NULL, ordinal INTEGER NOT NULL,
     updated_at INTEGER NOT NULL, definition TEXT NOT NULL, progress TEXT NOT NULL,
@@ -88,6 +98,8 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS kids_request_age ON kids_request(child_id,created_at);
 `;
 
+type LegacyDayContent = Omit<DailyArtworkBundle, "childId" | "date"> &
+  Pick<DailyActivityBundle, "learningBrief">;
 type LegacyQuestion = Omit<Extract<ActivityQuestionDefinition, { kind: "choice" }>, "kind">;
 type LegacyDefinition = Omit<ActivityDefinition, "questions"> & { questions: LegacyQuestion[] };
 type LegacyAttempt = Omit<ActivityAttemptEvidence, "answer" | "outcome" | "feedback"> & {
@@ -146,7 +158,7 @@ export function migrateActivityDatabase(
   version: number,
   admission: ActivityStoreAdmission,
 ): void {
-  if (version === 3) {
+  if (version === 4) {
     return;
   }
   runSqliteImmediateTransactionSync(db, () => {
@@ -221,7 +233,7 @@ export function migrateActivityDatabase(
         );
       }
     }
-    if (version > 0) {
+    if (version > 0 && version < 3) {
       // Shipped schemas 1 and 2 always published exactly three scheduled activities;
       // ordinal 3 was exclusively optional parent practice.
       db.exec(`
@@ -231,6 +243,29 @@ export function migrateActivityDatabase(
       `);
       seedPerfectDays(db, admission);
     }
-    db.exec("PRAGMA user_version = 3");
+    // Schemas 1–3 stored art and the learning brief together. Move only artwork;
+    // quiz/progress/clock/receipt rows and all other day columns remain untouched.
+    const insertArtwork = db.prepare(
+      "INSERT INTO kids_art(child_id,date,created_at,content) VALUES(?,?,?,?)",
+    );
+    const updateDay = db.prepare("UPDATE kids_day SET content=? WHERE child_id=? AND date=?");
+    for (const row of db.prepare("SELECT child_id,date,created_at,content FROM kids_day").all()) {
+      // SAFETY: previously admitted publication owned this persisted object.
+      const content = JSON.parse(String(row.content)) as LegacyDayContent;
+      const { scene, scenePrompt, stateText, restImages, ...learning } = content;
+      insertArtwork.run(
+        row.child_id!,
+        row.date!,
+        row.created_at!,
+        JSON.stringify({
+          scene,
+          scenePrompt,
+          stateText,
+          ...(restImages ? { restImages } : {}),
+        }),
+      );
+      updateDay.run(JSON.stringify(learning), row.child_id!, row.date!);
+    }
+    db.exec("PRAGMA user_version = 4");
   });
 }

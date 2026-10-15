@@ -2,8 +2,8 @@
  * Sole SQLite owner for published quizzes, grading evidence, idempotency receipts,
  * pet clocks, and the durable perfect-day checkpoint. Runs only in the SQLite broker worker. Admission creates/migrates schema
  * once; all state changes use one synchronous transaction with host authority at
- * BEGIN/COMMIT. Each day owns its scheduled batches, ordered optional batches,
- * and immutable mood artwork; quiz progress is independent. New batches contain
+ * BEGIN/COMMIT. Each day owns its scheduled and optional batches. Independent
+ * artwork may arrive before or after Solve and never changes progress. New batches contain
  * ten questions; saved legacy definitions retain their original sizes.
  * Completing a quiz offers an explicit next start. An unfinished quiz survives
  * newer days; unstarted old extras cease being offered.
@@ -33,12 +33,14 @@ import {
   type SqliteWorkerBackend,
   type SqliteWorkerCommand,
 } from "openclaw/plugin-sdk/sqlite-worker-runtime";
+import { ActivityArtworkStore } from "./activity-artwork.worker.js";
 import type {
   ActivityDefinition,
   ActivityContinueMutation,
   ActivityDirectMutation,
   ActivityPracticeOffer,
   DailyActivityBundle,
+  DailyArtworkBundle,
   ActivityGrade,
 } from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
@@ -74,8 +76,10 @@ const HISTORY_MS = 90 * 24 * 60 * 60_000;
 
 class ActivityDatabaseOwner {
   private readonly query;
+  private readonly artwork: ActivityArtworkStore;
   constructor(private readonly db: DatabaseSync) {
     this.query = getNodeSqliteKysely<ActivityDatabase>(db);
+    this.artwork = new ActivityArtworkStore(db);
   }
 
   private pet(childId: string): PetRow {
@@ -170,6 +174,7 @@ class ActivityDatabaseOwner {
       target,
       pet,
       latest,
+      latestArtwork: this.artwork.latest(target),
       activities,
       selected: row ? { row, requiredCount: activeDay!.required_count } : undefined,
       next,
@@ -199,24 +204,7 @@ class ActivityDatabaseOwner {
     const recentActivities = rows.map((row) =>
       projectActivityEvidence(row, row.required_count, 32),
     );
-    const recentScenes = executeSqliteQuerySync(
-      this.db,
-      this.query
-        .selectFrom("kids_day")
-        .selectAll()
-        .where("child_id", "=", target.childId)
-        .where("date", "<=", target.date)
-        .orderBy("date", "desc")
-        .limit(14),
-    ).rows.map((row) => {
-      const day = readDay(row);
-      return {
-        date: row.date,
-        scene: day.scene,
-        scenePrompt: day.scenePrompt,
-        stateText: day.stateText,
-      };
-    });
+    const recentScenes = this.artwork.recent(target);
     const count =
       executeSqliteQueryTakeFirstSync(
         this.db,
@@ -249,6 +237,9 @@ class ActivityDatabaseOwner {
         }
       : null;
   }
+  findArtwork(childId: string, date: string): DailyArtworkBundle | null {
+    return this.artwork.find(childId, date);
+  }
 
   private transaction<T>(run: () => T): T {
     return runSqliteImmediateTransactionSync(this.db, () => {
@@ -268,10 +259,6 @@ class ActivityDatabaseOwner {
       }
       const content: DayContent = {
         learningBrief: bundle.learningBrief,
-        scene: bundle.scene,
-        scenePrompt: bundle.scenePrompt,
-        stateText: bundle.stateText,
-        ...(bundle.restImages ? { restImages: bundle.restImages } : {}),
       };
       executeSqliteQuerySync(
         this.db,
@@ -300,6 +287,11 @@ class ActivityDatabaseOwner {
       this.prune(target);
       return { published: true };
     });
+  }
+
+  /** Art shares the same transaction admission/commit guards as learning writes. */
+  publishArtwork(target: ActivityStoreTarget, bundle: DailyArtworkBundle, replaceImageId?: string) {
+    return this.transaction(() => this.artwork.publish(target, bundle, replaceImageId));
   }
 
   /**
@@ -653,8 +645,7 @@ class ActivityDatabaseOwner {
 
   private prune(target: ActivityStoreTarget): void {
     const pet = this.pet(target.childId);
-    // Keep each day as one publication: its scene and all batch definitions live
-    // together, including while any quiz has recent evidence or is still active.
+    // Retain the goal and all batches while evidence is recent or work unfinished.
     const recentDates = this.query
       .selectFrom("kids_activity")
       .select("date")
@@ -706,7 +697,7 @@ export function createSqliteWorkerBackend(
       busyTimeoutMs: 5000,
     });
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (typeof version !== "number" || version > 3) {
+    if (typeof version !== "number" || version > 4) {
       throw new Error("Activities database needs a newer plugin version.");
     }
     migrateActivityDatabase(db, version, input);
@@ -720,6 +711,8 @@ export function createSqliteWorkerBackend(
             return owner.prepare(command.input);
           case "findDaily":
             return owner.findDaily(command.input.childId, command.input.date);
+          case "findArtwork":
+            return owner.findArtwork(command.input.childId, command.input.date);
           case "planAnswer":
             return owner.planAnswer(command.input, command.input.mutation);
           case "planNext":
@@ -735,6 +728,12 @@ export function createSqliteWorkerBackend(
             return owner.mutate(command.input, command.input.mutation, command.input.grade);
           case "publish":
             return owner.publish(command.input, command.input.bundle);
+          case "publishArtwork":
+            return owner.publishArtwork(
+              command.input,
+              command.input.bundle,
+              command.input.replaceImageId,
+            );
           case "offerPractice":
             return owner.offerPractice(command.input, command.input.offer);
           default:

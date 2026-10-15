@@ -14,6 +14,7 @@ import {
   ACTIVITY_EXCITED_MS,
   ACTIVITY_SLEEP_MS,
   type DailyActivityBundle,
+  type DailyArtworkBundle,
   type ActivityDirectMutation,
   type ActivityGrade,
   type ActivityPracticeOffer,
@@ -44,8 +45,34 @@ function publishNewBundle(value: DailyActivityBundle, now = timestamp, date = "2
     [databasePath],
   );
 }
-/** Load the already-shipped schema-3 shape; current publication admits only new ten-question days. */
-function seedLegacyBundle(value: DailyActivityBundle, now = timestamp) {
+function publishArtwork(
+  value: DailyArtworkBundle,
+  replaceImageId?: string,
+  guard = () => {},
+  date = "2026-10-13",
+) {
+  const { childId, scene, scenePrompt, stateText, restImages } = value;
+  const bundle = {
+    childId,
+    date: value.date,
+    scene,
+    scenePrompt,
+    stateText,
+    ...(restImages ? { restImages } : {}),
+  };
+  return runSqliteWorkerStoreWrite(
+    store,
+    (scope) =>
+      scope.execute({
+        type: "publishArtwork",
+        input: { ...target(childId, timestamp, date), bundle, replaceImageId },
+      }),
+    guard,
+    [databasePath],
+  );
+}
+/** Seed migrated legacy-size days; current publication admits only new ten-question goals. */
+function seedLegacyBundle(value: DailyActivityBundle & DailyArtworkBundle, now = timestamp) {
   const db = new DatabaseSync(databasePath);
   try {
     if (
@@ -57,10 +84,16 @@ function seedLegacyBundle(value: DailyActivityBundle, now = timestamp) {
     }
     db.exec("BEGIN IMMEDIATE");
     try {
-      const { childId, date, activities, ...content } = value;
+      const { childId, date, activities, learningBrief, ...artwork } = value;
       db.prepare(
         "INSERT INTO kids_day(child_id,date,created_at,content,required_count) VALUES(?,?,?,?,?)",
-      ).run(childId, date, now, JSON.stringify(content), activities.length);
+      ).run(childId, date, now, JSON.stringify({ learningBrief }), activities.length);
+      db.prepare("INSERT INTO kids_art(child_id,date,created_at,content) VALUES(?,?,?,?)").run(
+        childId,
+        date,
+        now,
+        JSON.stringify(artwork),
+      );
       const insert = db.prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)");
       for (const [ordinal, activity] of activities.entries()) {
         insert.run(
@@ -251,7 +284,11 @@ describe("activity worker authority and progress", () => {
       type: "findDaily",
       input: { childId, date: "2026-10-13" },
     });
-    expect(originalBatch).toEqual(legacyActivityBundle(childId));
+    expect(originalBatch).toEqual({
+      childId,
+      date: "2026-10-13",
+      activities: legacyActivityBundle(childId).activities,
+    });
     expect(await publishNewBundle(dailyActivityBundle(childId))).toEqual({ published: false });
     const opened = await mutate(childId, {
       kind: "start",
@@ -569,54 +606,6 @@ describe("activity worker authority and progress", () => {
     ).toBe("normal");
   });
 
-  it.each([
-    { moods: [] },
-    { moods: ["bored"] },
-    { moods: ["sleeping"] },
-    { moods: ["bored", "sleeping"] },
-  ] as const)(
-    "selects same-day rest art and preserves fixed fallbacks for available moods $moods",
-    async ({ moods }) => {
-      const childId = `rest-${moods.join("-") || "legacy"}`;
-      const value = legacyActivityBundle(childId);
-      if (moods.length) {
-        value.restImages = {};
-        for (const mood of moods) {
-          value.restImages[mood] = `${childId}-${mood}`;
-        }
-      }
-      await seedLegacyBundle(value);
-      await mutate(childId, { kind: "touch", requestId: "wake", source: "chat" });
-      for (const [mood, elapsed] of [
-        ["bored", ACTIVITY_BORED_MS],
-        ["sleeping", ACTIVITY_SLEEP_MS],
-      ] as const) {
-        expect((await get(childId, timestamp + elapsed)).pet.image).toEqual({
-          imageId: value.restImages?.[mood] ?? mood,
-          caption: value.stateText[mood],
-        });
-      }
-      const saved = await store.execute({
-        type: "findDaily",
-        input: { childId, date: value.date },
-      });
-      expect(saved).toEqual(value);
-      const tomorrow = await get(childId, timestamp + 86_400_000, "2026-10-14");
-      expect(tomorrow.pet.image).toEqual({
-        imageId: "sleeping",
-        caption: "Resting until our next adventure.",
-      });
-      expect(tomorrow.pet.scene).toEqual(value.scene);
-    },
-  );
-
-  it("rejects invalid optional art before publishing any of the day's challenges", async () => {
-    const value = dailyActivityBundle("invalid-rest");
-    value.restImages = { bored: "../../private" };
-    await expect(publishNewBundle(value)).rejects.toThrow("resting image");
-    expect((await get(value.childId)).activity).toBeNull();
-  });
-
   it("resumes an unfinished day while displaying the new day's scene and refuses replacements", async () => {
     await seedLegacyDay("resume");
     await start("resume");
@@ -756,9 +745,15 @@ describe("activity worker authority and progress", () => {
   it("publishes the whole batch atomically and keeps its scene once in evidence", async () => {
     const original = dailyActivityBundle("atomic");
     await publishNewBundle(original);
+    await publishArtwork(original);
     expect(
       await store.execute({ type: "findDaily", input: { childId: "atomic", date: original.date } }),
-    ).toEqual(original);
+    ).toEqual({
+      childId: original.childId,
+      date: original.date,
+      activities: original.activities,
+      learningBrief: original.learningBrief,
+    });
     const collision = dailyActivityBundle("atomic", "2026-10-14");
     collision.activities[0]!.id = original.activities[0]!.id;
     await expect(publishNewBundle(collision)).rejects.toThrow();
@@ -771,7 +766,9 @@ describe("activity worker authority and progress", () => {
     expect((await get("atomic", timestamp + 86_400_000, "2026-10-14")).daily?.date).toBe(
       original.date,
     );
-    await publishNewBundle(dailyActivityBundle("atomic", "2026-10-14"));
+    const next = dailyActivityBundle("atomic", "2026-10-14");
+    await publishNewBundle(next);
+    await publishArtwork(next);
     const context = await store.execute({
       type: "prepare",
       input: target("atomic", timestamp + 86_400_000, "2026-10-14"),

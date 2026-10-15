@@ -14,6 +14,7 @@ import type {
   ActivityDirectMutation,
   ActivityGrade,
   DailyActivityBundle,
+  DailyArtworkBundle,
 } from "./activity-contract.js";
 import { initialActivityProgress, perfectDayStatus } from "./activity-progress.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
@@ -61,7 +62,7 @@ function activity(child: string, date: string, ordinal: number): ActivityDefinit
     })),
   };
 }
-function bundle(childId: string, date: string): DailyActivityBundle {
+function bundle(childId: string, date: string): DailyActivityBundle & DailyArtworkBundle {
   return {
     childId,
     date,
@@ -272,6 +273,78 @@ afterAll(async () => {
 });
 
 describe("durable perfect calendar days", () => {
+  it("splits shipped schema-3 art while preserving brief, optional work and the existing streak", async () => {
+    const file = path.join(directory, "schema-three.sqlite");
+    const fixture = new DatabaseSync(file);
+    const childId = "schema-three";
+    let before: ReturnType<typeof legacyRows>;
+    let pet: unknown;
+    let artwork: Record<string, unknown>;
+    try {
+      createV2Fixture(fixture);
+      seedDay(fixture, childId, today);
+      fixture.exec(`
+        ALTER TABLE kids_day ADD COLUMN required_count INTEGER NOT NULL DEFAULT 1 CHECK(required_count > 0);
+        ALTER TABLE kids_pet ADD COLUMN perfect_day_streak INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE kids_pet ADD COLUMN last_perfect_date TEXT;
+        PRAGMA user_version = 3;
+      `);
+      fixture
+        .prepare("INSERT INTO kids_pet VALUES(?,?,?,?,?,?,?)")
+        .run(childId, null, now, now + 1000, 7, 9, today);
+      fixture
+        .prepare("INSERT INTO kids_request VALUES(?,?,?,?,?)")
+        .run(childId, "receipt", now, '["touch","receipt","chat"]', null);
+      const day = fixture.prepare("SELECT content FROM kids_day").get()!;
+      artwork = {
+        ...JSON.parse(String(day.content)),
+        restImages: { bored: "rest-bored", sleeping: "rest-sleeping" },
+      };
+      fixture
+        .prepare("UPDATE kids_day SET content=?")
+        .run(JSON.stringify({ ...artwork, learningBrief: "Keep the existing teaching context." }));
+      before = legacyRows(fixture);
+      pet = fixture.prepare("SELECT * FROM kids_pet").all();
+    } finally {
+      fixture.close();
+    }
+    const migrated = await openSqliteWorkerStore<ActivityStoreOperations>({
+      moduleUrl,
+      databasePath: file,
+      input: { children: [{ childId, timeZone }], now },
+    });
+    try {
+      const goal = await migrated.execute({ type: "findDaily", input: { childId, date: today } });
+      expect(goal?.learningBrief).toBe("Keep the existing teaching context.");
+      expect(goal?.activities).toHaveLength(1);
+      const art = await migrated.execute({ type: "findArtwork", input: { childId, date: today } });
+      expect(art).toEqual({ childId, date: today, ...artwork });
+      const context = await migrated.execute({ type: "prepare", input: target(childId) });
+      expect(
+        context.recentActivities.filter((activity) => activity.scope === "extra"),
+      ).toHaveLength(2);
+      expect(context.snapshot.perfectDayStreak).toBe(9);
+    } finally {
+      await migrated.close();
+    }
+    const check = new DatabaseSync(file, { readOnly: true });
+    try {
+      const after = legacyRows(check);
+      expect({ ...after, days: undefined }).toEqual({ ...before, days: undefined });
+      expect(after.days).toEqual(
+        before.days.map((row) => ({
+          ...row,
+          content: JSON.stringify({ learningBrief: "Keep the existing teaching context." }),
+        })),
+      );
+      expect(check.prepare("SELECT * FROM kids_pet").all()).toEqual(pet);
+      expect(check.prepare("SELECT required_count FROM kids_day").get()?.required_count).toBe(1);
+      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+    } finally {
+      check.close();
+    }
+  });
+
   it("migrates version-one questions, evidence and receipts once while preserving saved progress", async () => {
     const file = path.join(directory, "legacy.sqlite");
     const fixture = new DatabaseSync(file);
@@ -419,7 +492,7 @@ describe("durable perfect calendar days", () => {
     }
     const check = new DatabaseSync(file);
     try {
-      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(check.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
     } finally {
       check.close();
     }
@@ -475,9 +548,17 @@ describe("durable perfect calendar days", () => {
   it("migrates v2 without changing quiz/evidence/receipts/pet clocks and seeds only known local history", async () => {
     const db = new DatabaseSync(databasePath, { readOnly: true });
     try {
-      expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
       expect(db.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
-      expect(legacyRows(db)).toEqual(originalRows);
+      const migrated = legacyRows(db);
+      expect({ ...migrated, days: undefined }).toEqual({ ...originalRows, days: undefined });
+      expect(migrated.days).toEqual(originalRows.days.map((row) => ({ ...row, content: "{}" })));
+      const art = db
+        .prepare("SELECT child_id,date,created_at,content FROM kids_art ORDER BY child_id,date")
+        .all();
+      expect(art.map((row) => ({ ...row, content: JSON.parse(String(row.content)) }))).toEqual(
+        originalRows.days.map((row) => ({ ...row, content: JSON.parse(String(row.content)) })),
+      );
       expect(db.prepare("SELECT DISTINCT required_count FROM kids_day").all()).toEqual([
         { required_count: 3 },
       ]);
@@ -641,7 +722,7 @@ describe("durable perfect calendar days", () => {
           .prepare("SELECT required_count FROM kids_day WHERE child_id = ? AND date = ?")
           .get("retention", tomorrow)?.required_count,
       ).toBe(1);
-      expect(saved.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(saved.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
       expect(saved.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
     } finally {
       saved.close();

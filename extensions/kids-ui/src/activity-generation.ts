@@ -3,7 +3,7 @@
  * Cron owns scheduling; the activity store owns publication and progress. Each
  * accepted child preparation generates normal then excited artwork, referencing
  * the same approved pet, then attempts two daily rest poses before publishing
- * the complete daily goal. Optional renders stop contributing at their deadline;
+ * artwork independently of Solve goals. Optional renders stop contributing at their deadline;
  * late results are discarded and joined, so publication can precede tool settlement. No generation runs
  * on browser reads. A service instance admits at most two preparations and one
  * per child. Closing revokes admission and joins provider calls/file cleanup;
@@ -21,19 +21,20 @@ import {
 } from "openclaw/plugin-sdk/file-access-runtime";
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { optimizeImageToPng } from "openclaw/plugin-sdk/web-media";
-import type { ActivityChildBinding, DailyActivityBundle } from "./activity-contract.js";
-import { activityDate, validateDailyActivityBundle } from "./activity-validation.js";
+import type { ActivityChildBinding, DailyArtworkBundle } from "./activity-contract.js";
+import { activityDate, validateDailyArtworkBundle } from "./activity-validation.js";
 
 export type ActivityGenerationChild = ActivityChildBinding & {
   preparationJobId: string;
   preparationAgentId?: string;
+  artworkJobId?: string;
 };
 
 /** Agent-authored creative input. Character identity and image references are host-owned. */
-export type ActivityDailyPreparation = {
+export type ActivityArtworkPreparation = {
   date: string;
-  learningBrief: string;
-  activities: DailyActivityBundle["activities"];
+  /** Explicit refresh compares the saved normal image ID; ordinary cron omits it. */
+  replaceImageId?: string;
   normalPrompt: string;
   excitedPrompt: string;
   boredPrompt: string;
@@ -52,13 +53,14 @@ type PreparationAuthority = { assertCurrent: AssertCurrent; agentDir?: string };
 
 /** Narrow store interface: the store's final write guard owns publication authority. */
 type ActivityGenerationStore = {
-  findDaily(
+  findArtwork(
     childId: string,
     date: string,
     assertCurrent: AssertCurrent,
-  ): Promise<DailyActivityBundle | null>;
-  publish(
-    bundle: DailyActivityBundle,
+  ): Promise<DailyArtworkBundle | null>;
+  publishArtwork(
+    bundle: DailyArtworkBundle,
+    replaceImageId: string | undefined,
     assertCurrent: AssertCurrent,
   ): Promise<{ published: boolean }>;
 };
@@ -118,7 +120,7 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
 
   async function prepare(
     child: ActivityGenerationChild,
-    input: ActivityDailyPreparation,
+    input: ActivityArtworkPreparation,
     authority: PreparationAuthority,
   ): Promise<{ published: boolean; date: string }> {
     const startedAt = performance.now();
@@ -129,11 +131,9 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
     assertCurrent();
     const normalId = randomUUID();
     const excitedId = randomUUID();
-    const bundle: DailyActivityBundle = {
+    const bundle: DailyArtworkBundle = {
       childId: child.childId,
       date: input.date,
-      learningBrief: input.learningBrief,
-      activities: input.activities,
       scenePrompt: input.normalPrompt,
       scene: {
         normal: { imageId: normalId, caption: input.normalCaption },
@@ -142,15 +142,22 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
       stateText: { bored: input.boredCaption, sleeping: input.sleepingCaption },
     };
     const now = (options.now ?? Date.now)();
-    validateDailyActivityBundle(bundle, {
+    validateDailyArtworkBundle(bundle, {
       childId: child.childId,
       date: activityDate(now, child.timeZone),
       now,
     });
-    const existing = await options.store.findDaily(child.childId, input.date, assertCurrent);
+    const existing = await options.store.findArtwork(child.childId, input.date, assertCurrent);
     assertCurrent();
-    if (existing) {
+    if (
+      input.replaceImageId === undefined
+        ? existing !== null
+        : existing?.scene.normal.imageId !== input.replaceImageId
+    ) {
       return { published: false, date: input.date };
+    }
+    if (input.replaceImageId !== undefined && input.date !== activityDate(now, child.timeZone)) {
+      throw new Error("Only today's artwork can be refreshed.");
     }
 
     const referenceDirectory = await root(referenceRoot);
@@ -255,7 +262,11 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
       }
       assertCurrent();
       publicationAttempted = true;
-      const result = await options.store.publish(bundle, assertCurrent);
+      const result = await options.store.publishArtwork(
+        bundle,
+        input.replaceImageId,
+        assertCurrent,
+      );
       if (!result.published) {
         await removeFiles(files);
       }
@@ -346,12 +357,14 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
   return {
     /**
      * Prepare one child/date once. Concurrent child runs and excess capacity reject
-     * without queueing or generating. Existing published days are immutable no-ops.
+     * without queueing or generating. Existing dates are no-ops unless replaceImageId
+     * matches their current artwork. Refresh is current-date-only; the store repeats
+     * the comparison at commit so stale retries cannot spend again or overwrite newer art.
      * Cancellation prevents later generation/publication; accepted provider work joins.
      */
-    prepareDaily(
+    prepareArtwork(
       childId: string,
-      input: ActivityDailyPreparation,
+      input: ActivityArtworkPreparation,
       authority: PreparationAuthority,
     ) {
       assertOpen();

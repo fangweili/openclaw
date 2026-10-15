@@ -191,10 +191,12 @@ work from help or corrections. Incorrect answers reset the streak and leave the
 pet normal. Chat does not clear a streak or interrupt an ongoing celebration.
 Mood is derived from saved timestamps, so no durable timers are necessary.
 
-Each morning prepares one ten-question daily goal per child (at least eight free
-answers) and attempts four shared daily pictures (normal, excited, bored, sleeping).
-Normal and excited are required; resting pictures can use fixed fallbacks.
-Publication is atomic and immutable. Existing three-by-three days and parent
+Separate scheduled jobs prepare the ten-question daily goal (at least eight free
+answers) and four daily pictures (normal, excited, bored, sleeping). Each job is
+creation-bound to one child. `prepare_daily` publishes only questions and their
+learning brief; `prepare_art` owns rendering and publishes only artwork. Their
+schedules and failures are independent. Normal and excited pictures are required;
+resting pictures can use fixed fallbacks. Existing three-by-three days and parent
 single-question practice retain their definitions and original scheduled count.
 
 After the current batch, Keep going either starts an existing `nextActivity` or
@@ -263,19 +265,20 @@ commits the compact checkpoint with progress, evidence and the receipt, so retri
 cannot award twice and authority failure cannot leave a partial award.
 
 The current daily scene is independent of that retained quiz. Model or
-required-image failure preserves the last complete bundle. Resting pictures and
+required-image failure preserves the last complete artwork. Resting pictures and
 their daily captions are selected only for the child's current local date; without
-a current batch, the fixed originals use timeless captions. Older saved batches
+a current artwork set, the fixed originals use timeless captions. Older saved art
 without daily resting art still use their fixed poses. Private image reads require the same
 session authority, and no local paths enter browser responses. Generated art is
 stored and served as PNG, preserving any provider alpha through the shared image
 worker's bounded resizing. The plugin rejects output still exceeding 512 KiB;
 compression never flattens it into JPEG. Prompts preserve Rocky's anatomy, colors
 and clay material while allowing contextual activities, costumes, expressions and
-whole-body poses. The planner prioritizes recent conversation and dated school
-context maintained in the child's profile, with established interests or seasonal
-ideas as a fallback. It can revisit a relevant topic through a fresh moment rather
-than forcing a new theme. All three mood variations reference the exact daily normal
+whole-body poses. The artwork planner uses a bounded selection of the latest
+conversation and activity, plus relevant verified school events and supported
+holidays. Events can guide costumes/themes; recent interaction shapes the action,
+props, expression and captions. It does not load the learning profile or weather.
+All three mood variations reference the exact daily normal
 image. The excited image continues the normal image's theme, outfit
 and core equipment with a distinct action and silhouette; its composition can
 change. Resting poses preserve the theme and outfit while showing comfortable
@@ -288,8 +291,8 @@ minutes, ending no later than nine minutes after preparation starts. If required
 work already used that window, both resting pictures use fixed fallbacks. At that
 deadline, the owner freezes completed results and publishes once; late results
 cannot write files or change the saved scene. It still joins admitted provider
-calls before the tool settles or shutdown completes, so challenges can become
-ready before the preparation tool returns. Provider timeouts and fallback chains
+calls before the tool settles or shutdown completes, so artwork can become
+ready before the artwork tool returns. Provider timeouts and fallback chains
 remain provider-owned; the existing ten-minute tool watchdog is not a guarantee
 that all cleanup ends within ten minutes. Required work can itself overrun that
 budget, and authority loss always prevents subsequent publication.
@@ -297,41 +300,54 @@ budget, and authority loss always prevents subsequent publication.
 Daily resting IDs live in an optional private `restImages` field beside the
 existing `stateText` captions. Resting art alone remains an optional JSON field;
 older saved days without it remain readable. Browser
-responses retain the existing selected `pet.image` contract. Refresh the daily
-preparation prompt with this release to supply both resting scene directions.
+responses retain the existing selected `pet.image` contract. Install the independent
+artwork prompt/job with this release to supply all four scene directions.
 
-Adaptive batches reuse schema 3 without migration. New days store one required
-activity containing ten questions; older required counts and definitions remain
-unchanged. The private optional `learningBrief` field is required for new daily
-publication but absent on old saved days, where generation adapts conservatively
-from saved results.
+Schema 4 separates artwork from learning days. The existing SQLite worker owns
+`kids_art(child_id,date,created_at,content)` independently of `kids_day` and
+`kids_activity`. Artwork can arrive before or after the daily Solve goal. An art
+failure does not withhold questions; a Solve failure does not withhold pictures.
+Snapshots select the latest available art independently of the selected activity.
+Normal/excited states can retain the previous picture; resting states use today's
+art or the original fixed fallback.
 
-Schema 3 adds `kids_day.required_count` and the `kids_pet.perfect_day_streak` /
-`last_perfect_date` checkpoint. The existing database, worker, authority and
-transaction remain the owners. Schema-1 upgrades first migrate old choice kinds,
-attempt evidence and request receipts; schema-2 progress, definitions, receipts,
-images, timestamps and pet clocks remain byte-for-byte unchanged. Shipped older
-schemas always had three scheduled activities, so admission backfills that count;
-new publication saves the actual bundle length.
+Admission atomically moves existing scene, scene prompt, resting pictures and
+captions out of day content into `kids_art`, retaining their original date and
+creation time. `kids_day.content` retains its learning brief. Image files do not
+move. Schema-3 goals, optional batches, progress, receipts, timestamps, pet clocks
+and perfect-day checkpoints remain unchanged. Older schema-1/2 migrations still
+upgrade their legacy evidence and initialize the required counts/checkpoint first.
+An admission failure rolls back the entire migration and leaves the prior version.
 
-Admission seeds the day checkpoint once from retained question counters and
-completion timestamps in each configured child's timezone. Its initial tracking
-baseline is the oldest retained day; already-pruned days receive no inferred
-credit. Missing days, hinted or retried work, and late completion break the seeded
-chain. An unconfigured stored child keeps all data with a zero initial checkpoint.
-After migration, the compact streak survives the 90-day history cleanup and
-restarts without recomputing history. Schema migration is atomic; a failure leaves
-the prior version intact and prevents service activation.
+`publish` saves only the immutable daily goal and brief. `publishArtwork` ordinarily
+publishes once per child/date. Explicit refresh passes the existing normal image
+ID as `replaceImageId`; it can replace only the current local day's artwork. Both
+preflight and the worker commit compare that ID, so a stale refresh or a retry
+after a lost acknowledgment cannot overwrite newer art. Missing/stale expected
+IDs return `published:false`. Artwork publication never changes learning state,
+receipts, pet clocks, or streaks. The generation owner retains files after an
+uncertain commit and removes unadopted files after a confirmed no-op.
+
+New Solve days store one required activity containing ten questions; older counts
+and definitions remain unchanged. The private `learningBrief` is required for new
+publication but absent in some old days, where extra generation adapts
+conservatively from saved evidence. Required counts and the durable perfect-day
+checkpoint introduced in schema 3 keep their existing meaning. Artwork presence
+never creates a learning goal or counts toward a perfect day.
 
 Take a coordinated SQLite backup before deployment. Older plugin binaries refuse
-schema 3. To roll back to schema 2 without losing new quiz work: stop the writer,
-back up the latest database, work on a consolidated copy, verify every
-`required_count` is still 3, drop only the three additive columns, set
-`PRAGMA user_version = 2`, and verify integrity before replacing the stopped
-writer's database and starting the old release. This discards only perfect-day
-tracking. If required counts differ, that downgrade is incompatible and must not
-proceed. Restoring a pre-upgrade backup is an alternative but loses later work;
-never restore automatically after a failed activation.
+schema 4. For a schema-3 rollback, stop the writer and back up the latest database;
+work on a consolidated copy. Merge each `kids_day` row's teaching content with
+its same-child/date `kids_art` content, preserving all other rows and columns.
+Every learning day must have art before the older coupled reader can use it. Keep
+an export of artwork-only days, which the old format cannot represent; if a Solve
+day lacks artwork, abort the downgrade rather than inventing content. Drop
+`kids_art`, set `PRAGMA user_version = 3`, and verify integrity before replacing
+the stopped writer's database and starting the old release. Never restore an old
+whole-database backup automatically: that would lose later child work. Rolling
+back further to schema 2 also requires every required count to remain three and
+removes the schema-3 count/streak columns; new ten-question days make that older
+downgrade incompatible.
 
 A parent can call `kids.activity.offerPractice` with `{sessionKey,date,activity}`
 for one optional, one-question practice activity after today's scheduled goal
@@ -358,9 +374,10 @@ daily batch appears. The preparation lookup still returns only the original sche
 activities, while snapshots and learning evidence include practice. This adds no
 schema version, migration, timer, worker or privileged browser capability.
 
-The store retains 90 days by last activity update. It prunes whole day bundles
-and protects a day containing the current unfinished challenge, keeping scene
-metadata and every immutable definition together. Each activity retains full question counters and the latest
+The store retains 90 days by last activity update. It prunes whole learning days
+and protects a day containing the current unfinished challenge, keeping all its
+immutable definitions together. Artwork history is pruned independently on art
+publication after 90 days, retaining the newest usable art as a fallback. Each activity retains full question counters and the latest
 256 detailed attempts. Preparation reads at most 14 activities and 32 detailed
 attempts each, reporting `activitiesOmitted` and `attemptsOmitted` explicitly.
 Attempt IDs, actual attempt timestamps, selected answer text, hint status, and

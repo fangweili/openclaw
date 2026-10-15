@@ -46,12 +46,6 @@ function daily(childId: string, day = date): DailyActivityBundle {
     date: day,
     activities: [batch(`${childId}-${day}`)],
     learningBrief: "The learner is exploring equivalent fractions; use short written answers.",
-    scene: {
-      normal: { imageId: "normal", caption: "Ready to explore." },
-      excited: { imageId: "excited", caption: "What a discovery!" },
-    },
-    scenePrompt: "Rocky investigates patterns with a magnifying glass.",
-    stateText: { bored: "Wondering about our next adventure.", sleeping: "Taking a nap." },
   };
 }
 function write<K extends "publish" | "mutate" | "publishNext">(
@@ -222,7 +216,7 @@ describe("adaptive ten-question batches", () => {
     ]);
     expect(evidence.recentActivities.flatMap((activity) => activity.attempts)).toHaveLength(30);
     expect(JSON.stringify(completed)).not.toContain("learningBrief");
-    expect(inspect((db) => db.prepare("PRAGMA user_version").get()?.user_version)).toBe(3);
+    expect(inspect((db) => db.prepare("PRAGMA user_version").get()?.user_version)).toBe(4);
   });
 
   it("serializes two devices and replays a predecessor even after its receipt expires", async () => {
