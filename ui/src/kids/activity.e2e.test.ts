@@ -9,6 +9,7 @@ import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import {
   notificationPermissionFixture,
   profile,
+  readKidsFrame,
   roster,
   sessionKey,
   startKidsE2e,
@@ -29,7 +30,10 @@ afterAll(async () => {
 });
 
 it("keeps saved activities beside chat, grades through the server, and carries a question into the existing draft", async () => {
-  const context = await browser.newContext({ viewport: { width: 1024, height: 1366 } });
+  const context = await browser.newContext({
+    viewport: { width: 1024, height: 1366 },
+    reducedMotion: "reduce",
+  });
   try {
     await context.addInitScript(notificationPermissionFixture);
     const page = await context.newPage();
@@ -37,6 +41,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     page.on("pageerror", (error) => errors.push(error.message));
     const capture = async (id: string, label: string) => {
       await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      await page
+        .locator(".kids-solve .kids-pet-picture img")
+        .evaluate((element: HTMLImageElement) => element.decode());
       await page.screenshot({ path: path.join(proof, `${id}.png`), fullPage: true });
       examples.push({ id, label });
     };
@@ -52,12 +59,15 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         const id = `today-${state}-landscape-${viewport.width}-${viewport.height}`;
         await page.screenshot({ path: path.join(proof, `${id}.png`), animations: "disabled" });
         examples.push({ id, label: `Landscape ${viewport.width} × ${viewport.height} — ${state}` });
-        const layout = await page.locator(".kids-today").evaluate((element) => {
+        const layout = await page.locator(".kids-solve").evaluate((element) => {
           const pet = element.querySelector(".kids-pet")!.getBoundingClientRect();
           const card = element.querySelector(".kids-activity-card")!.getBoundingClientRect();
           const bounds = element.getBoundingClientRect();
           return {
             sideBySide: pet.right <= card.left,
+            clearOfNavigation:
+              document.querySelector(".kids-page-navigation")!.getBoundingClientRect().bottom <=
+              Math.min(pet.top, card.top),
             visible: card.top >= bounds.top && card.bottom <= bounds.bottom,
             verticalOverflow: element.scrollHeight - element.clientHeight,
             horizontalOverflow: element.scrollWidth - element.clientWidth,
@@ -67,6 +77,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           };
         });
         expect(layout.sideBySide).toBe(true);
+        expect(layout.clearOfNavigation).toBe(true);
         expect(layout.visible).toBe(true);
         expect(layout.verticalOverflow).toBeLessThanOrEqual(1);
         expect(layout.horizontalOverflow).toBeLessThanOrEqual(1);
@@ -79,7 +90,15 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       now: 1000,
       date: "2026-10-13",
       correctStreak: 0,
-      daily: { date: "2026-10-13", total: 3, completed: 0 },
+      perfectDayStreak: 0,
+      daily: {
+        date: "2026-10-13",
+        total: 3,
+        completed: 0,
+        questionsSolved: 0,
+        firstTryCorrect: 0,
+        hintedQuestions: 0,
+      },
       nextActivity: null,
       pet: {
         state: "normal",
@@ -101,6 +120,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         currentIndex: 0,
         total: 3,
         currentQuestion: {
+          kind: "choice",
           id: "q1",
           prompt: "Which leaf would make the steadiest little boat?",
           hint: null,
@@ -141,75 +161,79 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       },
     });
     await page.goto(baseUrl);
+    await page.getByRole("heading", { name: "What shall we do, Alex?" }).waitFor();
+    const home = page.getByRole("main", { name: "Today", exact: true });
+    const homePet = home.locator('img[src^="blob:"]');
+    await homePet.waitFor();
+    await homePet.evaluate((element: HTMLImageElement) => element.decode());
+    for (const name of ["Practice", "Create", "Finish"]) {
+      expect(
+        await home.getByRole("button", { name: `${name}, coming later`, exact: true }).isDisabled(),
+      ).toBe(true);
+    }
+    expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
+    for (const viewport of [
+      { width: 1024, height: 1366 },
+      { width: 1024, height: 768 },
+      { width: 1180, height: 820 },
+      { width: 320, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const id = `home-${viewport.width}-${viewport.height}`;
+      await page.screenshot({ path: path.join(proof, `${id}.png`), animations: "disabled" });
+      examples.push({ id, label: `Today home — ${viewport.width} × ${viewport.height}` });
+      const layout = await home.evaluate((element) => {
+        const title = element.querySelector("h1")!.getBoundingClientRect();
+        const pet = element.querySelector(".kids-pet")!.getBoundingClientRect();
+        const cards = element.querySelector(".kids-home-content")!.getBoundingClientRect();
+        const bounds = element.getBoundingClientRect();
+        return {
+          overflow: element.scrollWidth - element.clientWidth,
+          centered: Math.abs((title.left + title.right) / 2 - (bounds.left + bounds.right) / 2),
+          aboveBoth: title.bottom <= pet.top && title.bottom <= cards.top,
+          stageCenter: Math.abs((title.top + cards.bottom) / 2 - innerHeight / 2),
+          greetingGap: cards.top - title.bottom,
+        };
+      });
+      expect(layout.overflow).toBeLessThanOrEqual(1);
+      expect(layout.centered).toBeLessThanOrEqual(1);
+      expect(layout.aboveBoth).toBe(true);
+      if (viewport.width > viewport.height) {
+        expect(layout.stageCenter).toBeLessThanOrEqual(2);
+        expect(layout.greetingGap).toBeGreaterThanOrEqual(40);
+      }
+      const homeFrame = await readKidsFrame(page);
+      await page.getByRole("button", { name: "Solve", exact: true }).click();
+      await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      expect(await readKidsFrame(page)).toEqual(homeFrame);
+      const solveId = `solve-frame-${viewport.width}-${viewport.height}`;
+      await capture(solveId, `Matching Solve frame — ${viewport.width} × ${viewport.height}`);
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      expect(await readKidsFrame(page)).toEqual(homeFrame);
+    }
+    await page.setViewportSize({ width: 1024, height: 1366 });
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.getByRole("heading", { name: today.activity!.title }).waitFor();
+    await page.reload();
+    await page.getByRole("heading", { name: today.activity!.title }).waitFor();
+    expect(new URL(page.url()).hash).toBe("#solve");
+    await page.locator('.kids-solve img[src^="blob:"]').waitFor();
+    const currentPet = await page.locator(".kids-solve .kids-pet-picture img").getAttribute("src");
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     const composer = page.getByLabel("Message Rocky", { exact: true });
     await composer.fill("I found a leaf in the garden.");
-    const modes = page.getByRole("navigation", { name: "Chat and today's challenges" });
-    const headerPet = modes.locator('img[src^="blob:"]');
-    await headerPet.waitFor();
-    await headerPet.evaluate((element: HTMLImageElement) => element.decode());
-    const currentPet = await headerPet.getAttribute("src");
-    expect((await gateway.getRequests("kids.activity.get")).length).toBe(1);
-    expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
-    const switchWithPetMotion = async (name: "Chat" | "Today") => {
-      const sample = await modes
-        .getByRole("button", { name, exact: true })
-        .evaluate((button: HTMLButtonElement, destination) => {
-          button.click();
-          const pet = document.querySelector<HTMLImageElement>(".kids-pet-in-transit");
-          const animation = pet?.getAnimations()[0];
-          if (!pet || !animation) {
-            throw new Error("The page switch did not animate Rocky");
-          }
-          animation.pause();
-          animation.currentTime = 110;
-          const bounds = pet.getBoundingClientRect();
-          const boundary = document
-            .querySelector(destination === "Today" ? ".kids-today" : ".kids-header")!
-            .getBoundingClientRect();
-          const x = bounds.left + bounds.width / 2;
-          const y = destination === "Today" ? bounds.top + 2 : bounds.bottom - 2;
-          // The animation is deliberately noninteractive. Temporarily admit this
-          // hit test to prove the image paints beyond its scroller/header bounds.
-          pet.style.pointerEvents = "auto";
-          const visibleAtSample = document.elementFromPoint(x, y) === pet;
-          pet.style.removeProperty("pointer-events");
-          return {
-            position: getComputedStyle(pet).position,
-            visibleAtSample,
-            crossesBoundary: destination === "Today" ? y < boundary.top : y > boundary.bottom,
-          };
-        }, name);
-      expect(sample).toEqual({ position: "fixed", visibleAtSample: true, crossesBoundary: true });
-      // Scroll restoration dispatches at the next render step. It must not cancel
-      // the reverse flight after Chat reattaches its existing transcript owner.
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) => {
-            requestAnimationFrame(() => resolve());
-          }),
-      );
-      const movingPet = page.locator(".kids-pet-in-transit");
-      expect(await movingPet.count()).toBe(1);
-      expect(await movingPet.evaluate((element) => element.getAnimations()[0]?.playState)).toBe(
-        "paused",
-      );
-      const id = `rocky-to-${name.toLowerCase()}-motion-ipad`;
-      // Full-page capture resizes the viewport, correctly cancelling the flight.
-      await page.screenshot({ path: path.join(proof, `${id}.png`) });
-      examples.push({ id, label: `iPad — Rocky moving to ${name} (animation paused)` });
-      await movingPet.evaluate((element) => element.getAnimations()[0]!.play());
-      await movingPet.waitFor({ state: "detached" });
-    };
-    const modeBounds = await modes.boundingBox();
-    expect(
-      await modes.getByRole("button", { name: "Chat", exact: true }).getAttribute("aria-current"),
-    ).toBe("page");
-    for (const name of ["Chat", "Today"]) {
-      const bounds = await modes.getByRole("button", { name, exact: true }).boundingBox();
-      expect(bounds!.height).toBeGreaterThanOrEqual(44);
-      expect(bounds!.width).toBeGreaterThanOrEqual(44);
-    }
+    expect(await composer.inputValue()).toBe("I found a leaf in the garden.");
+    expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).count()).toBe(0);
     const thread = page.locator(".kids-thread");
+    expect(
+      await thread.evaluate((element) => {
+        element.scrollTop = 0;
+        const first = element.querySelector(".kids-message")!.getBoundingClientRect();
+        const navigation = document.querySelector(".kids-page-navigation")!.getBoundingClientRect();
+        return first.top >= navigation.bottom;
+      }),
+    ).toBe(true);
     await thread.evaluate(
       (element) =>
         new Promise<void>((resolve) => {
@@ -219,38 +243,55 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     );
     await page.getByRole("button", { name: "Jump to latest message", exact: true }).waitFor();
     const readingPosition = await thread.evaluate((element) => element.scrollTop);
-    await page.screenshot({ path: path.join(proof, "header-chat-ipad.png"), fullPage: true });
-    examples.push({
-      id: "header-chat-ipad",
-      label: "iPad — Chat header while reading earlier messages",
-    });
-    await switchWithPetMotion("Today");
-    await page.getByRole("heading", { name: today.activity!.title }).waitFor();
-    await page.locator(".kids-pet-picture img[src^='blob:']").waitFor();
-    expect(await page.locator(".kids-pet-picture img").getAttribute("src")).toBe(currentPet);
-    await page.locator(".kids-pet-in-transit").waitFor({ state: "detached" });
-    await capture("today-ready-ipad", "iPad — daily scene and saved invitation");
-    expect(await modes.boundingBox()).toEqual(modeBounds);
+    // Long history scrolls inside the transcript, including its hidden speaker labels.
+    expect(readingPosition).toBe(400);
     expect(
-      await modes.getByRole("button", { name: "Today", exact: true }).getAttribute("aria-current"),
-    ).toBe("page");
-    await switchWithPetMotion("Chat");
-    await composer.waitFor({ state: "visible" });
+      await thread.evaluate((element) => ({
+        hasHistoryOverflow: element.scrollHeight > element.clientHeight,
+        bodyHeight: document.body.scrollHeight,
+        shellHeight: document.querySelector(".kids-shell")!.scrollHeight,
+        viewportHeight: window.innerHeight,
+      })),
+    ).toEqual({
+      hasHistoryOverflow: true,
+      bodyHeight: 1366,
+      shellHeight: 1366,
+      viewportHeight: 1366,
+    });
+    await page.screenshot({ path: path.join(proof, "chat-navigation-ipad.png"), fullPage: true });
+    examples.push({
+      id: "chat-navigation-ipad",
+      label: "iPad — floating Chat navigation while reading earlier messages",
+    });
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.getByRole("heading", { name: today.activity!.title }).waitFor();
+    expect(await page.locator(".kids-solve .kids-pet-picture img").getAttribute("src")).toBe(
+      currentPet,
+    );
+    await capture("solve-ready-ipad", "iPad — daily scene and saved Solve invitation");
+    // Home and Chat retain their own state; choosing Solve does not start a quiz.
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     expect(await thread.evaluate((element) => element.scrollTop)).toBeCloseTo(readingPosition, 0);
     expect(await composer.inputValue()).toBe("I found a leaf in the garden.");
     await page.getByRole("button", { name: "Today", exact: true }).click();
-    await page.getByRole("heading", { name: today.activity!.title }).waitFor();
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
     expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
     const started = structuredClone(today);
     started.activity!.started = true;
-    await gateway.setMethodResponse("kids.activity.start", { snapshot: started });
-    await gateway.setMethodResponse("kids.activity.get", started);
+    await gateway.deferNext("kids.activity.start");
     await page.getByRole("button", { name: "Let's explore", exact: true }).click();
-    await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).waitFor();
-    expect((await gateway.getRequests("kids.activity.start"))[0]?.params).toMatchObject({
+    const start = await gateway.waitForRequest("kids.activity.start");
+    expect(start.params).toMatchObject({
       sessionKey,
       activityId: "leaf-boats",
     });
+    // Reads reflect the mutation only after the server receives it. In
+    // particular, the refresh on entering Solve must still show the invitation.
+    await gateway.setMethodResponse("kids.activity.get", started);
+    await gateway.resolveDeferred("kids.activity.start", { snapshot: started });
+    await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).waitFor();
     await page.screenshot({
       path: path.join(proof, "today-question-portrait.png"),
       animations: "disabled",
@@ -261,7 +302,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     hinted.activity!.currentQuestion!.hint = "Think about a shape that spreads out over the water.";
     await gateway.setMethodResponse("kids.activity.hint", { snapshot: hinted });
     await gateway.deferNext("kids.activity.hint");
-    await page.getByRole("button", { name: "Help me, Rocky", exact: true }).click();
+    await page.getByRole("button", { name: "Talk it through", exact: true }).click();
     const help = await gateway.waitForRequest("kids.activity.hint");
     expect(help.params).toMatchObject({ sessionKey, activityId: "leaf-boats", questionId: "q1" });
     expect(await composer.isVisible()).toBe(false);
@@ -276,7 +317,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     expect((await gateway.getRequests("chat.send")).length).toBe(0);
     expect((await gateway.getRequests("sessions.create")).length).toBe(1);
     await gateway.setMethodResponse("kids.activity.get", hinted);
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByText(hinted.activity!.currentQuestion!.hint!).waitFor();
     await capture("today-hint-ipad", "iPad — a question with an optional hint");
     await landscape("hint");
@@ -284,6 +325,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     answered.correctStreak = 1;
     answered.activity!.currentIndex = 1;
     answered.activity!.currentQuestion = {
+      kind: "choice",
       id: "q2",
       prompt: "What might help your leaf boat stay balanced?",
       hint: null,
@@ -296,7 +338,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       snapshot: answered,
       feedback: {
         questionId: "q1",
-        correct: true,
+        outcome: "correct",
         independent: false,
         explanation: "A wide leaf spreads its weight across the water.",
       },
@@ -311,9 +353,11 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     expect(
       await page.getByText(answered.activity!.currentQuestion!.prompt, { exact: true }).count(),
     ).toBe(0);
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await page.evaluate(() => {
+      location.hash = "#chat";
+    });
     await composer.waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByRole("heading", { name: "You figured it out!" }).waitFor();
     expect(
       await page.getByText(started.activity!.currentQuestion!.prompt, { exact: true }).count(),
@@ -325,7 +369,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       snapshot: answered,
       feedback: {
         questionId: "q2",
-        correct: false,
+        outcome: "revise",
         independent: true,
         explanation: "An uneven load can tip a boat. Let's try another arrangement.",
       },
@@ -343,12 +387,19 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     completed.activity!.completed = true;
     completed.activity!.currentQuestion = null;
     completed.daily!.completed = 1;
+    completed.daily!.questionsSolved = 3;
+    completed.daily!.firstTryCorrect = 2;
+    completed.daily!.hintedQuestions = 1;
     completed.nextActivity = { id: "shadow-play", title: "The moving-shadow mystery" };
+    // Another device can finish the current challenge while this one is in Chat.
+    await page.evaluate(() => {
+      location.hash = "#chat";
+    });
+    await composer.waitFor({ state: "visible" });
     await gateway.setMethodResponse("kids.activity.get", completed);
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByRole("heading", { name: "Adventure complete!" }).waitFor();
-    expect(await page.locator(".kids-pet--excited").count()).toBe(1);
+    expect(await page.locator(".kids-solve .kids-pet--excited").count()).toBe(1);
     await page.getByText("1 of 3 challenges complete", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Another challenge", exact: true }).waitFor();
     await capture("today-complete-ipad", "iPad — choose another challenge or chat");
@@ -358,7 +409,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
     expect(await composer.inputValue()).toContain("I found a leaf in the garden.");
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByText("1 of 3 challenges complete", { exact: true }).waitFor();
     expect(await gateway.getRequests("kids.activity.start")).toHaveLength(1);
     let selected = completed;
@@ -368,9 +419,13 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       selected.activity!.id = offer.id;
       selected.activity!.title = offer.title;
       selected.daily!.completed = ordinal - 1;
+      selected.daily!.questionsSolved = (ordinal - 1) * 3;
+      selected.daily!.firstTryCorrect = selected.daily!.questionsSolved - 1;
+      selected.daily!.hintedQuestions = 1;
       await gateway.setMethodResponse("kids.activity.start", { snapshot: selected });
       await page.getByRole("button", { name: "Another challenge", exact: true }).click();
       await page.getByRole("heading", { name: offer.title }).waitFor();
+      await gateway.setMethodResponse("kids.activity.get", selected);
       expect((await gateway.getRequests("kids.activity.start"))[ordinal - 1]?.params).toMatchObject(
         {
           sessionKey,
@@ -381,6 +436,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         const submitted = selected.activity!.currentQuestion!;
         selected = structuredClone(selected);
         selected.activity!.currentIndex = index + 1;
+        selected.daily!.questionsSolved += 1;
+        selected.daily!.firstTryCorrect += 1;
+        selected.correctStreak = selected.daily!.questionsSolved;
         selected.activity!.completed = index === 2;
         selected.activity!.currentQuestion =
           index === 2
@@ -399,37 +457,81 @@ it("keeps saved activities beside chat, grades through the server, and carries a
           snapshot: selected,
           feedback: {
             questionId: submitted.id,
-            correct: true,
+            outcome: "correct",
             independent: true,
             explanation: "A wide leaf spreads its weight across the water.",
           },
         });
         await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).click();
         await page.getByRole("heading", { name: "You figured it out!" }).waitFor();
+        await gateway.setMethodResponse("kids.activity.get", selected);
         expect(await page.locator(".kids-activity-daily").count()).toBe(0);
+        expect(await page.locator(".kids-daily-recap").count()).toBe(0);
         await page.getByRole("button", { name: "Continue", exact: true }).click();
       }
-      await page.getByText(`${ordinal} of 3 challenges complete`, { exact: true }).waitFor();
+      if (ordinal === 2) {
+        await page.getByText("2 of 3 challenges complete", { exact: true }).waitFor();
+      }
     }
-    await page.getByRole("heading", { name: "All done for today!" }).waitFor();
+    await page.getByRole("heading", { name: "You did it, Alex!" }).waitFor();
+    await page.getByRole("heading", { name: "Look what you figured out!" }).waitFor();
+    await page.getByText("3 challenges · 9 questions solved", { exact: true }).waitFor();
+    expect(await page.locator(".kids-daily-value").allTextContents()).toEqual(["8", "1", "0"]);
+    expect(await page.getByRole("heading", { name: selected.activity!.title }).count()).toBe(0);
+    expect(await page.locator(".kids-activity-subject, .kids-activity-count").count()).toBe(0);
+    expect(await page.getByRole("progressbar").count()).toBe(0);
     expect(await page.getByRole("button", { name: "Another challenge", exact: true }).count()).toBe(
       0,
     );
     await capture("today-all-done-ipad", "iPad — all three complete, chat stays available");
+    await landscape("daily-recap");
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1024, height: 1366 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const recapFrame = await readKidsFrame(page);
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      await page.getByText("Today complete · See how you did", { exact: true }).waitFor();
+      expect(await readKidsFrame(page)).toEqual(recapFrame);
+      const id = `home-complete-${viewport.width}-${viewport.height}`;
+      await page.screenshot({ path: path.join(proof, `${id}.png`) });
+      examples.push({ id, label: "Today — completed Solve opens the saved recap" });
+      await page.getByRole("button", { name: "Solve", exact: true }).click();
+      await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+      expect(await readKidsFrame(page)).toEqual(recapFrame);
+    }
     await page.setViewportSize({ width: 320, height: 844 });
+    const phoneRecapFrame = await readKidsFrame(page);
+    expect(
+      await page.locator(".kids-solve h1").evaluate((heading) => {
+        const text = document.createRange();
+        text.selectNodeContents(heading);
+        const navigation = document.querySelector(".kids-page-navigation")!.getBoundingClientRect();
+        return text.getBoundingClientRect().top >= navigation.bottom;
+      }),
+    ).toBe(true);
     await capture("today-complete-phone", "Phone — all three challenges complete");
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    for (const name of ["Chat", "Today"]) {
-      const bounds = await modes.getByRole("button", { name, exact: true }).boundingBox();
-      expect(bounds!.height).toBeGreaterThanOrEqual(44);
-      expect(bounds!.width).toBeGreaterThanOrEqual(44);
-    }
-    const phoneModes = await modes.boundingBox();
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    expect(await readKidsFrame(page)).toEqual(phoneRecapFrame);
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    expect(await readKidsFrame(page)).toEqual(phoneRecapFrame);
+    await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
-    expect(await modes.boundingBox()).toEqual(phoneModes);
+    expect(
+      await page.evaluate(() => {
+        const threadArea = document.querySelector(".kids-thread-area")!.getBoundingClientRect();
+        const footer = document.querySelector(".kids-footer")!.getBoundingClientRect();
+        return threadArea.top === 0 && Math.abs(footer.bottom - innerHeight) <= 1;
+      }),
+    ).toBe(true);
+    expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).isVisible()).toBe(
+      true,
+    );
     // Completing a retained quiz can reveal today's prepared invitation in the
     // same reply. Its explanation still belongs under the submitted quiz heading.
     const yesterday = structuredClone(hinted);
@@ -441,20 +543,20 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     nextDay.activity!.title = "Today's fresh discovery";
     await gateway.setMethodResponse("kids.activity.get", yesterday);
     await page.setViewportSize({ width: 1024, height: 1366 });
-    await page.getByRole("button", { name: "Chat", exact: true }).click();
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByRole("heading", { name: yesterday.activity!.title }).waitFor();
     await gateway.setMethodResponse("kids.activity.answer", {
       snapshot: nextDay,
       feedback: {
         questionId: "q1",
-        correct: true,
+        outcome: "correct",
         independent: false,
         explanation: "A wide leaf spreads its weight across the water.",
       },
     });
     await page.getByRole("button", { name: "A wide, flat leaf", exact: true }).click();
     await page.getByText("A wide leaf spreads its weight across the water.").waitFor();
+    await gateway.setMethodResponse("kids.activity.get", nextDay);
     expect(await page.getByRole("heading", { name: yesterday.activity!.title }).count()).toBe(1);
     expect(await page.getByRole("heading", { name: nextDay.activity!.title }).count()).toBe(0);
     expect(await page.getByRole("progressbar").count()).toBe(0);
@@ -496,7 +598,7 @@ it("shows recoverable Today loading and failure states while chat remains usable
       },
     });
     await page.goto(baseUrl);
-    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
     await gateway.waitForRequest("kids.activity.get");
     await page.getByText("Opening your adventure…", { exact: true }).waitFor();
     await page.screenshot({ path: path.join(proof, "today-loading-ipad.png"), fullPage: true });
@@ -515,6 +617,7 @@ it("shows recoverable Today loading and failure states while chat remains usable
       now: 1000,
       date: "2026-10-13",
       correctStreak: 0,
+      perfectDayStreak: 0,
       daily: null,
       nextActivity: null,
       activity: null,

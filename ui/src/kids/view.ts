@@ -3,6 +3,10 @@
  * view emits intentions and never discovers agents, sessions, or credentials.
  * Message HTML comes only from the shared sanitized Markdown renderer.
  * Retained drafts are visible only while the conversation owner reports ready.
+ * Calls show their current captions through stopping; saved history returns
+ * after the app joins the call and refreshes the authoritative conversation.
+ * Dictation disables the composer instead of retaining readonly focus, then
+ * restores native tap-to-edit without asynchronously focusing the field.
  */
 import { html, nothing, svg } from "lit";
 import { repeat } from "lit/directives/repeat.js";
@@ -17,6 +21,8 @@ import type { KidsAttachmentState } from "./attachments.ts";
 import type { KidsConversationState } from "./conversation.ts";
 import { kidsMediaPreview } from "./history-media-view.ts";
 import type { KidsHistoryMedia } from "./history-media.ts";
+import { renderKidsHome } from "./home-view.ts";
+import type { KidsPage } from "./navigation.ts";
 import type { KidsNotificationsState } from "./notifications.ts";
 import type { KidsVoiceState } from "./voice.ts";
 
@@ -24,11 +30,13 @@ registerKidsEnglish();
 
 export type KidsViewState = {
   activityEnabled: boolean;
-  tab: "chat" | "today";
+  page: KidsPage;
+  returnToSolve: boolean;
   activity: KidsActivityState;
   conversation: KidsConversationState;
   voice: KidsVoiceState;
   dictation: { active: boolean; finishing: boolean; detail: string | null };
+  dictationQuestion: { activityId: string; questionId: string } | null;
   draft: string;
   draftReady: boolean;
   draftError: string | null;
@@ -41,7 +49,7 @@ export type KidsViewState = {
 };
 
 export type KidsViewActions = {
-  tab: (tab: "chat" | "today") => void;
+  navigate: (page: KidsPage) => void;
   activity: KidsActivityActions;
   draft: (value: string) => void;
   send: () => void;
@@ -62,9 +70,9 @@ const microphone = strokeIcon(
 const plus = strokeIcon(svg`<path d="M12 5v14M5 12h14"/>`);
 const cross = strokeIcon(svg`<path d="m6 6 12 12M6 18 18 6"/>`);
 const arrow = strokeIcon(svg`<path d="M12 19V5m-6 6 6-6 6 6"/>`);
+const back = strokeIcon(svg`<path d="M19 12H5m6-6-6 6 6 6"/>`);
 const down = strokeIcon(svg`<path d="M12 5v14m-6-6 6 6 6-6"/>`);
 const stop = strokeIcon(svg`<rect x="6" y="6" width="12" height="12" rx="2"/>`);
-const bell = strokeIcon(svg`<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>`);
 
 /** Keep sanitized learning links, but never let a reply navigate into gateway applications. */
 function messageHtml(text: string): string {
@@ -133,7 +141,14 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
   const composerReady = ready && state.draftReady;
   const dictating = state.dictation.active || state.dictation.finishing;
   const error = state.connectionError ?? chat.error;
-  const today = ready && state.activityEnabled && state.tab === "today" && !calling && !dictating;
+  const page =
+    !ready || !state.activityEnabled || calling
+      ? "chat"
+      : dictating
+        ? state.dictationQuestion
+          ? "solve"
+          : "chat"
+        : state.page;
   const todayUnavailable = calling
     ? t("kids.activity.finishCall")
     : state.dictation.finishing
@@ -152,70 +167,68 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
           ? t("kids.connecting")
           : null;
   return html`
-    <div class="kids-shell">
-      <header class="kids-header">
-        <h1 class="kids-sr-only">${t("kids.name")}</h1>
-        <div class="kids-header-main">
-          ${
-            state.activityEnabled
-              ? html`<nav class="kids-mode-switch" aria-label=${t("kids.activity.navigation")}>
-                    <button
-                      type="button"
-                      aria-current=${!today ? "page" : nothing}
-                      ?disabled=${!ready}
-                      @click=${() => actions.tab("chat")}
-                    >
-                      ${t("kids.activity.chat")}
-                    </button>
-                    <button
-                      class="kids-today-mode"
-                      type="button"
-                      aria-current=${today ? "page" : nothing}
-                      aria-describedby=${todayUnavailable ? "kids-today-voice-help" : nothing}
-                      title=${todayUnavailable ?? nothing}
-                      ?disabled=${!ready || calling || dictating}
-                      @click=${() => actions.tab("today")}
-                    >
-                      <span class="kids-mode-pet" aria-hidden="true">
-                        <img
-                          data-kids-pet="header"
-                          src=${ready && state.activity.imageUrl ? state.activity.imageUrl : "/kids/rocky.svg"}
-                          alt=""
-                        />
-                      </span>
-                      <span>${t("kids.activity.today")}</span>
-                    </button>
-                  </nav>
-                  ${todayUnavailable ? html`<span id="kids-today-voice-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
-              : nothing
-          }
-          <p class="kids-status" role="status">${status ?? nothing}</p>
-        </div>
-        <div class="kids-header-actions">
-          ${chat.childName ? html`<span class="kids-child">${chat.childName}</span>` : nothing}
-          ${
-            state.notifications?.status === "enabled"
-              ? html`<span class="kids-notifications-on" title=${t("kids.notifications.enabled")}
-                  ><span aria-hidden="true">${bell}</span
-                  ><span class="kids-sr-only">${t("kids.notifications.enabled")}</span></span
-                >`
-              : state.notifications
-                ? html`<button
-                    class="kids-notifications"
-                    aria-label=${t("kids.notifications.enable")}
-                    ?disabled=${state.notifications.status === "working"}
-                    @click=${actions.notifications}
-                  >
-                    ${bell}
-                  </button>`
-                : nothing
-          }
-        </div>
-      </header>
-      ${today ? renderKidsActivity(state.activity, actions.activity) : nothing}
-      <div class="kids-thread-area" ?hidden=${today}>
+    <div
+      class=${`kids-shell${state.activityEnabled && page !== "today" ? " kids-shell--with-navigation" : ""}`}
+    >
+      <h1 class="kids-sr-only" ?hidden=${page === "today"}>${t("kids.name")}</h1>
+      ${
+        state.activityEnabled && page !== "today"
+          ? html`<nav class="kids-page-navigation" aria-label=${t("kids.home.navigation")}>
+                <button
+                  type="button"
+                  aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
+                  title=${todayUnavailable ?? nothing}
+                  ?disabled=${!ready || calling || dictating}
+                  @click=${() => actions.navigate("today")}
+                >
+                  <span aria-hidden="true">${back}</span>${t("kids.activity.today")}
+                </button>
+                ${
+                  page === "chat" && state.returnToSolve
+                    ? html`<button
+                        class="kids-return-solve"
+                        type="button"
+                        aria-describedby=${todayUnavailable ? "kids-navigation-help" : nothing}
+                        title=${todayUnavailable ?? nothing}
+                        ?disabled=${!ready || calling || dictating}
+                        @click=${() => actions.navigate("solve")}
+                      >
+                        ${t("kids.home.backToSolve")}
+                      </button>`
+                    : nothing
+                }
+              </nav>
+              ${todayUnavailable ? html`<span id="kids-navigation-help" class="kids-sr-only">${todayUnavailable}</span>` : nothing}`
+          : nothing
+      }
+      ${
+        ready && state.activityEnabled
+          ? html`
+              ${renderKidsHome(state.activity, chat.childName, actions.navigate, actions.activity.retry, page !== "today")}
+              ${renderKidsActivity(
+                state.activity,
+                chat.childName,
+                actions.activity,
+                {
+                  dictation: state.dictationQuestion
+                    ? state.dictation
+                    : { active: false, finishing: false, detail: null },
+                  allowed:
+                    state.voiceAllowed &&
+                    !calling &&
+                    (!dictating || state.dictationQuestion !== null),
+                },
+                page !== "solve",
+              )}
+            `
+          : nothing
+      }
+      <div class="kids-thread-area" ?hidden=${page !== "chat"}>
         <main class="kids-thread" aria-label=${t("kids.conversation")}>
           <div class="kids-thread-content">
+            <p class=${`kids-status${ready || error ? " kids-sr-only" : ""}`} role="status">
+              ${status ?? nothing}
+            </p>
             ${
               error
                 ? html`<section class="kids-notice" role="alert">
@@ -234,38 +247,49 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                   </section>`
                 : nothing
             }
-            ${ready ? historyEdge(chat, actions, "older") : nothing}
-            <div class="kids-messages" role="log" aria-live="polite" aria-relevant="additions text">
-              ${repeat(
-                chat.messages,
-                (message) => message.id,
-                (message) => html`
-                  <article
-                    class=${`kids-message kids-message--${message.role}`}
-                    data-message-id=${message.id}
-                  >
-                    <span class="kids-sr-only"
-                      >${message.role === "user" ? t("kids.you") : t("kids.name")}:
-                    </span>
-                    ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
-                    <div class="kids-message-media">
-                      ${message.media.map((media) =>
-                        media.artifactId && state.media && ready
-                          ? html`<figure class="kids-media-preview">
-                              ${kidsMediaPreview(state.media, media, state.media.generation)}
-                            </figure>`
-                          : html`<span class="kids-media-tile"
-                              ><span class="kids-sr-only">${media.label}: </span
-                              >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
-                            >`,
+            ${
+              !calling
+                ? html`
+                    ${ready ? historyEdge(chat, actions, "older") : nothing}
+                    <div
+                      class="kids-messages"
+                      role="log"
+                      aria-live="polite"
+                      aria-relevant="additions text"
+                    >
+                      ${repeat(
+                        chat.messages,
+                        (message) => message.id,
+                        (message) => html`
+                          <article
+                            class=${`kids-message kids-message--${message.role}`}
+                            data-message-id=${message.id}
+                          >
+                            <span class="kids-sr-only"
+                              >${message.role === "user" ? t("kids.you") : t("kids.name")}:
+                            </span>
+                            ${message.text ? html`<div class="kids-message-content">${unsafeHTML(messageHtml(message.text))}</div>` : nothing}
+                            <div class="kids-message-media">
+                              ${message.media.map((media) =>
+                                media.artifactId && state.media && ready
+                                  ? html`<figure class="kids-media-preview">
+                                      ${kidsMediaPreview(state.media, media, state.media.generation)}
+                                    </figure>`
+                                  : html`<span class="kids-media-tile"
+                                      ><span class="kids-sr-only">${media.label}: </span
+                                      >${t(`kids.media.${media.kind === "image" ? "photo" : "video"}`)}</span
+                                    >`,
+                              )}
+                            </div>
+                          </article>
+                        `,
                       )}
+                      ${chat.busy && !chat.canRetrySend ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
                     </div>
-                  </article>
-                `,
-              )}
-              ${chat.busy && !chat.canRetrySend && !calling ? html`<p class="kids-thinking">${t("kids.thinking")}</p>` : nothing}
-            </div>
-            ${ready ? historyEdge(chat, actions, "newer") : nothing}
+                    ${ready ? historyEdge(chat, actions, "newer") : nothing}
+                  `
+                : nothing
+            }
             ${
               calling
                 ? html` <section class="kids-call" aria-label=${t("kids.liveVoice")}>
@@ -277,7 +301,10 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                         voice.entries,
                         (entry) => entry.id,
                         (entry) =>
-                          html`<div class=${`kids-message kids-message--${entry.role}`}>
+                          html`<div
+                            class=${`kids-message kids-message--${entry.role}`}
+                            data-message-id=${entry.id}
+                          >
                             <span class="kids-sr-only"
                               >${entry.role === "user" ? t("kids.you") : t("kids.name")}:
                             </span>
@@ -306,7 +333,19 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
             : nothing
         }
       </div>
-      <footer class="kids-footer" ?hidden=${today}>
+      <footer class="kids-footer" ?hidden=${page !== "chat"}>
+        ${
+          state.notifications && state.notifications.status !== "enabled"
+            ? html`<button
+                class="kids-notifications"
+                type="button"
+                ?disabled=${state.notifications.status === "working"}
+                @click=${actions.notifications}
+              >
+                ${t(state.notifications.status === "working" ? "kids.notifications.working" : "kids.notifications.enable")}
+              </button>`
+            : nothing
+        }
         ${
           calling
             ? html`
@@ -362,8 +401,8 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       : nothing
                   }
                   ${ready && state.attachments.error ? html`<p class="kids-attachment-error" role="alert">${state.attachments.error}</p>` : nothing}
-                  ${ready && dictating ? html`<p class="kids-dictation-status" role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
-                  ${ready && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
+                  ${ready && dictating ? html`<p class="kids-dictation-status" data-finishing=${state.dictation.finishing} role="status">${state.dictation.finishing ? t("kids.dictation.finishing") : t("kids.dictation.listening")}</p>` : nothing}
+                  ${ready && !state.dictationQuestion && state.dictation.detail ? html`<p class="kids-attachment-error" role="alert">${state.dictation.detail}</p>` : nothing}
                   <form
                     class="kids-composer"
                     @submit=${(event: SubmitEvent) => {
@@ -401,8 +440,7 @@ export function renderKidsView(state: KidsViewState, actions: KidsViewActions) {
                       maxlength="16000"
                       placeholder=${t("kids.placeholder")}
                       .value=${ready ? state.draft : ""}
-                      ?disabled=${!composerReady}
-                      ?readonly=${dictating}
+                      ?disabled=${!composerReady || dictating}
                       @input=${(event: InputEvent) => actions.draft((event.target as HTMLTextAreaElement).value)}
                       @keydown=${(event: KeyboardEvent) => {
                         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

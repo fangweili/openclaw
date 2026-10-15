@@ -1,7 +1,98 @@
 /** Publication admission shared by generation preflight and the durable owner.
  * Checks model-authored content once per boundary; no provider calls or state. */
-import type { DailyActivityBundle } from "./activity-contract.js";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+import type { ActivityDefinition, DailyActivityBundle } from "./activity-contract.js";
+import { ActivityInputError } from "./activity-error.js";
+import { parseActivityNumber } from "./activity-grading.js";
 import type { ActivityStoreTarget } from "./activity-store-contract.js";
+
+const text = (maxLength: number) => Type.String({ minLength: 1, maxLength, pattern: "\\S" });
+const questionFields = {
+  id: text(80),
+  prompt: text(1200),
+  hint: text(800),
+  explanation: text(1200),
+};
+const questionSchema = Type.Union([
+  Type.Object(
+    {
+      ...questionFields,
+      kind: Type.Literal("choice"),
+      options: Type.Array(
+        Type.Object({ id: text(80), text: text(500) }, { additionalProperties: false }),
+        { minItems: 2, maxItems: 5 },
+      ),
+      correctOptionId: text(80),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...questionFields,
+      kind: Type.Literal("numeric"),
+      answer: text(40),
+      unit: Type.Union([text(40), Type.Null()]),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...questionFields, kind: Type.Literal("explanation"), rubric: text(1200) },
+    { additionalProperties: false },
+  ),
+]);
+
+/** One bounded definition schema serves cron publication and parent-requested practice. */
+export function activityDefinitionSchema(questionCount: 1 | 3) {
+  return Type.Object(
+    {
+      id: text(160),
+      title: text(160),
+      subject: text(80),
+      questions: Type.Array(questionSchema, { minItems: questionCount, maxItems: questionCount }),
+    },
+    { additionalProperties: false },
+  );
+}
+const definitionSchemas = { 1: activityDefinitionSchema(1), 3: activityDefinitionSchema(3) };
+/** The requested date fences an operator's offer against a local-midnight rollover. */
+export const activityPracticeOfferSchema = Type.Object(
+  {
+    date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+    activity: definitionSchemas[1],
+  },
+  { additionalProperties: false },
+);
+
+/** Validate bounded fields plus answer relationships before immutable storage. */
+export function validateActivityDefinition(
+  activity: ActivityDefinition,
+  questionCount: 1 | 3,
+): void {
+  if (!Check(definitionSchemas[questionCount], activity)) {
+    throw new ActivityInputError(
+      `Prepare exactly ${questionCount} complete questions per challenge.`,
+    );
+  }
+  const ids = new Set<string>();
+  for (const question of activity.questions) {
+    if (ids.has(question.id)) {
+      throw new ActivityInputError("Each question needs its own ID.");
+    }
+    ids.add(question.id);
+    if (question.kind === "choice") {
+      const options = new Set(question.options.map((option) => option.id));
+      if (options.size !== question.options.length) {
+        throw new ActivityInputError("Each answer option needs its own ID.");
+      }
+      if (!options.has(question.correctOptionId)) {
+        throw new ActivityInputError("The correct answer must name an option.");
+      }
+    } else if (question.kind === "numeric" && !parseActivityNumber(question.answer)) {
+      throw new ActivityInputError("A numeric question needs an exact decimal or fraction.");
+    }
+  }
+}
 
 /** Reject malformed model output once, before it becomes immutable trusted quiz content. */
 export function validateDailyActivityBundle(
@@ -29,45 +120,17 @@ export function validateDailyActivityBundle(
       throw new Error("Each daily challenge needs its own activity ID.");
     }
     activityIds.add(activity?.id);
-    if (
-      !bounded(activity?.id, 160) ||
-      !bounded(activity.title, 160) ||
-      !bounded(activity.subject, 80) ||
-      !Array.isArray(activity.questions) ||
-      activity.questions.length !== 3
-    ) {
-      throw new Error("Prepare exactly three complete questions per challenge.");
-    }
-    const ids = new Set<string>();
-    for (const question of activity.questions) {
-      if (
-        !bounded(question.id, 80) ||
-        ids.has(question.id) ||
-        !bounded(question.prompt, 1200) ||
-        !bounded(question.hint, 800) ||
-        !bounded(question.explanation, 1200) ||
-        !Array.isArray(question.options) ||
-        question.options.length < 2 ||
-        question.options.length > 5
-      ) {
-        throw new Error("An activity question is incomplete.");
-      }
-      ids.add(question.id);
-      const options = new Set<string>();
-      for (const option of question.options) {
-        if (!bounded(option.id, 80) || options.has(option.id) || !bounded(option.text, 500)) {
-          throw new Error("An activity option is invalid.");
-        }
-        options.add(option.id);
-      }
-      if (!options.has(question.correctOptionId)) {
-        throw new Error("The correct answer must name an option.");
-      }
-    }
+    validateActivityDefinition(activity, 3);
   }
+
   for (const image of [bundle.scene?.normal, bundle.scene?.excited]) {
     if (!image || !/^[a-zA-Z0-9_-]{1,160}$/u.test(image.imageId) || !bounded(image.caption, 400)) {
       throw new Error("The daily scene is incomplete.");
+    }
+  }
+  for (const imageId of [bundle.restImages?.bored, bundle.restImages?.sleeping]) {
+    if (imageId !== undefined && !/^[a-zA-Z0-9_-]{1,160}$/u.test(imageId)) {
+      throw new Error("A daily resting image is invalid.");
     }
   }
   if (!bounded(bundle.stateText?.bored, 400) || !bounded(bundle.stateText?.sleeping, 400)) {

@@ -86,6 +86,7 @@ import { KidsApp } from "./app.ts";
 
 const drafts = useKidsDraftStoreFixture();
 beforeEach(() => {
+  history.replaceState(null, "", "/");
   vi.useFakeTimers({
     toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
   });
@@ -116,6 +117,7 @@ beforeEach(() => {
           now: 1000,
           date: "2026-10-14",
           correctStreak: 0,
+          perfectDayStreak: 0,
           daily: null,
           nextActivity: null,
           activity: null,
@@ -134,6 +136,56 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+it("restores only a page fragment and accepts same-origin notification navigation without changing tutor", async () => {
+  fixture.activityMethods = ["kids.activity.get"];
+  history.replaceState(null, "", "#solve");
+  const worker = new EventTarget();
+  const previous = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: worker });
+  const app = new KidsApp(document.createElement("div"));
+  const notify = (origin: string, hash: string) =>
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        origin,
+        data: { type: "kids:navigate", hash },
+      }),
+    );
+  try {
+    app.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await drafts.settle();
+    expect(fixture.state!.page).toBe("solve");
+    fixture.actions!.draft("Keep this thought");
+    fixture.actions!.navigate("chat");
+    expect(location.hash).toBe("#chat");
+    expect(fixture.state!.returnToSolve).toBe(true);
+    notify("https://untrusted.example", "#today");
+    notify(location.origin, "#agent:other:main");
+    expect(fixture.state!.page).toBe("chat");
+    fixture.actions!.navigate("solve");
+    notify(location.origin, "#chat");
+    expect(fixture.state!.page).toBe("chat");
+    expect(fixture.state!.draft).toBe("Keep this thought");
+    expect(fixture.state!.conversation.sessionKey).toBe("agent:student:kids:child-one");
+    expect(
+      fixture.request.mock.calls.filter(([method]) => method === "sessions.create"),
+    ).toHaveLength(1);
+    expect(fixture.request.mock.calls.some(([method]) => method === "kids.activity.touch")).toBe(
+      false,
+    );
+    await app.dispose();
+    notify(location.origin, "#today");
+    expect(location.hash).toBe("#chat");
+  } finally {
+    await app.dispose();
+    if (previous) {
+      Object.defineProperty(navigator, "serviceWorker", previous);
+    } else {
+      Reflect.deleteProperty(navigator, "serviceWorker");
+    }
+  }
+});
+
 it("rejects Today intents until admitted microphone work has finished", async () => {
   fixture.activityMethods = ["kids.activity.get"];
   const app = new KidsApp(document.createElement("div"));
@@ -144,13 +196,14 @@ it("rejects Today intents until admitted microphone work has finished", async ()
     expect(fixture.state!.activityEnabled).toBe(true);
     const reads = fixture.request.mock.calls.filter(([method]) => method === "kids.activity.get");
     expect(reads).toHaveLength(1);
+    fixture.actions!.navigate("chat");
     fixture.actions!.dictate();
     await vi.advanceTimersByTimeAsync(0);
-    fixture.actions!.tab("today");
-    expect(fixture.state!.tab).toBe("chat");
+    fixture.actions!.navigate("today");
+    expect(fixture.state!.page).toBe("chat");
     fixture.recorders[0]!.publish({ active: false, finishing: true, detail: null });
-    fixture.actions!.tab("today");
-    expect(fixture.state!.tab).toBe("chat");
+    fixture.actions!.navigate("today");
+    expect(fixture.state!.page).toBe("chat");
     expect(
       fixture.request.mock.calls.filter(([method]) => method === "kids.activity.get"),
     ).toHaveLength(reads.length);
@@ -234,6 +287,85 @@ it("joins recording retirement before reconnect and rejects old draft callbacks"
     expect(fixture.state!.dictation.detail).toBeNull();
   } finally {
     closing.resolve();
+    await app.dispose();
+  }
+});
+
+it("dictates only into the captured Solve question and retires late speech when another device advances it", async () => {
+  fixture.activityMethods = ["kids.activity.get"];
+  history.replaceState(null, "", "#solve");
+  const current: ActivitySnapshot = {
+    now: 1,
+    date: "2026-10-14",
+    correctStreak: 0,
+    perfectDayStreak: 0,
+    daily: null,
+    nextActivity: null,
+    pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
+    activity: {
+      id: "shapes",
+      date: "2026-10-14",
+      title: "Compare areas",
+      subject: "Math",
+      started: true,
+      completed: false,
+      currentIndex: 0,
+      total: 3,
+      currentQuestion: { id: "q1", kind: "explanation", prompt: "Are they equal?", hint: null },
+    },
+  };
+  const original = fixture.request.getMockImplementation()!;
+  fixture.request.mockImplementation(async (method, params) =>
+    method === "kids.activity.get" ? structuredClone(current) : original(method, params),
+  );
+  const app = new KidsApp(document.createElement("div"));
+  try {
+    app.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await drafts.settle();
+    fixture.actions!.draft("Unsent chat thought");
+    fixture.actions!.activity.draft("No.");
+    fixture.actions!.navigate("today");
+    fixture.actions!.navigate("chat");
+    fixture.actions!.navigate("solve");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.state!.activity.answerDraft).toBe("No.");
+    fixture.actions!.activity.dictate();
+    const first = fixture.recorders.at(-1)!;
+    expect(fixture.state!.dictation.active).toBe(true);
+    for (const phase of [
+      { active: true, finishing: false, detail: null },
+      { active: false, finishing: true, detail: null },
+    ]) {
+      first.publish(phase);
+      fixture.actions!.navigate("chat");
+      fixture.actions!.navigate("today");
+      expect(fixture.state!.page).toBe("solve");
+      expect(location.hash).toBe("#solve");
+      fixture.actions!.dictate();
+      fixture.actions!.activity.check();
+      expect(fixture.recorders).toHaveLength(1);
+    }
+    first.commit("They cover different spaces.");
+    first.publish({ active: false, finishing: false, detail: null });
+    expect(fixture.state!.activity.answerDraft).toBe("No. They cover different spaces.");
+    expect(fixture.state!.draft).toBe("Unsent chat thought");
+    expect(
+      fixture.request.mock.calls.some(
+        ([method]) => method === "kids.activity.answer" || method === "chat.send",
+      ),
+    ).toBe(false);
+    fixture.actions!.activity.dictate();
+    const retired = fixture.recorders.at(-1)!;
+    current.activity!.currentQuestion!.id = "q2";
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fixture.state!.dictation.active).toBe(false);
+    retired.commit("Private words for question one");
+    retired.publish({ active: true, finishing: false, detail: "Late error" });
+    expect(fixture.state!.activity.answerDraft).toBe("");
+    expect(fixture.state!.dictation.detail).toBeNull();
+    expect(fixture.state!.draft).toBe("Unsent chat thought");
+  } finally {
     await app.dispose();
   }
 });

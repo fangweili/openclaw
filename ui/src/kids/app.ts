@@ -26,9 +26,8 @@ import { KidsConversation, type KidsConversationState } from "./conversation.ts"
 import { KidsDictation } from "./dictation.ts";
 import { KidsDraft } from "./draft.ts";
 import { KidsHistoryMedia } from "./history-media.ts";
+import { parseKidsPage, type KidsPage } from "./navigation.ts";
 import { KidsNotifications } from "./notifications.ts";
-import { KidsPetTransition } from "./pet-transition.ts";
-import { KidsTouchGestures } from "./touch-gestures.ts";
 import { KidsTranscriptScroll } from "./transcript-scroll.ts";
 import { renderKidsView, type KidsViewState } from "./view.ts";
 import { KidsVoice, type KidsVoiceState } from "./voice.ts";
@@ -53,8 +52,6 @@ export class KidsApp {
   private readonly draft: KidsDraft;
   private readonly media: KidsHistoryMedia;
   private readonly transcript: KidsTranscriptScroll;
-  private readonly touchGestures: KidsTouchGestures;
-  private readonly petTransition: KidsPetTransition;
   private readonly gatewayUrl: string;
   private voice: KidsVoice | null = null;
   private dictation: KidsDictation | null = null;
@@ -70,8 +67,6 @@ export class KidsApp {
 
   /** Construct without network or microphone effects; root must outlive dispose. */
   constructor(private readonly root: HTMLElement) {
-    this.touchGestures = new KidsTouchGestures(root);
-    this.petTransition = new KidsPetTransition(root);
     this.attachments = new KidsAttachments(this.uploads, () => {
       if (this.snapshot) {
         this.snapshot.attachments = this.attachments.state;
@@ -110,6 +105,14 @@ export class KidsApp {
     });
     this.media = new KidsHistoryMedia(this.client);
     this.activity = new KidsActivity(this.client, (activity) => {
+      const target = this.snapshot.dictationQuestion;
+      if (
+        target &&
+        (target.activityId !== activity.snapshot?.activity?.id ||
+          target.questionId !== activity.snapshot.activity.currentQuestion?.id)
+      ) {
+        this.retireDictation();
+      }
       this.snapshot.activity = activity;
       this.paint();
     });
@@ -125,16 +128,26 @@ export class KidsApp {
           this.paint();
         }
       },
-      () => void this.conversation.loadOlder(),
-      () => void this.conversation.loadNewer(),
+      () => {
+        if (!this.calling) {
+          void this.conversation.loadOlder();
+        }
+      },
+      () => {
+        if (!this.calling) {
+          void this.conversation.loadNewer();
+        }
+      },
     );
     this.snapshot = {
-      tab: "chat",
+      page: parseKidsPage(location.hash) ?? "today",
+      returnToSolve: false,
       activityEnabled: false,
       activity: emptyKidsActivity(),
       conversation: this.conversation.state,
       voice: idleVoice(),
       dictation: idleDictation(),
+      dictationQuestion: null,
       draft: "",
       draftReady: false,
       draftError: null,
@@ -153,7 +166,8 @@ export class KidsApp {
       return;
     }
     this.started = true;
-    this.touchGestures.start();
+    window.addEventListener("hashchange", this.locationChanged);
+    navigator.serviceWorker?.addEventListener("message", this.workerMessage);
     this.paint();
     this.client.start();
   }
@@ -164,8 +178,8 @@ export class KidsApp {
       return this.closing;
     }
     this.disposed = true;
-    this.petTransition.dispose();
-    this.touchGestures.dispose();
+    window.removeEventListener("hashchange", this.locationChanged);
+    navigator.serviceWorker?.removeEventListener("message", this.workerMessage);
     this.transcript.dispose();
     this.generation += 1;
     this.retireCapabilities();
@@ -220,7 +234,6 @@ export class KidsApp {
   }
 
   private retireCapabilities(): void {
-    this.petTransition.cancel();
     this.snapshot.activityEnabled = false;
     this.activity.setVisible(false);
     this.activity.disconnect();
@@ -281,11 +294,16 @@ export class KidsApp {
       return;
     }
     this.snapshot.conversation = conversation;
+    if (conversation.status === "ready" && !this.snapshot.activityEnabled) {
+      this.snapshot.page = "chat";
+      this.writeLocation();
+    }
     if (conversation.sessionKey && conversation.sessionId) {
       const binding = `${conversation.sessionKey}\0${conversation.sessionId}`;
       if (binding !== this.boundSession) {
         this.retireDictation();
         this.boundSession = binding;
+        this.snapshot.returnToSolve = false;
       }
       if (conversation.status === "ready") {
         if (this.snapshot.activityEnabled) {
@@ -397,6 +415,7 @@ export class KidsApp {
       if (voice.state.active) {
         await voice.stop();
       } else if (this.snapshot.conversation.sessionKey && !this.snapshot.conversation.busy) {
+        this.conversation.returnToLatest();
         await voice.start(this.snapshot.conversation.sessionKey);
       }
     } catch {
@@ -404,32 +423,61 @@ export class KidsApp {
     }
   }
 
-  /** Dictation edits only the current draft; it never sends or creates a tutor turn. */
-  private async dictate(): Promise<void> {
+  /** Capture one chat or question draft. Speech edits that target only and never submits. */
+  private async dictate(destination: "chat" | "solve" = "chat"): Promise<void> {
     if (this.disposed || this.snapshot.dictation.finishing) {
       return;
     }
     if (this.dictation?.state.active) {
+      if (destination !== (this.snapshot.dictationQuestion ? "solve" : "chat")) {
+        return;
+      }
       await this.dictation.finish();
       return;
     }
     if (
       this.snapshot.conversation.status !== "ready" ||
-      !this.draft.state.ready ||
+      (destination === "chat" && !this.draft.state.ready) ||
       !this.snapshot.voiceAllowed ||
       this.voice?.state.active ||
       this.snapshot.voice.status === "stopping"
     ) {
       return;
     }
+    const activity = this.activity.state.snapshot?.activity;
+    const question = activity?.currentQuestion;
+    if (
+      destination === "solve" &&
+      (this.snapshot.page !== "solve" ||
+        !activity ||
+        !question ||
+        question.kind === "choice" ||
+        this.activity.state.busy ||
+        this.activity.state.canRetry ||
+        this.activity.state.error ||
+        this.activity.state.feedback?.outcome === "correct")
+    ) {
+      return;
+    }
     this.retireDictation();
-    const field = this.root.querySelector<HTMLTextAreaElement>("#kids-message");
+    const questionTarget =
+      destination === "solve" && activity && question
+        ? { activityId: activity.id, questionId: question.id }
+        : null;
+    this.snapshot.dictationQuestion = questionTarget;
+    const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      destination === "solve" ? "#kids-answer" : "#kids-message",
+    );
+    const value = destination === "solve" ? this.activity.state.answerDraft : this.snapshot.draft;
     const target = {
       binding: this.boundSession,
-      value: this.snapshot.draft,
-      start: field?.selectionStart ?? this.snapshot.draft.length,
-      end: field?.selectionEnd ?? this.snapshot.draft.length,
+      value,
+      start: field?.selectionStart ?? value.length,
+      end: field?.selectionEnd ?? value.length,
     };
+    if (destination === "solve") {
+      this.activity.setEditing(false);
+    }
     const generation = this.generation;
     const current = () =>
       !this.disposed && generation === this.generation && this.dictation === owner;
@@ -447,15 +495,27 @@ export class KidsApp {
         }
         // Preserve an edit made while transcription was pending; never replay
         // the captured draft over newer text.
-        const unchanged = this.snapshot.draft === target.value;
-        this.draft.update(
-          insertComposerDictation(
-            this.snapshot.draft,
-            transcript,
-            unchanged ? target.start : this.snapshot.draft.length,
-            unchanged ? target.end : this.snapshot.draft.length,
-          ).value,
-        );
+        const currentActivity = this.activity.state.snapshot?.activity;
+        if (
+          questionTarget &&
+          (currentActivity?.id !== questionTarget.activityId ||
+            currentActivity.currentQuestion?.id !== questionTarget.questionId)
+        ) {
+          return;
+        }
+        const currentValue = questionTarget ? this.activity.state.answerDraft : this.snapshot.draft;
+        const unchanged = currentValue === target.value;
+        const text = insertComposerDictation(
+          currentValue,
+          transcript,
+          unchanged ? target.start : currentValue.length,
+          unchanged ? target.end : currentValue.length,
+        ).value;
+        if (questionTarget) {
+          this.activity.updateAnswer(text);
+        } else {
+          this.draft.update(text);
+        }
       },
     );
     this.dictation = owner;
@@ -467,9 +527,15 @@ export class KidsApp {
     const owner = this.dictation;
     this.dictation = null;
     this.snapshot.dictation = idleDictation();
+    this.snapshot.dictationQuestion = null;
     if (owner) {
       this.capabilityRetirement = Promise.allSettled([this.capabilityRetirement, owner.dispose()]);
     }
+  }
+
+  /** Caption presentation lasts through joined close and the authoritative history refresh. */
+  private get calling(): boolean {
+    return this.snapshot.voice.active || this.snapshot.voice.status === "stopping";
   }
 
   private paint(forceScroll = false): void {
@@ -477,28 +543,39 @@ export class KidsApp {
       return;
     }
     const chat = this.snapshot.conversation;
+    const calling = this.calling;
     const showingChat =
       !this.snapshot.activityEnabled ||
-      this.snapshot.tab === "chat" ||
-      this.snapshot.voice.active ||
-      this.snapshot.voice.status === "stopping" ||
-      this.snapshot.dictation.active ||
-      this.snapshot.dictation.finishing;
+      this.snapshot.page === "chat" ||
+      calling ||
+      (!this.snapshot.dictationQuestion &&
+        (this.snapshot.dictation.active || this.snapshot.dictation.finishing));
     if (showingChat) {
-      this.transcript.beforeRender(`${chat.sessionKey}\0${chat.sessionId}`, chat.history.hasNewer);
+      this.transcript.beforeRender(
+        `${chat.sessionKey}\0${chat.sessionId}\0${calling ? "voice" : "chat"}`,
+        !calling && chat.history.hasNewer,
+      );
     }
     this.snapshot.awayFromLatest = this.transcript.awayFromLatest;
     render(
       renderKidsView(this.snapshot, {
-        tab: (tab) => this.selectTab(tab),
+        navigate: (page) => this.navigate(page),
         activity: {
           start: () => void this.activity.act("start"),
           answer: (optionId) => void this.activity.act("answer", optionId),
+          draft: (text) => this.activity.updateAnswer(text),
+          check: () => {
+            if (!this.snapshot.dictation.active && !this.snapshot.dictation.finishing) {
+              void this.activity.act("answer");
+            }
+          },
+          dictate: () => void this.dictate("solve"),
+          edit: () => this.activity.setEditing(true),
           hint: () => void this.activity.act("hint"),
           next: () => this.activity.continue(),
           retry: () => void this.activity.retry(),
           help: () => void this.activityHelp(),
-          chat: () => this.selectTab("chat"),
+          chat: () => this.navigate("chat"),
         },
         draft: (value) => {
           this.draft.update(value);
@@ -516,7 +593,9 @@ export class KidsApp {
         older: () => void this.conversation.loadOlder(),
         newer: () => void this.conversation.loadNewer(),
         latest: () => {
-          this.conversation.returnToLatest();
+          if (!calling) {
+            this.conversation.returnToLatest();
+          }
           this.paint(true);
         },
         notifications: () => {
@@ -528,7 +607,6 @@ export class KidsApp {
       }),
       this.root,
     );
-    this.petTransition.reconcile();
     const current = this.root.querySelector<HTMLElement>(".kids-thread");
     const content = this.root.querySelector<HTMLElement>(".kids-thread-content");
     if (current && content && showingChat) {
@@ -539,29 +617,72 @@ export class KidsApp {
     }
   }
 
-  /** Preserve context while moving Rocky; microphone work must finish before leaving Chat. */
-  private selectTab(tab: "chat" | "today"): void {
-    if (this.disposed || tab === this.snapshot.tab) {
-      return;
-    }
+  /** URL fragments select presentation only; no page can redirect the tutor binding. */
+  private readonly locationChanged = (): void => {
+    this.navigate(parseKidsPage(location.hash) ?? "today");
+  };
+
+  /** Only the same-origin kids worker can request a known presentation destination. */
+  private readonly workerMessage = (event: MessageEvent): void => {
+    const message: unknown = event.data;
     if (
-      tab === "today" &&
-      (!this.snapshot.activityEnabled ||
-        this.snapshot.voice.active ||
-        this.snapshot.voice.status === "stopping" ||
-        this.snapshot.dictation.active ||
-        this.snapshot.dictation.finishing)
+      event.origin !== location.origin ||
+      typeof message !== "object" ||
+      message === null ||
+      !("type" in message) ||
+      message.type !== "kids:navigate" ||
+      !("hash" in message)
     ) {
       return;
     }
-    if (tab === "today") {
-      this.transcript.suspend();
+    const page = parseKidsPage(message.hash);
+    if (page) {
+      this.navigate(page);
     }
-    this.petTransition.move(() => {
-      this.snapshot.tab = tab;
-      this.paint();
-    });
-    if (tab === "today") {
+  };
+
+  /** Keep the current location reloadable without adding history or private identifiers. */
+  private writeLocation(): void {
+    if (location.hash === `#${this.snapshot.page}`) {
+      return;
+    }
+    const url = new URL(location.href);
+    url.hash = this.snapshot.page;
+    history.replaceState(history.state, "", url);
+  }
+
+  /** Keep microphone controls visible; ordinary navigation preserves drafts and scroll owners. */
+  private navigate(requested: KidsPage): void {
+    if (this.disposed) {
+      return;
+    }
+    const page =
+      this.snapshot.conversation.status === "ready" && !this.snapshot.activityEnabled
+        ? "chat"
+        : requested;
+    if (
+      ((this.snapshot.voice.active || this.snapshot.voice.status === "stopping") &&
+        page !== "chat") ||
+      ((this.snapshot.dictation.active || this.snapshot.dictation.finishing) &&
+        page !== (this.snapshot.dictationQuestion ? "solve" : "chat"))
+    ) {
+      this.writeLocation();
+      return;
+    }
+    if (page === this.snapshot.page) {
+      this.writeLocation();
+      return;
+    }
+    if (page !== "chat") {
+      this.transcript.suspend();
+    } else {
+      this.snapshot.returnToSolve = this.snapshot.page === "solve";
+    }
+    this.snapshot.page = page;
+    this.activity.setEditing(false);
+    this.writeLocation();
+    this.paint();
+    if (page === "solve") {
       void this.activity.refresh();
     }
   }
@@ -581,7 +702,7 @@ export class KidsApp {
       this.disposed ||
       generation !== this.generation ||
       binding !== this.boundSession ||
-      this.snapshot.tab !== "today" ||
+      this.snapshot.page !== "solve" ||
       !this.draft.state.ready ||
       current.error ||
       current.canRetry ||
@@ -596,7 +717,7 @@ export class KidsApp {
       question: question.prompt,
     });
     this.draft.update([this.snapshot.draft.trim(), message].filter(Boolean).join("\n\n"));
-    this.selectTab("chat");
+    this.navigate("chat");
     this.root.querySelector<HTMLTextAreaElement>("#kids-message")?.focus();
   }
 }

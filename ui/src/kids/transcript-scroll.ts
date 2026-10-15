@@ -47,8 +47,9 @@ export class KidsTranscriptScroll {
 
   /**
    * Capture the current viewport before the caller updates DOM. A different
-   * authenticated conversation binding retires listeners and starts at the latest
-   * message; reconnecting/rendering the same binding preserves reading position.
+   * opaque presentation binding retires listeners and starts at the latest
+   * message. The app distinguishes authenticated conversations and Chat/call
+   * surfaces; rendering the same binding preserves reading position.
    * hasNewer identifies a historical window whose bottom is not the latest reply.
    * This method never invokes callbacks; read awayFromLatest for the next render.
    */

@@ -22,12 +22,16 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const destination = new URL("/kids/", self.location.origin).href;
+  const destination = new URL("/kids/#chat", self.location.origin).href;
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const existing = windows.find((client) => client.url === destination);
+      const existing = windows.find((client) => {
+        const url = new URL(client.url);
+        return url.origin === self.location.origin && url.pathname === "/kids/";
+      });
       if (existing) {
+        existing.postMessage({ type: "kids:navigate", hash: "#chat" });
         await existing.focus();
       } else {
         await self.clients.openWindow(destination);

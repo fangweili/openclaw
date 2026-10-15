@@ -1,27 +1,40 @@
 /** Private publication, evidence, and child-binding contract of the activity owner. */
-import type { ActivityOption, ActivitySnapshot } from "@openclaw/kids-activity-contract";
+import type {
+  ActivityAnswer,
+  ActivityFeedback,
+  ActivityOption,
+  ActivitySnapshot,
+} from "@openclaw/kids-activity-contract";
 
-type ActivityQuestion = {
+export type ActivityQuestionDefinition = {
   id: string;
   prompt: string;
-  options: ActivityOption[];
-  correctOptionId: string;
   hint: string;
   explanation: string;
-};
-/** An immutable three-question challenge, distinct from its day's shared artwork. */
+} & (
+  | { kind: "choice"; options: ActivityOption[]; correctOptionId: string }
+  | { kind: "numeric"; answer: string; unit: string | null }
+  | { kind: "explanation"; rubric: string }
+);
+/** Private grading verdict; never supplied by the browser. */
+export type ActivityGrade = Pick<ActivityFeedback, "outcome" | "explanation">;
+/** An immutable challenge: three daily questions, or one parent-requested practice question. */
 export type ActivityDefinition = {
   id: string;
   title: string;
   subject: string;
-  questions: ActivityQuestion[];
+  questions: ActivityQuestionDefinition[];
 };
-/** Atomic publication: exactly three challenges and one normal/excited art pair. */
+/** One optional extra question for an existing completed local day; never replaces daily work. */
+export type ActivityPracticeOffer = { date: string; activity: ActivityDefinition };
+/** Atomic publication: three challenges, required normal/excited art, optional daily rest art. */
 export type DailyActivityBundle = {
   childId: string;
   date: string;
   activities: ActivityDefinition[];
   scene: NonNullable<ActivitySnapshot["pet"]["scene"]>;
+  /** Absent in older batches or after optional rendering failure; use the fixed pose. */
+  restImages?: { bored?: string; sleeping?: string };
   /** Private creative plan for continuity; describes intended art, not verified image contents. */
   scenePrompt: string;
   stateText: { bored: string; sleeping: string };
@@ -57,11 +70,12 @@ export type ActivityAttemptEvidence = {
   at: number;
   activityId: string;
   questionId: string;
-  optionId: string;
+  answer: ActivityAnswer;
   answerText: string;
+  outcome: ActivityFeedback["outcome"];
+  feedback: string;
   ordinal: number;
   hintUsed: boolean;
-  correct: boolean;
   independent: boolean;
 };
 export type ActivityPreparationContext = {

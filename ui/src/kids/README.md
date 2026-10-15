@@ -2,27 +2,67 @@
 
 This separate frontend opens one child's verified tutor conversation. V1 includes
 text, photos, short videos, voice dictation, live voice, and private notifications.
-**Today** offers three short, saved daily challenges and Rocky; **Chat** retains
-the same tutor conversation. Switching tabs preserves unsent text and attachments.
-The header's labeled **Chat / Today** switch stays in the same place in both modes.
-During a live or finishing voice call, Chat stays selected and Today is disabled
-with an accessible explanation. The same restriction applies while dictation
-awaits microphone permission, records, or finishes transcription, keeping its
-Stop control and progress visible. It uses the dictation owner's existing active
-and finishing states; completing or cancelling dictation makes Today available again.
-Only useful connection, reply, or voice status
-appears beneath the switch; there is no wordmark or idle subtitle.
-The Today button includes a small image of Rocky in both modes, using the same
-private scene as the Today hero. Switching moves that image between its header
-and hero positions; reduced motion switches immediately.
-The child's name and notification control remain on the right.
-On landscape tablets (at least 933 × 560 CSS pixels), Today places Rocky on the
-left and the challenge on the right, using up to 1100px of viewport width with
-answers in two columns. Portrait and
-small screens retain the stacked layout. This is CSS-only presentation: rotation
-keeps the same activity state and DOM, and the existing Today scroller keeps long
-questions, hints, and larger text reachable without clipping. The Chat layout and
-fixed header retain their existing sizing.
+**Today** is the home screen: Rocky, **Chat with Rocky**, and a two-by-two grid
+of **Solve**, **Practice**, **Create**, and **Finish**. Chat and Solve are active;
+the other three are native disabled choices labeled **Coming later**. The home
+heading is **What shall we do, [child name]?**, centered above Rocky and the cards.
+The name comes only from the verified conversation; an empty name uses
+**What shall we do?**. There is no header or subtitle. Solve offers saved choice,
+numeric and short explanation questions. The server alone grades them. Landscape
+tablets place Rocky left of the choices or challenge; portrait and small screens
+stack them. Today and Solve share the same art and panel anchors, sizes, column
+alignment and top row. Landscape uses a viewport-based stage with more space below
+the greeting; its anchors do not depend on the question or recap height. Today fills
+the row with its greeting; active Solve reserves it, and the daily recap uses a
+celebration heading. Longer content still scrolls without moving the frame.
+Phones reserve two heading lines below the floating navigation; unusually long
+names may still wrap further.
+The existing answer-editing layout continues to make room for the keyboard.
+Chat retains the full available height and its bottom composer; it never adopts
+the centered Today/Solve stage.
+
+After the final answer's feedback is dismissed with **Continue**, a finished
+prepared day shows its own recap instead of the old question title, subject and
+progress bar. It displays the server's solved-question and challenge totals,
+first-try correct answers, distinct questions that used a hint, and **Perfect days**.
+Perfect days counts consecutive local days when every scheduled question was
+correct on its first graded attempt without hints; optional parent practice is
+excluded. The server owns that count independently of the correct-answer streak
+used by Rocky. First try includes hinted answers; clarification is not graded. **Chat with Rocky** is the main next action.
+An intermediate challenge still offers **Another challenge**. Today marks Solve
+complete only for the server's current date when all prepared challenges are done
+and no unfinished selected challenge remains. An older finished batch is labeled
+with its own date and never promises today's completion or tomorrow's preparation.
+
+Compact floating **Today** controls return home from Chat or Solve; each scroller
+reserves their safe-area top inset so initial content stays clear. **Talk it
+through** records the current hint before placing the question into the existing
+chat draft. Chat entered from
+Solve offers **Back to Solve**. Unsent text, attachments, quiz feedback and native
+home/Solve scroll positions survive these page changes; the transcript's existing
+scroll owner preserves the Chat reading position. The old tabs and header flight
+animation are removed. The pet's gentle mood animation still respects reduced motion.
+
+During a live or finishing voice call, or dictation awaiting microphone permission,
+recording, or finishing transcription, the originating Chat or Solve controls
+remain visible and navigation away is disabled with an accessible explanation.
+One dictation owner serves both surfaces, and live voice cannot overlap it.
+Recording and transcription disable their input rather than leaving it focused
+and readonly. Completion restores native tap-to-edit without asynchronous focus
+or keyboard emulation. A highlighted status beside the composer remains visible
+through the entire request: **Writing what you said…** with a progress indicator
+that respects reduced motion. The result only edits the draft; sending/checking
+still requires the child's action. This does not change provider latency.
+Connection, reply and voice status remains in a persistent live region inside
+Chat. Connecting is visible; the other status text is screen-reader-only because
+the reply, call or error already has a visible presentation.
+
+The URL fragment is the only page preference: **#today**, **#solve**, or **#chat**.
+Reloading restores that presentation after authentication. Missing or unknown
+fragments start at Today; a deployment without activities stays Chat-only. A cold
+Home Screen launch using the manifest's plain start URL starts at Today rather
+than remembering a previous closed window. These fragments never select a child,
+tutor, conversation or quiz ID. No new local preference store is created.
 Family messages and groups are deferred. There is no agent/model picker, session list, administrative navigation,
 tool output, reasoning display, or intermediate assistant commentary. Text shows
 the child's messages and finished assistant replies; voice shows spoken captions.
@@ -35,7 +75,10 @@ to screen readers.
 - `app.ts` owns the document, same-origin Gateway client, and the
   lifetime of its conversation, draft, media, voice, and notification owners. Reconnect fences
   callbacks, retires microphone work, then admits the next authenticated context.
-  It starts and disposes the document's touch-gesture owner with the app.
+  It also owns the URL page projection and hash/worker-message listeners. Known
+  fragments pass the same parser for reload, hash navigation and same-origin
+  worker messages. Microphone guards reject leaving the recording surface and restore its URL.
+  Disposal removes these listeners before retiring conversation resources.
   It also binds the activity projection to the admitted physical conversation.
   Today and activity requests are enabled only when the current connection
   advertises the optional `kids.activity.get` capability; otherwise the app stays
@@ -48,30 +91,48 @@ to screen readers.
   device even when Tailscale authenticates the person. The Control UI's Tailscale
   pairing bypass cannot establish the durable device authority used by Web Push.
 - `activity.ts` owns a bounded memory-only copy of the plugin's current activity,
-  one submitted-question feedback panel with its original heading, one uncertain
-  operation, and one pet
+  one bounded answer draft, one submitted-question context with its answer and
+  original heading, one uncertain operation, and one pet
   object URL. The plugin alone owns durable progress, grading, clocks and streaks.
   Quiz operations serialize with reads; ambiguous failures retain their exact
   request ID for an explicit retry. Reconnect clears all private presentation and
   can recover that retry only after the same backing session is verified. A new
   backing session discards it. The app polls every 15 seconds while foregrounded
-  in either mode so header Rocky stays current; hiding the page, disconnecting,
+  on every page so Rocky stays current; hiding the page, disconnecting,
   or disposing stops its timer. Opening Chat or Today never wakes the pet.
-  Entering Today also requests fresh progress through that same serialized owner.
+  Entering Solve also requests fresh progress through that same serialized owner.
   Media bytes use the authenticated `kids.activity.image` RPC, never public paths.
   State and image completions are generation-fenced; disposal revokes the URL and
   joins admitted requests before the app closes its transport.
-- `pet-transition.ts` owns one short animation on the real destination image,
-  borrowing the activity owner's URL without copying media or creating a second
-  cache. The app brackets each tab render with it. A fixed-size header wrapper
-  and Today picture preserve layout while the image temporarily uses fixed
-  positioning to cross the scroller without clipping. Completion restores styles
-  and listeners. A new tab change, changed image, Today scroll, resize, page visibility,
-  or reduced-motion change cancels immediately; ordinary same-image renders do
-  not. Disconnect and disposal cancel before activity media is revoked. Retired
-  completion callbacks cannot affect a later transition. The app retains its
-  existing microphone restrictions, draft and transcript-scroll owners.
-- `activity-view.ts` renders server-selected mood, caption, quiz and feedback.
+- `home-view.ts` renders only the accepted home choices and emits page intentions.
+  `pet-view.ts` shares the activity owner's admitted art and caption between home
+  and Solve without another request, URL owner, or interaction write. Both panels
+  stay mounted but hidden when inactive, preserving their native scroll positions;
+  loss of conversation admission removes both private panels immediately.
+- `activity-view.ts` renders the server-selected quiz and feedback.
+- `daily-view.ts` owns stateless completion presentation shared by Home and Solve.
+  It reads the admitted snapshot's dates and counters without recomputing learning
+  evidence or using the browser clock. Solve gives retained answer feedback priority
+  over the recap; this helper owns no state, listeners, resources or lifecycle.
+  `answer-view.ts` renders numeric or explanation input with an explicit **Check
+  answer** action. Numeric text input allows negative values and fractions, with
+  units outside the field; explanation input accepts up to 600 characters. Numeric
+  input accepts up to 40. Both use the shared server admission bounds. Oversized
+  dictated text shows a visible error and preserves the previous answer.
+  **Say it** edits the captured question draft and never submits it. The app
+  cancels that recording if its activity/question changes; late callbacks cannot
+  populate Chat or the next question. Focusing an answer hides Rocky to leave room. The activity owner keeps one
+  presentation editing flag across ordinary blur, so pointer-down cannot move a
+  Check/Say it target before pointer-up. Check admission, dictation start,
+  navigation, Continue, question changes and binding retirement clear it. It is
+  neither persisted nor part of grading.
+  Drafts survive navigation and ordinary polling in the same binding, but are
+  memory-only and clear on question changes, disconnect and reload. An uncertain
+  submitted answer retains its original ID and text through same-session reconnect.
+  The answer stays visible during checking, transport errors and feedback.
+  Clarify/revise results keep it editable; editing retires that feedback and the
+  next explicit submission gets a new ID. Correct feedback waits for Continue.
+  Neither the view nor the draft owner evaluates correctness or advances progress.
   Hints and answers never grade locally, and reads contain no unearned answer keys.
   Feedback keeps the submitted question's heading until **Continue**, including
   when finishing yesterday's quiz reveals today's invitation on the server.
@@ -83,7 +144,7 @@ to screen readers.
   uses the same serialized, idempotent start operation. A started unfinished
   challenge carries into the next day, while unopened extras are replaced by the
   new daily batch. The plugin owns selection and carryover; the UI renders its facts.
-  A wrong answer offers a friendly retry. **Help me, Rocky** first records a hint
+  A wrong answer offers a friendly retry. **Talk it through** first records a hint
   so future correctness is accurately marked assisted, then appends that same
   question and an explicit request for one small hint to the existing draft for
   review. The request asks Rocky to wait for the child to try before explaining
@@ -144,18 +205,16 @@ to screen readers.
   the latest messages until the child scrolls away, then preserves a visible
   message across page changes and media resizing. Paging requires reader scroll
   intent at an edge. A floating Latest button returns to the live tail without
-  altering the draft. Disposal removes listeners and the observer.
-- `touch-gestures.ts` owns Safari pinch cancellation and the narrow double-tap
-  fallback, with listeners installed on start and removed on disposal. CSS keeps
-  native panning at each scrolling boundary. Safari releases before
-  [WebKit's manipulation fix](https://github.com/WebKit/WebKit/commit/504edb5c563f9ad8d0436f60b5a608f0ec384f42)
-  can still zoom on a double tap. On noninteractive app surfaces, the fallback
-  cancels only the second nearby stationary tap; it has no timers or synthetic
-  clicks. Scrolling, long presses, existing selections, editable fields, buttons,
-  links, and native media controls stay native. Double-tap word selection in plain
-  transcript text may also be suppressed; composer word selection is untouched.
-  Native iPad gesture recognition needs physical-device verification; synthetic
-  touch tests verify cancellation and lifecycle, not Safari's zoom recognizer.
+  altering the draft. Starting a call discards the browsed history window and
+  switches this same owner to the current-call caption presentation. Captions
+  follow until manual scrollback; Latest resumes following without history reads,
+  and call scrolling never pages saved history. Returning to refreshed Chat uses
+  its own presentation binding and follows the canonical tail. Disposal removes
+  listeners and the observer.
+- Browser defaults own pinch zoom, double-tap, selection and scrolling throughout
+  the app. There are no gesture-cancelling listeners or viewport zoom limits.
+  Kids controls reset the shared Control UI's `touch-action` to `auto` so they
+  retain the same native gestures as the surrounding content.
 - `attachments.ts` owns one memory-only photo/video draft and its preview URLs.
   Shared chat admission, read/resize, payload, and encoding owners enforce the
   Gateway's advertised per-file and WebSocket batch limits. The app cancels reads
@@ -181,6 +240,10 @@ to screen readers.
   spoken captions; the shared owner owns microphone and provider resources.
   Stop cancels capture immediately and joins late allocations and transcript/close
   work before transport teardown. Provider credentials stay with existing owners.
+  The view shows exactly one transcript: current-call captions while active or
+  stopping, then saved Chat after joined close and authoritative history refresh.
+  The conversation continues receiving canonical updates throughout the call;
+  the view does not compare or deduplicate text from those two presentations.
   The Gateway captures authenticated caller attribution at transcript/call admission
   and stamps stable caller IDs on user voice rows through the shared metadata
   serializer. Mutable display labels stay out of transcript retry identity.
@@ -200,7 +263,10 @@ to screen readers.
   or session navigation. Views never make permission or routing decisions.
 - The notification owner registers a worker scoped to `/kids/`, using the existing
   Web Push subscription owner. Lock-screen text is private. Worker clicks always
-  open `/kids/`; payload URLs never select a conversation. There is no offline chat
+  open `/kids/#chat`; a matching same-origin kids window receives a fixed Chat
+  presentation message before focus. Payload URLs are still ignored, and no
+  activity-specific notification routing is claimed. Notification navigation
+  never selects a conversation. There is no offline chat
   cache. Current profile, device, agent access, and session ownership are rechecked
   at delivery by the Gateway.
   While this chat is visible, the connection renews a short-lived
@@ -210,9 +276,10 @@ to screen readers.
   clears the claim, and disconnect or lease expiry restores delivery if browser
   shutdown prevents cleanup. The worker still displays every received push, as
   required by Safari's Web Push contract.
-  Once enabled, the header shows a noninteractive status. The kids app only
-  offers notification setup; turning notifications off remains in device/browser
-  settings, so tapping the status cannot unsubscribe accidentally.
+  The Chat footer offers notification setup only until it is enabled, then the
+  control disappears completely. Setup details remain visible in Chat. Turning
+  notifications off remains in device/browser settings; there is no in-app
+  unsubscribe control.
 - `extensions/kids-ui` serves public build assets and owns bounded, authenticated
   dictation requests. Its service joins provider work and deletes private temporary
   recordings; provider selection and credentials stay with the existing runtime.

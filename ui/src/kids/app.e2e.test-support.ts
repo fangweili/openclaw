@@ -1,7 +1,7 @@
 /** Shared synthetic identity, compiled-app preview, and retained visual-proof lifecycle. */
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { preview } from "vite";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 
@@ -31,6 +31,20 @@ export function notificationPermissionFixture() {
   Object.defineProperty(Notification, "permission", {
     get: () =>
       sessionStorage.getItem("kids-test-block-notifications") === "1" ? "denied" : "default",
+  });
+}
+
+/** Measure visible art and panel anchors at scroll-top with reduced motion enabled. */
+export async function readKidsFrame(page: Page) {
+  return page.locator(".kids-today:not([hidden])").evaluate((element) => {
+    const pet = element.querySelector(".kids-pet-picture img")!.getBoundingClientRect();
+    const panel = element
+      .querySelector(".kids-home-content, .kids-activity-card")!
+      .getBoundingClientRect();
+    return {
+      pet: { x: pet.x, y: pet.y, width: pet.width, height: pet.height },
+      panel: { x: panel.x, y: panel.y, width: panel.width },
+    };
   });
 }
 

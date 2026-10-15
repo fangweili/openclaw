@@ -1,10 +1,8 @@
 /** Browser boundary proof with a synthetic Gateway; no live conversations or providers. */
 import path from "node:path";
-import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
 import type { Browser } from "playwright";
 import { afterAll, assert, beforeAll, expect, it } from "vitest";
 import type { MockGatewayWindow } from "../test-helpers/control-ui-e2e-contract.ts";
-import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e-defaults.ts";
 import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 import {
   notificationPermissionFixture,
@@ -76,6 +74,10 @@ it("opens only the owned tutor, sends text, hides controls and internal events",
         throw error;
       });
     expect(await page.getByRole("heading", { name: "Rocky", exact: true }).count()).toBe(1);
+    expect(await page.getByRole("banner").count()).toBe(0);
+    const setup = page.getByRole("button", { name: "Notify me", exact: true });
+    await setup.waitFor();
+    expect(await setup.evaluate((element) => element.closest("footer") !== null)).toBe(true);
     expect(await page.locator("select").count()).toBe(0);
     expect(await page.getByRole("button", { name: /model|session|settings|tools/i }).count()).toBe(
       0,
@@ -459,136 +461,6 @@ it("previews photos and videos, sends without text, and keeps mobile focus on th
   }
 });
 
-it("records dictation into an editable draft and sends only on request", async () => {
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-  });
-  try {
-    await context.addInitScript(notificationPermissionFixture);
-    // Observe the actual browser recorder, so finish cannot race microphone startup.
-    await context.addInitScript(() => {
-      const acquire = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      navigator.mediaDevices.getUserMedia = async (constraints) => {
-        document.documentElement.dataset.microphoneRequested = "true";
-        await new Promise<void>((resolve) => {
-          window.addEventListener("kids-fixture-grant-microphone", () => resolve(), { once: true });
-        });
-        return acquire(constraints);
-      };
-      const NativeRecorder = MediaRecorder;
-      window.MediaRecorder = class extends NativeRecorder {
-        override start(timeslice?: number) {
-          this.addEventListener(
-            "start",
-            () => {
-              document.documentElement.dataset.recorderStarted = "true";
-            },
-            { once: true },
-          );
-          super.start(timeslice);
-        }
-      };
-    });
-    const page = await context.newPage();
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    const activity: ActivitySnapshot = {
-      now: 1000,
-      date: "2026-10-13",
-      correctStreak: 0,
-      daily: null,
-      nextActivity: null,
-      activity: null,
-      pet: {
-        state: "normal",
-        scene: null,
-        image: null,
-        lastInteractionAt: 1000,
-        excitedUntil: null,
-      },
-    };
-    const gateway = await installMockGateway(page, {
-      awaitInitialRoster: false,
-      featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
-      deferredMethods: ["kids.transcribe"],
-      sessionKey,
-      operatorScopes: ["operator.sessions.write", "operator.talk"],
-      methodResponses: {
-        "users.self": { profile },
-        "agents.list": roster,
-        "sessions.create": { key: sessionKey },
-        "chat.history": {
-          sessionId: "student-session",
-          sessionInfo: { sessionId: "student-session", activeLeafEntryId: "leaf-one" },
-          messages: [],
-        },
-        "kids.transcribe": { text: "Can we practice fractions?" },
-        "kids.activity.get": activity,
-        "kids.activity.touch": { snapshot: activity },
-      },
-    });
-    await page.goto(baseUrl);
-    await page.getByRole("heading", { name: "What’s on your mind?" }).waitFor();
-    await page.getByRole("button", { name: "Dictate a message" }).click();
-    await page.waitForFunction(
-      () => document.documentElement.dataset.microphoneRequested === "true",
-    );
-    const today = page.getByRole("button", { name: "Today", exact: true });
-    const chat = page.getByRole("button", { name: "Chat", exact: true });
-    const finish = page.getByRole("button", { name: "Finish dictation", exact: true });
-    expect(await today.isDisabled()).toBe(true);
-    expect(await today.getAttribute("title")).toBe("Finish dictation to open Today.");
-    expect(await chat.getAttribute("aria-current")).toBe("page");
-    expect(await finish.isVisible()).toBe(true);
-    await page.evaluate(() => window.dispatchEvent(new Event("kids-fixture-grant-microphone")));
-    await page.waitForFunction(() => document.documentElement.dataset.recorderStarted === "true");
-    expect(await today.isDisabled()).toBe(true);
-    expect(await finish.isVisible()).toBe(true);
-    expect(await page.getByRole("button", { name: "Send message" }).isDisabled()).toBe(true);
-    expect(
-      await page.getByRole("button", { name: "Talk to Rocky", exact: true }).isDisabled(),
-    ).toBe(true);
-    await page.screenshot({ path: path.join(proof, "dictation-recording.png"), fullPage: true });
-    examples.push({ id: "dictation-recording", label: "Recording a message" });
-    await page.getByRole("button", { name: "Finish dictation" }).click();
-    const request = await gateway.waitForRequest("kids.transcribe");
-    expect(request.params).toEqual({
-      audioBase64: expect.any(String),
-      mimeType: expect.stringMatching(/^audio\/(webm|mp4|ogg)/),
-    });
-    expect((request.params as { audioBase64: string }).audioBase64.length).toBeGreaterThan(0);
-    expect(await today.isDisabled()).toBe(true);
-    expect(await today.getAttribute("title")).toBe(
-      "Wait for your words to appear before opening Today.",
-    );
-    expect(await chat.getAttribute("aria-current")).toBe("page");
-    expect(await page.locator(".kids-footer").isVisible()).toBe(true);
-    await page.getByText("Finishing your words…", { exact: true }).waitFor();
-    await gateway.resolveDeferred("kids.transcribe", { text: "Can we practice fractions?" });
-    const composer = page.getByLabel("Message Rocky", { exact: true });
-    await page.waitForFunction(
-      () =>
-        document.querySelector<HTMLTextAreaElement>("textarea")?.value ===
-        "Can we practice fractions?",
-    );
-    expect(await today.isEnabled()).toBe(true);
-    expect(await gateway.getRequests("chat.send")).toHaveLength(0);
-    await composer.fill("Can we practice fractions together?");
-    await page.screenshot({ path: path.join(proof, "dictation-draft.png"), fullPage: true });
-    examples.push({ id: "dictation-draft", label: "Review and edit before sending" });
-    await page.getByRole("button", { name: "Send message" }).click();
-    const send = await gateway.waitForRequest("chat.send");
-    expect(send.params).toMatchObject({
-      sessionKey,
-      message: "Can we practice fractions together?",
-      deliver: false,
-    });
-    expect(errors).toEqual([]);
-  } finally {
-    await context.close();
-  }
-});
-
 it("reopens media and unsent text without changing tutor or notification settings", async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   try {
@@ -603,12 +475,12 @@ it("reopens media and unsent text without changing tutor or notification setting
         }),
       };
       Object.defineProperty(navigator, "serviceWorker", {
-        value: {
+        value: Object.assign(new EventTarget(), {
           register: async () => ({
             active: { state: "activated" },
             pushManager: { getSubscription: async () => subscription },
           }),
-        },
+        }),
       });
     });
     const page = await context.newPage();
@@ -728,9 +600,8 @@ it("reopens media and unsent text without changing tutor or notification setting
         throw new Error("The saved video did not decode");
       }
     });
-    const status = page.locator(".kids-notifications-on");
-    await status.waitFor();
-    await status.click();
+    await gateway.waitForRequest("push.web.preferences.set");
+    await page.locator(".kids-notifications").waitFor({ state: "detached" });
     expect(await page.getByRole("button", { name: /notifications/i }).count()).toBe(0);
     expect(await gateway.getRequests("push.web.unsubscribe")).toHaveLength(0);
     const composer = page.getByLabel("Message Rocky", { exact: true });

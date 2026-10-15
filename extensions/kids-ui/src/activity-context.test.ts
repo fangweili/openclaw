@@ -32,6 +32,7 @@ const prepared: ActivityPreparationContext = {
       excitedUntil: null,
     },
     correctStreak: 0,
+    perfectDayStreak: 0,
     activity: null,
     daily: null,
     nextActivity: null,
@@ -96,6 +97,43 @@ describe("activity prompt partition", () => {
       }),
     ).toBeUndefined();
     expect(test.prepare).not.toHaveBeenCalled();
+  });
+  it("carries submitted reasoning and ungraded clarification into tutor context", async () => {
+    const test = harness();
+    test.prepare.mockResolvedValue({
+      ...prepared,
+      recentActivities: [
+        {
+          id: "a",
+          date: "2026-10-13",
+          title: "Equal parts",
+          subject: "Math",
+          completed: false,
+          completedAt: null,
+          questions: [],
+          attemptsOmitted: 0,
+          attempts: [
+            {
+              id: "answer",
+              at: 1,
+              activityId: "a",
+              questionId: "q",
+              answer: { kind: "explanation", text: "They fit together" },
+              answerText: "They fit together",
+              outcome: "clarify",
+              feedback: "Can you explain what fits together?",
+              ordinal: 0,
+              hintUsed: false,
+              independent: false,
+            },
+          ],
+        },
+      ],
+    });
+    const context = (await test.call())?.prependContext;
+    expect(context).toContain('"answer":"They fit together"');
+    expect(context).toContain('"outcome":"clarify"');
+    expect(context).toContain("Clarify is ungraded");
   });
   it("discards context if hook or audience expires while the worker read is pending", async () => {
     const test = harness();

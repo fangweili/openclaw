@@ -1,23 +1,29 @@
 /**
  * Owns the browser's bounded, memory-only activity projection for one verified
- * conversation. The plugin owns grading, clocks, streaks, and durable progress.
+ * conversation, including one answer draft and one submitted-answer context.
+ * The plugin owns grading, clocks, streaks, and durable progress.
  * Reads and mutations serialize; one uncertain mutation retains its exact ID for
  * explicit retry. A reconnect may recover it only for the same physical session.
  * Foreground pet/activity polls stop on hide, disconnect, or disposal. Every completion
  * is generation-fenced; disposal joins admitted RPCs and releases the pet URL.
  */
 import { isGatewayProtocolResponseError } from "@openclaw/gateway-client/browser";
-import type {
-  ActivityFeedback,
-  ActivityMutation,
-  ActivityResult,
-  ActivitySnapshot,
+import {
+  ACTIVITY_EXPLANATION_MAX_LENGTH,
+  ACTIVITY_NUMERIC_MAX_LENGTH,
+  type ActivityAnswer,
+  type ActivityFeedback,
+  type ActivityQuestion,
+  type ActivityMutation,
+  type ActivityResult,
+  type ActivitySnapshot,
 } from "@openclaw/kids-activity-contract";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import { t } from "../i18n/index.ts";
 
-type FeedbackContext = {
-  prompt: string;
+type Submission = {
+  question: ActivityQuestion;
+  answer: ActivityAnswer;
   activity: Pick<NonNullable<ActivitySnapshot["activity"]>, "id" | "title" | "subject">;
 };
 
@@ -27,7 +33,12 @@ export type KidsActivityState = {
   busy: boolean;
   error: string | null;
   canRetry: boolean;
-  feedback: (ActivityFeedback & FeedbackContext) | null;
+  feedback: ActivityFeedback | null;
+  submission: Submission | null;
+  answerDraft: string;
+  answerError: string | null;
+  answerEditing: boolean;
+  checking: boolean;
   imageUrl: string | null;
   imageError: boolean;
 };
@@ -36,7 +47,7 @@ type Binding = { sessionKey: string; sessionId: string };
 type Pending = {
   binding: Binding;
   mutation: ActivityMutation;
-  feedbackContext: FeedbackContext | null;
+  submission: Submission | null;
 };
 const POLL_MS = 15_000;
 
@@ -49,6 +60,11 @@ export function emptyKidsActivity(): KidsActivityState {
     error: null,
     canRetry: false,
     feedback: null,
+    submission: null,
+    answerDraft: "",
+    answerError: null,
+    answerEditing: false,
+    checking: false,
     imageUrl: null,
     imageError: false,
   };
@@ -91,14 +107,15 @@ export class KidsActivity {
     }
     this.publish({
       canRetry: this.pending !== null,
-      error: this.pending ? t("kids.activity.saveFailed") : null,
+      submission: this.pending?.submission ?? null,
+      error: this.pending ? this.retryMessage(this.pending) : null,
     });
     if (this.foreground) {
       void this.refresh();
     }
   }
 
-  /** Admit polling while the pet is shown in either mode; visibility never records interaction. */
+  /** Admit foreground app polling; visibility never records interaction. */
   setVisible(visible: boolean): void {
     if (this.visible === visible || this.disposed) {
       return;
@@ -172,20 +189,65 @@ export class KidsActivity {
       mutation = { kind, ...common, activityId };
     } else if (question && kind === "hint") {
       mutation = { kind, ...common, questionId: question.id };
-    } else if (question && kind === "answer" && optionId) {
-      mutation = { kind, ...common, questionId: question.id, optionId };
+    } else if (question && kind === "answer") {
+      const answer: ActivityAnswer | null =
+        question.kind === "choice"
+          ? optionId
+            ? { kind: "choice", optionId }
+            : null
+          : this.snapshot.answerDraft.trim()
+            ? { kind: question.kind, text: this.snapshot.answerDraft }
+            : null;
+      if (!answer) {
+        return Promise.resolve();
+      }
+      mutation = { kind, ...common, questionId: question.id, answer };
     } else {
       return Promise.resolve();
     }
     this.pending = {
       binding: this.binding,
       mutation,
-      feedbackContext: {
-        prompt: question?.prompt ?? "",
-        activity: { id: activity.id, title: activity.title, subject: activity.subject },
-      },
+      submission:
+        mutation.kind === "answer" && question
+          ? {
+              question,
+              answer: mutation.answer,
+              activity: { id: activity.id, title: activity.title, subject: activity.subject },
+            }
+          : null,
     };
     return this.transmit(this.pending);
+  }
+
+  /** Edit only the current question. Pending answers and accepted success stay immutable. */
+  updateAnswer(text: string): void {
+    const question = this.snapshot.snapshot?.activity?.currentQuestion;
+    if (
+      !this.binding ||
+      !question ||
+      question.kind === "choice" ||
+      this.pending ||
+      this.snapshot.feedback?.outcome === "correct" ||
+      this.disposed
+    ) {
+      return;
+    }
+    const limit =
+      question.kind === "numeric" ? ACTIVITY_NUMERIC_MAX_LENGTH : ACTIVITY_EXPLANATION_MAX_LENGTH;
+    if (text.length > limit) {
+      this.publish({ answerError: t("kids.answer.tooLong", { limit: String(limit) }) });
+      return;
+    }
+    this.publish({ answerDraft: text, answerError: null, feedback: null, submission: null });
+  }
+
+  /** Keep keyboard layout stable across blur until an explicit action changes it. */
+  setEditing(editing: boolean): void {
+    if (this.disposed || !this.binding || this.snapshot.answerEditing === editing) {
+      return;
+    }
+    this.publish({ answerEditing: editing });
   }
 
   /** Only acknowledged text or final user speech calls this; concurrent turns coalesce. */
@@ -211,7 +273,7 @@ export class KidsActivity {
 
   /** Dismiss acknowledged feedback; the next question already came from the server. */
   continue(): void {
-    this.publish({ feedback: null });
+    this.publish({ feedback: null, submission: null, answerEditing: false });
   }
 
   /** Permanently fence results, stop polling, revoke media, and join admitted requests. */
@@ -226,14 +288,26 @@ export class KidsActivity {
   private transmit(pending: Pending): Promise<void> {
     const generation = this.generation;
     this.clearTimer();
-    this.publish({ busy: true, error: null, canRetry: false });
+    this.publish({
+      busy: true,
+      checking: pending.mutation.kind === "answer",
+      error: null,
+      canRetry: false,
+      ...(pending.mutation.kind === "answer" ? { answerEditing: false } : {}),
+      ...(pending.submission ? { submission: pending.submission, feedback: null } : {}),
+    });
     return this.run(async () => {
       try {
         const { kind, ...params } = pending.mutation;
-        const result = await this.client.request<ActivityResult>(`kids.activity.${kind}`, {
-          sessionKey: pending.binding.sessionKey,
-          ...params,
-        });
+        const result = await this.client.request<ActivityResult>(
+          `kids.activity.${kind}`,
+          { sessionKey: pending.binding.sessionKey, ...params },
+          // The checker gets 30s of inference plus bounded settlement/commit
+          // grace. A later failure still retains this exact request for retry.
+          pending.mutation.kind === "answer" && pending.mutation.answer.kind === "explanation"
+            ? { timeoutMs: 45_000 }
+            : undefined,
+        );
         if (!this.current(generation)) {
           return;
         }
@@ -242,8 +316,15 @@ export class KidsActivity {
           snapshot: result.snapshot,
           loading: false,
           error: null,
-          ...(result.feedback && pending.feedbackContext
-            ? { feedback: { ...result.feedback, ...pending.feedbackContext } }
+          ...(result.feedback && pending.submission
+            ? {
+                feedback: result.feedback,
+                submission: pending.submission,
+                ...(result.feedback.outcome !== "correct" &&
+                pending.submission.answer.kind !== "choice"
+                  ? { answerDraft: pending.submission.answer.text }
+                  : {}),
+              }
             : {}),
         });
         await this.loadImage(result.snapshot, generation);
@@ -259,11 +340,19 @@ export class KidsActivity {
           this.publish({
             busy: false,
             canRetry: uncertain,
-            error: t(uncertain ? "kids.activity.saveFailed" : "kids.activity.changed"),
+            error: uncertain ? this.retryMessage(pending) : t("kids.activity.changed"),
           });
         }
       }
     }, generation);
+  }
+
+  private retryMessage(pending: Pending): string {
+    return t(
+      pending.submission && pending.submission.answer.kind !== "choice"
+        ? "kids.answer.checkFailed"
+        : "kids.activity.saveFailed",
+    );
   }
 
   private run(task: () => Promise<void>, generation: number): Promise<void> {
@@ -271,7 +360,7 @@ export class KidsActivity {
       this.admitted.delete(work);
       if (this.current(generation) && this.work === work) {
         this.work = null;
-        this.publish({ busy: false });
+        this.publish({ busy: false, checking: false });
         this.flushTouch();
         this.schedule();
       }
@@ -290,7 +379,7 @@ export class KidsActivity {
     this.pending = {
       binding: this.binding,
       mutation: { kind: "touch", requestId: crypto.randomUUID(), source },
-      feedbackContext: null,
+      submission: null,
     };
     void this.transmit(this.pending);
   }
@@ -370,12 +459,25 @@ export class KidsActivity {
   private publish(update: Partial<KidsActivityState>): void {
     const changedActivity =
       update.snapshot && update.snapshot.activity?.id !== this.snapshot.snapshot?.activity?.id;
+    const changedQuestion =
+      update.snapshot &&
+      (changedActivity ||
+        update.snapshot.activity?.currentQuestion?.id !==
+          this.snapshot.snapshot?.activity?.currentQuestion?.id);
     this.snapshot = {
       ...this.snapshot,
       ...update,
-      // A fresh answer carries its submitted heading even when the server rolls
-      // to today's quiz. Later background activity changes retire that panel.
-      ...(changedActivity && !update.feedback ? { feedback: null } : {}),
+      ...(changedQuestion ? { answerEditing: false } : {}),
+      ...(changedQuestion && update.answerDraft === undefined
+        ? { answerDraft: "", answerError: null }
+        : {}),
+      // Submitted context survives its own result and an uncertain retry. An
+      // unrelated activity replacement retires acknowledged feedback.
+      ...((changedActivity || (changedQuestion && this.snapshot.feedback?.outcome !== "correct")) &&
+      !update.feedback &&
+      !this.pending
+        ? { feedback: null, submission: null }
+        : {}),
     };
     if (!this.disposed) {
       this.onState(this.snapshot);

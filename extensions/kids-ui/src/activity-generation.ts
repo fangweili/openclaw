@@ -2,7 +2,9 @@
  * Owns preparation-time pet artwork and its immutable private image artifacts.
  * Cron owns scheduling; the activity store owns publication and progress. Each
  * accepted child preparation generates normal then excited artwork, referencing
- * the same approved pet, and publishes the pair with three complete challenges. No generation runs
+ * the same approved pet, then attempts two daily rest poses before publishing
+ * three complete challenges. Optional renders stop contributing at their deadline;
+ * late results are discarded and joined, so publication can precede tool settlement. No generation runs
  * on browser reads. A service instance admits at most two preparations and one
  * per child. Closing revokes admission and joins provider calls/file cleanup;
  * the media runtime cannot cancel an admitted provider call. Uncertain publication
@@ -33,6 +35,8 @@ export type ActivityDailyPreparation = {
   activities: DailyActivityBundle["activities"];
   normalPrompt: string;
   excitedPrompt: string;
+  boredPrompt: string;
+  sleepingPrompt: string;
   normalCaption: string;
   excitedCaption: string;
   boredCaption: string;
@@ -78,6 +82,9 @@ const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_ACTIVITY_IMAGE_BYTES = 512 * 1024;
 const MAX_PREPARATIONS = 2;
 const MAX_MEDIA_READS = 8;
+const REST_RENDER_MS = 180_000;
+const REST_PUBLICATION_CUTOFF_MS = 540_000;
+const REST_MOODS = ["bored", "sleeping"] as const;
 const FIXED_IMAGES = new Set(["reference", "bored", "sleeping"]);
 const IMAGE_ID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/u;
 const PET_IDENTITY =
@@ -113,6 +120,7 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
     input: ActivityDailyPreparation,
     authority: PreparationAuthority,
   ): Promise<{ published: boolean; date: string }> {
+    const startedAt = performance.now();
     const assertCurrent = () => {
       assertOpen();
       authority.assertCurrent();
@@ -186,11 +194,35 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
     const excited = boundedImage(excitedResult.images[0]);
     const normalBytes = await compress(normal.buffer, assertCurrent);
     const excitedBytes = await compress(excited.buffer, assertCurrent);
+    const rest = await renderRestImages({
+      timeoutMs: Math.min(
+        REST_RENDER_MS,
+        REST_PUBLICATION_CUTOFF_MS - (performance.now() - startedAt),
+      ),
+      assertCurrent,
+      generate: (mood, timeoutMs) =>
+        options.api.runtime.imageGeneration.generate({
+          ...common,
+          timeoutMs,
+          prompt: `${style}\nMake a ${mood === "bored" ? "relaxed, gently daydreaming" : "peacefully sleeping"} moment from this exact daily scene for ${input.date}. Preserve Rocky's identity, outfit and recognizable theme; adapt equipment and the whole-body pose for a safe, comfortable rest. No distress, loneliness, guilt, or suggestion that the child caused this mood.\nScene direction:\n${mood === "bored" ? input.boredPrompt : input.sleepingPrompt}`,
+          inputImages: [{ buffer: normal.buffer, mimeType: normal.mimeType }],
+        }),
+    });
     const directory = childDirectory(child.childId);
     const files: string[] = [];
     let publicationAttempted = false;
     try {
       assertCurrent();
+      const imageFiles: Array<readonly [string, Buffer]> = [
+        [normalId, normalBytes],
+        [excitedId, excitedBytes],
+      ];
+      for (const image of rest.images) {
+        const id = randomUUID();
+        bundle.restImages ??= {};
+        bundle.restImages[image.mood] = id;
+        imageFiles.push([id, image.bytes]);
+      }
       const directoryReceipt = await ensureDurableDirectory({
         directoryPath: directory,
         mode: 0o700,
@@ -199,10 +231,7 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
       if (directoryReceipt.parentSync.status === "unsupported") {
         throw new Error("Activity images require durable local storage.");
       }
-      for (const [id, bytes] of [
-        [normalId, normalBytes],
-        [excitedId, excitedBytes],
-      ] as const) {
+      for (const [id, bytes] of imageFiles) {
         const file = path.join(directory, `${id}.png`);
         assertCurrent();
         const handle = await open(file, "wx", 0o600);
@@ -235,6 +264,66 @@ export function createActivityGeneration(options: ActivityGenerationOptions) {
         await removeFiles(files);
       }
       throw error;
+    } finally {
+      await rest.settled;
+    }
+  }
+
+  /**
+   * Freeze optional results at the first of both settlements or the shared deadline.
+   * Returned bytes alone may be adopted. The caller must join settled in finally,
+   * including after publication; late provider work has no path to files or state.
+   * Authority loss rejects after joining and is never translated into a fallback.
+   */
+  async function renderRestImages(params: {
+    timeoutMs: number;
+    assertCurrent: AssertCurrent;
+    generate: (mood: (typeof REST_MOODS)[number], timeoutMs: number) => ReturnType<Generate>;
+  }) {
+    const images: Array<{ mood: (typeof REST_MOODS)[number]; bytes: Buffer }> = [];
+    if (params.timeoutMs <= 0) {
+      return { images, settled: Promise.resolve() };
+    }
+    let accepting = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        accepting = false;
+        resolve();
+      }, params.timeoutMs);
+      timer.unref?.();
+    });
+    const settled = Promise.allSettled(
+      REST_MOODS.map(async (mood) => {
+        try {
+          params.assertCurrent();
+          const result = await params.generate(mood, params.timeoutMs);
+          params.assertCurrent();
+          if (!accepting) {
+            return;
+          }
+          const image = boundedImage(result.images[0]);
+          const bytes = await compress(image.buffer, params.assertCurrent);
+          if (accepting) {
+            images.push({ mood, bytes });
+          }
+        } catch {
+          // A provider/encoding failure affects only this mood. Revocation still
+          // fails the whole preparation at its next current-authority boundary.
+          params.assertCurrent();
+        }
+      }),
+    );
+    try {
+      await Promise.race([settled, deadline]);
+      params.assertCurrent();
+      return { images, settled };
+    } catch (error) {
+      await settled;
+      throw error;
+    } finally {
+      accepting = false;
+      clearTimeout(timer);
     }
   }
 

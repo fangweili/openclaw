@@ -15,6 +15,7 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ActivityPreparationContext } from "./activity-contract.js";
 import type { ActivityGeneration, ActivityGenerationChild } from "./activity-generation.js";
+import { activityDefinitionSchema } from "./activity-validation.js";
 
 type ActivityEvidenceJob = { agentId: string; jobId: string };
 type ActivityToolRuntime = {
@@ -29,34 +30,13 @@ export type ActivityToolsOptions = {
 };
 
 const text = (maxLength: number) => Type.String({ minLength: 1, maxLength });
-const option = Type.Object({ id: text(80), text: text(500) }, { additionalProperties: false });
-const question = Type.Object(
-  {
-    id: text(80),
-    prompt: text(1200),
-    options: Type.Array(option, { minItems: 2, maxItems: 5 }),
-    correctOptionId: text(80),
-    hint: text(800),
-    explanation: text(1200),
-  },
-  { additionalProperties: false },
-);
 const preparationFields = {
   date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
-  activities: Type.Array(
-    Type.Object(
-      {
-        id: text(160),
-        title: text(160),
-        subject: text(80),
-        questions: Type.Array(question, { minItems: 3, maxItems: 3 }),
-      },
-      { additionalProperties: false },
-    ),
-    { minItems: 3, maxItems: 3 },
-  ),
+  activities: Type.Array(activityDefinitionSchema(3), { minItems: 3, maxItems: 3 }),
   normalPrompt: text(3000),
   excitedPrompt: text(1500),
+  boredPrompt: text(1500),
+  sleepingPrompt: text(1500),
   normalCaption: text(400),
   excitedCaption: text(400),
   boredCaption: text(400),
@@ -127,7 +107,7 @@ function createActivityTool(
     name: "kids_activity",
     label: "Kids activity preparation",
     description: child
-      ? "Prepare your creation-bound child's three daily challenges and shared pet scene. First prepare_context for recent quiz evidence and previous scenes; read the child's profile, notes and verified conversations separately. prepare_daily accepts exactly three fully solved three-question challenges, creative scene directions and brief mood captions; it generates exactly two pictures for the whole day with the configured image model, then atomically publishes. It waits for completion: do not call image_generate separately. A published date is a no-op. No messages are sent. evidence reads the same bounded learning evidence."
+      ? "Prepare your creation-bound child's three daily challenges and shared pet scene. First prepare_context for recent quiz evidence and previous scenes; read the child's profile, notes and verified conversations separately. prepare_daily accepts exactly three fully solved three-question challenges, creative directions for normal/excited/bored/sleeping pictures, and brief mood captions. It requires normal/excited artwork, attempts both resting pictures within its remaining budget, and atomically publishes with fixed resting fallbacks when needed. It waits for admitted image calls to settle even if readiness was already published: do not call image_generate separately. A published date is a no-op. No messages are sent. evidence reads the same bounded learning evidence."
       : "Read saved quiz attempts, support used and dated scene history for a configured child. This read-only evidence supplements transcripts and notes; do not count the same activity twice. No generation, publication or delivery is permitted.",
     parameters,
     execute: async (_toolCallId, args, signal) => {

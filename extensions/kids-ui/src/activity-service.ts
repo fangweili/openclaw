@@ -23,9 +23,12 @@ import {
 import type {
   ActivityChildBinding,
   ActivityPreparationContext,
+  ActivityPracticeOffer,
   DailyActivityBundle,
 } from "./activity-contract.js";
+import { gradeActivityExplanation } from "./activity-grading.js";
 import type { ActivityStoreOperations, ActivityStoreTarget } from "./activity-store-contract.js";
+import { encodeActivityMutation } from "./activity-store-contract.js";
 import { activityDate } from "./activity-validation.js";
 
 export type ActivityOwner = {
@@ -37,7 +40,7 @@ export type ActivityOwner = {
     childId: string,
     assertCurrent: () => void,
   ): Promise<ActivityPreparationContext>;
-  /** Private preparation lookup includes grading keys; callers must hold job authority. */
+  /** Private lookup of the original three-challenge batch, excluding extra practice; requires job authority. */
   findDaily(
     childId: string,
     date: string,
@@ -54,14 +57,29 @@ export type ActivityOwner = {
     mutation: ActivityMutation,
     assertCurrent: () => void,
   ): Promise<ActivityResult>;
-  /** Atomically accepts three challenges and one art pair for a date; later calls return published:false. */
+  /**
+   * Offer at most one extra one-question activity after today's three are complete.
+   * The existing definition is immutable: exact ID/date/content retries are no-ops,
+   * even after progress or the date changes. Does not start it or change pet clocks.
+   * Requires parent authority, rechecked at commit; retry the exact offer after an
+   * uncertain result. New offers for another local date or unfinished days fail.
+   */
+  offerPractice(
+    childId: string,
+    offer: ActivityPracticeOffer,
+    assertCurrent: () => void,
+  ): Promise<{ published: boolean; snapshot: ActivitySnapshot }>;
+  /** Atomically accepts three challenges and their mood art for a date; later calls return published:false. */
   publish(bundle: DailyActivityBundle, assertCurrent: () => void): Promise<{ published: boolean }>;
 };
 type ActiveOwner = {
   store: SqliteWorkerStore<ActivityStoreOperations>;
   databasePath: string;
   signal: AbortSignal;
+  cancel: AbortController;
   calls: Set<Promise<unknown>>;
+  /** One bounded model call per child; identical in-flight retries share settlement. */
+  grades: Map<string, { key: string; operation: Promise<ActivityResult> }>;
 };
 export type ActivityServiceOptions = {
   children: readonly ActivityChildBinding[];
@@ -90,18 +108,30 @@ export function registerKidsActivityService(
         distWorkerPath: "extensions/kids-ui/src/activity-store.worker.js",
       }),
       databasePath,
-      input: undefined,
+      input: {
+        children: options.children.map(({ childId, timeZone }) => ({ childId, timeZone })),
+        now: now(),
+      },
     });
     if (scheduler.signal.aborted) {
       await store.close();
       return;
     }
-    active = { store, databasePath, signal: scheduler.signal, calls: new Set() };
+    const cancel = new AbortController();
+    active = {
+      store,
+      databasePath,
+      cancel,
+      signal: AbortSignal.any([scheduler.signal, cancel.signal]),
+      calls: new Set(),
+      grades: new Map(),
+    };
     try {
       await options.startGeneration?.({ stateDir, signal: scheduler.signal });
     } catch (error) {
       const owner = active;
       active = null;
+      owner?.cancel.abort();
       try {
         await options.stopGeneration?.();
       } finally {
@@ -121,6 +151,7 @@ export function registerKidsActivityService(
     async stop() {
       const owner = active;
       active = null;
+      owner?.cancel.abort();
       try {
         await options.stopGeneration?.();
       } finally {
@@ -178,13 +209,91 @@ export function registerKidsActivityService(
       owner.calls.delete(operation);
     }
   }
+
+  /**
+   * Inference never holds a SQLite write transaction. Admission bounds each child
+   * to one call, replays committed receipts before inference, and tracks the whole
+   * operation through final authority-checked commit. Cancellation joins the SDK
+   * call before the service releases its worker; no grade can enter a new lifetime.
+   */
+  async function mutate(
+    childId: string,
+    mutation: ActivityMutation,
+    assertCaller: () => void,
+  ): Promise<ActivityResult> {
+    if (mutation.kind !== "answer" || mutation.answer.kind !== "explanation") {
+      return run(childId, "mutate", (target) => ({ ...target, mutation }), assertCaller, true);
+    }
+    const owner = active;
+    const child = bindings.get(childId);
+    if (!owner || owner.signal.aborted || !child) {
+      throw new Error("Activities are restarting. Try again shortly.");
+    }
+    const assertCurrent = () => {
+      owner.signal.throwIfAborted();
+      if (active !== owner) {
+        throw new Error("Activity service retired.");
+      }
+      assertCaller();
+    };
+    assertCurrent();
+    const key = encodeActivityMutation(mutation);
+    const pending = owner.grades.get(childId);
+    if (pending) {
+      if (pending.key !== key) {
+        throw new Error("Your previous answer is still being checked. Try again shortly.");
+      }
+      const result = await pending.operation;
+      assertCurrent();
+      return result;
+    }
+    if (owner.calls.size >= 32) {
+      throw new Error("Activities are busy. Try again shortly.");
+    }
+    const text = mutation.answer.text;
+    const operation = (async () => {
+      const plan = await run(
+        childId,
+        "planAnswer",
+        (target) => ({ ...target, mutation }),
+        assertCurrent,
+      );
+      if (plan.kind === "replay") {
+        return plan.result;
+      }
+      assertCurrent();
+      const grade = await gradeActivityExplanation((params) => api.runtime.llm.complete(params), {
+        agentId: child.agentId,
+        question: plan.question,
+        text,
+        signal: owner.signal,
+      });
+      assertCurrent();
+      return run(
+        childId,
+        "mutate",
+        (target) => ({ ...target, mutation, grade }),
+        assertCurrent,
+        true,
+      );
+    })();
+    owner.grades.set(childId, { key, operation });
+    owner.calls.add(operation);
+    try {
+      return await operation;
+    } finally {
+      owner.grades.delete(childId);
+      owner.calls.delete(operation);
+    }
+  }
   return {
     get: (childId, assertCurrent) => run(childId, "get", (target) => target, assertCurrent),
     prepare: (childId, assertCurrent) => run(childId, "prepare", (target) => target, assertCurrent),
     findDaily: (childId, date, assertCurrent) =>
       run(childId, "findDaily", () => ({ childId, date }), assertCurrent),
-    mutate: (childId, mutation, assertCurrent) =>
-      run(childId, "mutate", (target) => ({ ...target, mutation }), assertCurrent, true),
+    mutate,
+    offerPractice: (childId, offer, assertCurrent) =>
+      run(childId, "offerPractice", (target) => ({ ...target, offer }), assertCurrent, true),
     publish: (bundle, assertCurrent) =>
       run(bundle.childId, "publish", (target) => ({ ...target, bundle }), assertCurrent, true),
   };

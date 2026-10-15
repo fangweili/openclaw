@@ -1,6 +1,6 @@
+// @vitest-environment jsdom
 import type { ActivitySnapshot } from "@openclaw/kids-activity-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
-// @vitest-environment jsdom
 import {
   GatewayProtocolRequestError,
   retainGatewayResponsePayload,
@@ -28,7 +28,15 @@ function snapshot(): ActivitySnapshot {
     now: 1000,
     date: "2026-10-13",
     correctStreak: 0,
-    daily: { date: "2026-10-13", total: 3, completed: 0 },
+    perfectDayStreak: 0,
+    daily: {
+      date: "2026-10-13",
+      total: 3,
+      completed: 0,
+      questionsSolved: 0,
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+    },
     nextActivity: null,
     pet: { state: "normal", scene: null, image: null, lastInteractionAt: null, excitedUntil: null },
     activity: {
@@ -41,6 +49,7 @@ function snapshot(): ActivitySnapshot {
       currentIndex: 0,
       total: 3,
       currentQuestion: {
+        kind: "choice",
         id: "q1",
         prompt: "Half of four pieces?",
         hint: null,
@@ -222,7 +231,7 @@ describe("kids activity ownership", () => {
       snapshot: snapshot(),
       feedback: {
         questionId: "q1",
-        correct: true,
+        outcome: "correct",
         independent: true,
         explanation: "Four divided into two equal groups gives two.",
       },
@@ -232,8 +241,8 @@ describe("kids activity ownership", () => {
     expect(request.mock.calls.filter(([method]) => method === "kids.activity.touch")).toHaveLength(
       1,
     );
-    expect(owner.state.feedback?.prompt).toBe("Half of four pieces?");
-    expect(owner.state.feedback?.correct).toBe(true);
+    expect(owner.state.submission?.question.prompt).toBe("Half of four pieces?");
+    expect(owner.state.feedback?.outcome).toBe("correct");
     const nextDay = snapshot();
     nextDay.activity!.id = "tomorrows-puzzle";
     request.mockResolvedValueOnce(nextDay);
@@ -257,21 +266,21 @@ describe("kids activity ownership", () => {
       snapshot: today,
       feedback: {
         questionId: "q3",
-        correct: true,
+        outcome: "correct",
         independent: true,
         explanation: "Four divided into two equal groups gives two.",
       },
     });
     await owner.act("answer", "a");
     expect(owner.state.snapshot?.activity?.id).toBe("fresh-discovery");
-    expect(owner.state.feedback).toMatchObject({
-      prompt: "Half of four pieces?",
+    expect(owner.state.submission).toMatchObject({
+      question: { prompt: "Half of four pieces?" },
       activity: { id: "fractions", title: "A curious cake", subject: "Math" },
-      explanation: "Four divided into two equal groups gives two.",
     });
+    expect(owner.state.feedback?.explanation).toBe("Four divided into two equal groups gives two.");
     request.mockResolvedValueOnce(today);
     await owner.refresh();
-    expect(owner.state.feedback?.activity.id).toBe("fractions");
+    expect(owner.state.submission?.activity.id).toBe("fractions");
     owner.continue();
     expect(owner.state.feedback).toBeNull();
     expect(owner.state.snapshot?.activity?.title).toBe("Today's fresh discovery");
@@ -319,4 +328,155 @@ describe("kids activity ownership", () => {
     expect(owner.state.imageUrl).toBeNull();
     vi.unstubAllGlobals();
   });
+});
+
+it("keeps a typed answer through checking and rollover without submitting twice", async () => {
+  const { owner, request } = setup();
+  const current = snapshot();
+  current.activity!.currentQuestion = {
+    id: "q1",
+    kind: "numeric",
+    prompt: "Four equal sections?",
+    unit: "cm",
+    hint: null,
+  };
+  request.mockResolvedValueOnce(current);
+  await owner.refresh();
+  owner.updateAnswer("36");
+  owner.setEditing(true);
+  expect(owner.state.answerEditing).toBe(true);
+  let complete!: (result: unknown) => void;
+  request.mockReturnValueOnce(
+    new Promise((resolve) => {
+      complete = resolve;
+    }),
+  );
+  const checking = owner.act("answer");
+  owner.updateAnswer("40");
+  await owner.act("answer");
+  expect(owner.state.checking).toBe(true);
+  expect(owner.state.answerEditing).toBe(false);
+  expect(owner.state.answerDraft).toBe("36");
+  expect(owner.state.submission?.answer).toEqual({ kind: "numeric", text: "36" });
+  const next = snapshot();
+  next.activity!.currentQuestion!.id = "q2";
+  complete({
+    snapshot: next,
+    feedback: {
+      questionId: "q1",
+      outcome: "correct",
+      independent: true,
+      explanation: "Four groups of nine make 36.",
+    },
+  });
+  await checking;
+  expect(request.mock.calls.filter(([method]) => method === "kids.activity.answer")).toHaveLength(
+    1,
+  );
+  expect(owner.state.answerDraft).toBe("");
+  expect(owner.state.submission?.question.id).toBe("q1");
+  expect(owner.state.submission?.answer).toEqual({ kind: "numeric", text: "36" });
+  owner.continue();
+  expect(owner.state.submission).toBeNull();
+  expect(owner.state.snapshot?.activity?.currentQuestion?.id).toBe("q2");
+});
+
+it("edits clarification with a new request but retries an uncertain answer with its exact original text and ID", async () => {
+  const { owner, request } = setup();
+  const current = snapshot();
+  current.activity!.currentQuestion = {
+    id: "q1",
+    kind: "explanation",
+    prompt: "Do equal borders enclose equal areas?",
+    hint: null,
+  };
+  request.mockResolvedValueOnce(current);
+  await owner.refresh();
+  owner.updateAnswer("No.");
+  request.mockResolvedValueOnce({
+    snapshot: current,
+    feedback: {
+      questionId: "q1",
+      outcome: "clarify",
+      independent: true,
+      explanation: "Tell me how you compared the spaces.",
+    },
+  });
+  await owner.act("answer");
+  const first = request.mock.calls.find(([method]) => method === "kids.activity.answer")!;
+  expect(owner.state.answerDraft).toBe("No.");
+  owner.updateAnswer("No. Their areas are 9 and 24.");
+  expect(owner.state.feedback).toBeNull();
+  request.mockRejectedValueOnce(new Error("Connection closed after submission"));
+  await owner.act("answer");
+  const second = request.mock.calls.filter(([method]) => method === "kids.activity.answer")[1]!;
+  expect(second[1]).toMatchObject({
+    answer: { kind: "explanation", text: "No. Their areas are 9 and 24." },
+  });
+  expect(second[1]).not.toMatchObject({ requestId: (first[1] as { requestId: string }).requestId });
+  owner.updateAnswer("Do not replace my submitted words");
+  owner.disconnect();
+  expect(owner.state.submission).toBeNull();
+  owner.bind(binding);
+  request.mockResolvedValueOnce(current);
+  await owner.refresh();
+  request.mockResolvedValueOnce({
+    snapshot: current,
+    feedback: {
+      questionId: "q1",
+      outcome: "revise",
+      independent: false,
+      explanation: "Check the second area once more.",
+    },
+  });
+  await owner.retry();
+  expect(request.mock.calls.filter(([method]) => method === "kids.activity.answer")).toEqual([
+    first,
+    second,
+    second,
+  ]);
+  expect(owner.state.answerDraft).toBe("No. Their areas are 9 and 24.");
+  owner.updateAnswer("Updated after feedback");
+  expect(owner.state.answerDraft).toBe("Updated after feedback");
+  expect(owner.state.submission).toBeNull();
+});
+
+it("bounds unsent answers, preserves them through polling, and clears them when the question changes", async () => {
+  const { owner, request } = setup();
+  const current = snapshot();
+  current.activity!.currentQuestion = {
+    id: "q1",
+    kind: "numeric",
+    prompt: "How many?",
+    unit: null,
+    hint: null,
+  };
+  request.mockResolvedValueOnce(current);
+  await owner.refresh();
+  owner.updateAnswer("1/2");
+  owner.setEditing(true);
+  owner.updateAnswer("9".repeat(41));
+  expect(owner.state.answerDraft).toBe("1/2");
+  expect(owner.state.answerError).toContain("40");
+  request.mockResolvedValueOnce(current);
+  await owner.refresh();
+  expect(owner.state.answerDraft).toBe("1/2");
+  expect(owner.state.answerEditing).toBe(true);
+  owner.setEditing(false);
+  expect(owner.state.answerDraft).toBe("1/2");
+  owner.setEditing(true);
+  const next = structuredClone(current);
+  next.activity!.currentQuestion!.id = "q2";
+  request.mockResolvedValueOnce(next);
+  await owner.refresh();
+  expect(owner.state.answerDraft).toBe("");
+  expect(owner.state.answerError).toBeNull();
+  expect(owner.state.answerEditing).toBe(false);
+  owner.setEditing(true);
+  owner.continue();
+  expect(owner.state.answerEditing).toBe(false);
+  owner.setEditing(true);
+  owner.disconnect();
+  expect(owner.state.answerEditing).toBe(false);
+  expect(request.mock.calls.every(([method]) => method === "kids.activity.get")).toBe(true);
 });

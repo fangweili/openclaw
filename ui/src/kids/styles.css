@@ -16,37 +16,24 @@ html[data-kids] body {
   -webkit-text-size-adjust: 100%;
 }
 
-html[data-kids],
-html[data-kids] body,
-.kids-thread,
-.kids-today,
-.kids-composer textarea,
-.kids-message-content pre,
-.kids-message-content table {
-  /* Repeat at native scroll boundaries, where inherited touch actions reset. */
-  touch-action: pan-x pan-y;
-}
-
-/* Safari resets touch action at scroll boundaries. Older releases also ignore
-   manipulation for double-tap; touch-gestures.ts owns that fallback and pinch. */
-@supports (-webkit-touch-callout: none) {
-  html[data-kids],
-  html[data-kids] body,
-  .kids-thread,
-  .kids-today,
-  .kids-composer textarea,
-  .kids-message-content pre,
-  .kids-message-content table {
-    touch-action: manipulation;
-  }
+/* Restore native gestures on controls despite the shared Control UI's policy. */
+.kids-shell :is(a, button, label, summary, input, select, textarea, [role="button"]) {
+  touch-action: auto;
 }
 
 .kids-shell {
+  --kids-navigation-inset: max(24px, env(safe-area-inset-top));
+
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100dvh;
   max-width: 820px;
   margin: 0 auto;
+}
+
+.kids-shell--with-navigation {
+  --kids-navigation-inset: calc(max(12px, env(safe-area-inset-top)) + 60px);
 }
 
 .kids-shell button,
@@ -65,61 +52,65 @@ html[data-kids] body,
   opacity: 0.45;
 }
 
+.kids-today[hidden],
 .kids-thread-area[hidden],
 .kids-footer[hidden] {
   display: none;
 }
 
-.kids-mode-switch {
+.kids-page-navigation {
+  position: absolute;
+  z-index: 2;
+  top: max(12px, env(safe-area-inset-top));
+  left: 16px;
+  max-width: calc(100% - 32px);
+  padding: 0 6px;
+  border-radius: 26px;
+  background: var(--kids-paper);
+  box-shadow: 0 2px 12px var(--kids-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kids-page-navigation button {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 18px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 22px;
+  background: transparent;
+  color: var(--kids-muted);
+  font-size: 14px;
+}
+
+.kids-page-navigation .kids-return-solve {
+  padding: 8px 12px;
+  color: var(--kids-accent);
   background: var(--kids-tint);
 }
 
-.kids-mode-switch button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 88px;
-  padding: 8px 18px;
-  border-radius: 14px;
-  color: var(--kids-muted);
-  background: transparent;
-  font-weight: 650;
-}
-
-.kids-mode-switch .kids-today-mode {
-  gap: 4px;
-  padding: 0 12px 0 4px;
-}
-
-.kids-mode-pet {
-  display: block;
-  flex: 0 0 46px;
-  width: 46px;
-  height: 46px;
-}
-
-.kids-mode-pet img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.kids-mode-switch [aria-current="page"] {
-  color: var(--kids-accent);
-  background: var(--kids-paper);
-}
-
 .kids-today {
+  --kids-page-title-height: 44px;
+
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 8px 32px max(32px, env(safe-area-inset-bottom));
+  padding: max(24px, env(safe-area-inset-top)) 32px max(32px, env(safe-area-inset-bottom));
+}
+
+/* Today and Solve reserve the same title row, even during an active question. */
+.kids-page-title {
+  display: grid;
+  place-items: center;
+  grid-column: 1 / -1;
+  min-height: var(--kids-page-title-height);
+  margin: 0 0 24px;
+}
+
+.kids-solve {
+  scroll-padding-top: var(--kids-navigation-inset);
 }
 
 .kids-pet {
@@ -163,25 +154,6 @@ html[data-kids] body,
   animation: kids-pet-bounce 1.5s ease-in-out infinite;
 }
 
-/* The real image briefly leaves layout; its wrapper keeps its space. Fixed
-   positioning lets it cross the Today scroller without clipping or a clone. */
-.kids-shell img.kids-pet-in-transit {
-  position: fixed;
-  z-index: 5;
-  top: var(--kids-pet-top);
-  left: var(--kids-pet-left);
-  width: var(--kids-pet-width);
-  height: var(--kids-pet-height);
-  margin: 0;
-  pointer-events: none;
-  transform-origin: top left;
-  animation: none;
-}
-
-.kids-pet-obscured {
-  visibility: hidden;
-}
-
 .kids-pet-caption {
   margin: 18px auto 0;
   max-width: 420px;
@@ -189,7 +161,114 @@ html[data-kids] body,
   line-height: 1.6;
 }
 
+.kids-home-content {
+  width: 100%;
+  max-width: 580px;
+  min-width: 0;
+  margin: auto;
+}
+
+.kids-home-title {
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.kids-shell .kids-home-chat,
+.kids-shell .kids-home-card {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--kids-border);
+  border-radius: 22px;
+  background: var(--kids-paper);
+  text-align: left;
+}
+
+.kids-shell .kids-home-chat {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 100px;
+  margin-bottom: 14px;
+}
+
+.kids-home-card-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kids-home-card-copy span,
+.kids-home-detail {
+  margin-top: 5px;
+  color: var(--kids-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.kids-shell .kids-home-chat strong,
+.kids-shell .kids-home-card strong {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.kids-home-icon,
+.kids-home-arrow {
+  display: flex;
+  color: var(--kids-accent);
+}
+
+.kids-home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.kids-shell .kids-home-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 142px;
+}
+
+.kids-home-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: var(--kids-accent);
+}
+
+.kids-home-soon {
+  color: var(--kids-muted);
+  font-size: 11px;
+}
+
+.kids-shell .kids-home-solve {
+  border-color: var(--kids-accent);
+  background: var(--kids-tint);
+}
+
+.kids-shell .kids-home-card:disabled {
+  color: var(--kids-muted);
+  background: var(--kids-background);
+  opacity: 1;
+}
+
+.kids-shell .kids-home-card:disabled .kids-home-card-top {
+  color: var(--kids-muted);
+}
+
 .kids-activity-card {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
   max-width: 580px;
   padding: 28px;
   margin: auto;
@@ -360,6 +439,85 @@ html[data-kids] body,
   border-bottom: 1px solid var(--kids-border);
 }
 
+.kids-activity-card--recap {
+  display: flex;
+  flex-direction: column;
+}
+
+.kids-daily-recap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.kids-daily-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--kids-accent);
+  font-size: 15px;
+}
+
+.kids-daily-recap h2 {
+  margin: 14px 0 8px;
+  font-size: 30px;
+}
+
+.kids-daily-summary {
+  margin: 0;
+  color: var(--kids-muted);
+  line-height: 1.6;
+}
+
+.kids-daily-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 28px 0 0;
+  padding: 24px 0;
+  border-block: 1px solid var(--kids-border);
+}
+
+.kids-daily-stats > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kids-daily-stats dt {
+  margin-top: 7px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kids-daily-stats dd {
+  margin: 0;
+}
+
+.kids-daily-stats .kids-daily-value {
+  order: -1;
+  font-size: 34px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.kids-daily-footer {
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.kids-daily-footer p {
+  margin: 0 0 16px;
+  color: var(--kids-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.kids-daily-footer button {
+  width: 100%;
+}
+
 @keyframes kids-pet-breathe {
   50% {
     transform: scale(1.025);
@@ -390,32 +548,80 @@ html[data-kids] body,
   }
 }
 
-/* Landscape tablets share one Today scroller: Rocky on the left, the full
-   challenge on the right. Taller content remains reachable instead of clipped. */
+/* Only Today/Solve use this landscape stage. Its viewport-based anchors do not
+   depend on question/recap height; overflow still scrolls on compact screens.
+   Chat keeps its existing full-height transcript and bottom composer. */
 @media (orientation: landscape) and (min-width: 933px) and (min-height: 560px) {
   .kids-today {
+    --kids-stage-height: 520px;
+    --kids-stage-gap: clamp(24px, calc(100dvh - 704px), 64px);
+
     box-sizing: border-box;
     display: grid;
     align-self: center;
     width: min(100vw, 1100px);
-    grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 300px) minmax(0, 540px);
+    justify-content: center;
     align-items: start;
-    gap: 24px;
-    padding-top: 24px;
+    align-content: start;
+    gap: var(--kids-stage-gap) 36px;
+    padding-top: max(
+      24px,
+      env(safe-area-inset-top),
+      calc(
+        (100dvh - var(--kids-page-title-height) - var(--kids-stage-gap) - var(--kids-stage-height)) /
+          2
+      )
+    );
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
 
   .kids-pet {
     min-width: 0;
     width: 100%;
-    margin: 24px 0 0;
+    margin: 0;
+    padding-top: 48px;
+  }
+
+  .kids-pet-picture {
+    width: 100%;
+    aspect-ratio: 1;
+  }
+
+  .kids-pet-picture img {
+    width: 100%;
+  }
+
+  .kids-home-content,
+  .kids-activity-card {
+    margin: 0;
+    min-height: var(--kids-stage-height);
+  }
+
+  .kids-home-content {
+    display: grid;
+    grid-template-rows: 104px 1fr;
+    gap: 16px;
+  }
+
+  .kids-home .kids-home-chat {
+    margin: 0;
+  }
+
+  .kids-home .kids-home-card {
+    justify-content: center;
   }
 
   .kids-activity-card {
-    box-sizing: border-box;
-    min-width: 0;
-    width: 100%;
-    margin: 0;
-    padding: 20px;
+    padding: 16px;
+  }
+
+  .kids-activity-daily {
+    margin-bottom: 8px;
+  }
+
+  .kids-activity-card h2 {
+    margin: 6px 0 12px;
   }
 
   .kids-activity-options {
@@ -428,21 +634,41 @@ html[data-kids] body,
   }
 
   .kids-activity-progress {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   .kids-activity-question {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   .kids-activity-actions {
-    margin-top: 16px;
+    margin-top: 10px;
+  }
+
+  .kids-page-title {
+    margin: 0;
+  }
+
+  .kids-activity-card--recap {
+    padding: 32px;
+  }
+
+  .kids-daily-recap h2 {
+    margin: 14px 0 8px;
   }
 }
 
 @media (max-width: 560px) {
   .kids-today {
-    padding: 0 16px max(24px, env(safe-area-inset-bottom));
+    /* Reserve two title lines plus a clear row for floating navigation on every
+       page, so wrapped recap greetings cannot move the shared frame. */
+    --kids-page-title-height: 114px;
+
+    padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  .kids-page-title {
+    box-sizing: border-box;
+    padding-top: 44px;
   }
   .kids-pet-picture {
     width: 240px;
@@ -453,6 +679,24 @@ html[data-kids] body,
   .kids-activity-card h2 {
     font-size: 23px;
   }
+
+  .kids-shell .kids-home-card,
+  .kids-shell .kids-home-chat {
+    padding: 16px;
+  }
+
+  .kids-home-grid {
+    gap: 10px;
+  }
+
+  .kids-home-title {
+    font-size: 25px;
+  }
+
+  .kids-shell .kids-home-chat strong,
+  .kids-shell .kids-home-card strong {
+    font-size: 19px;
+  }
 }
 
 .kids-shell button:focus-visible {
@@ -460,70 +704,19 @@ html[data-kids] body,
   outline-offset: 4px;
 }
 
-.kids-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: max(18px, env(safe-area-inset-top)) 32px 18px;
-  border-bottom: 1px solid var(--kids-border);
-}
-
-.kids-header-main {
-  flex-shrink: 0;
-}
-
 .kids-status {
-  margin: 3px 0 0;
+  margin: 0 0 16px;
   color: var(--kids-muted);
   font-size: 13px;
 }
 
-.kids-status:empty {
-  margin: 0;
-}
-
-.kids-child {
-  min-width: 0;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--kids-muted);
-  font-size: 14px;
-}
-
-.kids-header-actions {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-}
-
 .kids-notifications {
-  flex-shrink: 0;
-  width: 44px;
+  flex: 0 0 100%;
+  padding: 4px 12px;
   background: transparent;
-  border-radius: 50%;
+  border-radius: 22px;
   color: var(--kids-muted) !important;
-}
-
-.kids-notifications-on {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--kids-tint);
-  color: var(--kids-accent);
-}
-
-.kids-notifications-on svg {
-  width: 18px;
-  height: 18px;
+  font-size: 14px !important;
 }
 
 .kids-thread-area {
@@ -534,12 +727,15 @@ html[data-kids] body,
 }
 
 .kids-thread {
+  /* Keep absolute accessibility labels inside the transcript's scroll boundary. */
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow: auto;
   overflow-anchor: none;
   overscroll-behavior: contain;
-  padding: 32px;
+  padding: var(--kids-navigation-inset) 32px 32px;
+  scroll-padding-top: var(--kids-navigation-inset);
   scrollbar-width: thin;
 }
 
@@ -654,6 +850,7 @@ html[data-kids] body,
 
 .kids-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px;
   padding: 16px 32px max(24px, env(safe-area-inset-bottom));
@@ -799,26 +996,11 @@ html[data-kids] body,
 }
 
 @media (max-width: 560px) {
-  .kids-header {
-    gap: 8px;
-    padding: max(18px, env(safe-area-inset-top)) 20px 18px;
-  }
-
-  .kids-mode-switch button {
-    min-width: 64px;
-    padding: 8px;
-  }
-
-  .kids-mode-switch .kids-today-mode {
-    padding: 0 8px 0 0;
-  }
-
   .kids-thread {
-    padding: 24px 20px;
+    padding: var(--kids-navigation-inset) 20px 24px;
   }
 
   .kids-footer {
-    flex-wrap: wrap;
     justify-content: center;
     gap: 10px;
     padding: 12px 16px max(16px, env(safe-area-inset-bottom));
@@ -978,8 +1160,136 @@ html[data-kids] body,
 }
 
 .kids-dictation-status {
-  margin: 0 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--kids-tint);
+  color: var(--kids-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.kids-dictation-status[data-finishing="true"]::before {
+  content: "";
+  flex: 0 0 14px;
+  height: 14px;
+  border: 2px solid var(--kids-border);
+  border-top-color: var(--kids-accent);
+  border-radius: 50%;
+  animation: kids-dictation-progress 1s linear infinite;
+}
+
+@keyframes kids-dictation-progress {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kids-dictation-status[data-finishing="true"]::before {
+    animation: none;
+  }
+}
+
+/* Solve keeps typed and dictated answers visible through review. Its owner
+   holds keyboard layout across blur so a tap cannot move its target. */
+.kids-answer-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kids-answer-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--kids-border);
+  border-radius: 15px;
+  background: var(--kids-background);
+  color: var(--kids-ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.kids-answer-input:focus-visible {
+  outline: 2px solid var(--kids-accent);
+  outline-offset: 2px;
+}
+
+.kids-answer-number {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.kids-answer-number input {
+  width: 150px;
+  min-width: 0;
+  min-height: 58px;
+  font-size: 23px;
+}
+
+.kids-answer-note {
+  margin: 6px 0 0;
+  color: var(--kids-muted);
+  font-size: 12px;
+}
+
+.kids-answer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.kids-answer-actions .kids-activity-primary {
+  margin-left: auto;
+}
+
+.kids-shell .kids-answer-dictate {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 5px;
+  background: transparent;
   color: var(--kids-muted);
   font-size: 14px;
-  line-height: 1.5;
+}
+
+.kids-answer-result--populated {
+  margin-top: 15px;
+  padding: 15px 17px;
+  border-radius: 15px;
+  background: var(--kids-tint);
+  line-height: 1.6;
+}
+
+.kids-answer-result strong,
+.kids-answer-result span {
+  display: block;
+}
+
+.kids-solve--editing {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: max(24px, env(safe-area-inset-top));
+  row-gap: 24px;
+}
+
+.kids-solve--editing .kids-pet {
+  display: none;
+}
+
+.kids-solve--editing .kids-activity-card {
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  min-height: 0;
 }

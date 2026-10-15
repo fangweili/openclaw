@@ -93,32 +93,6 @@ function type(composer: HTMLTextAreaElement, text: string) {
   composer.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-it("blocks Safari zoom only while the app is active, preserving ordinary touch defaults", async () => {
-  const app = new KidsApp(document.createElement("div"));
-  const dispatch = (eventType: string) => {
-    const event = new Event(eventType, { bubbles: true, cancelable: true });
-    document.dispatchEvent(event);
-    return event.defaultPrevented;
-  };
-  expect(dispatch("gesturestart")).toBe(false);
-  try {
-    app.start();
-    app.start();
-    expect(dispatch("gesturestart")).toBe(true);
-    expect(dispatch("gesturechange")).toBe(true);
-    expect(dispatch("touchstart")).toBe(false);
-    expect(dispatch("touchmove")).toBe(false);
-    expect(dispatch("touchend")).toBe(false);
-    expect(dispatch("click")).toBe(false);
-  } finally {
-    await app.dispose();
-  }
-  expect(dispatch("gesturestart")).toBe(false);
-  expect(dispatch("gesturechange")).toBe(false);
-  app.start();
-  expect(dispatch("gesturestart")).toBe(false);
-});
-
 describe("kids send recovery action", () => {
   it.each([false, true])(
     "clears only the original acknowledged draft (edited: %s)",
