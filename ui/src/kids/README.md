@@ -28,7 +28,7 @@ the app or reading a recap. Existing saved three-part days keep their original
 nine-question goal and use **Keep going** between their already-prepared parts.
 After the final answer's feedback is dismissed with **Continue**, a completed
 batch shows its recap instead of the old question title, subject and progress bar.
-The daily recap contains scheduled results; extra practice shows only that batch's
+The daily recap contains scheduled results; **This extra batch** shows only that batch's
 solved questions, first-try answers and distinct hinted questions. **Perfect days**
 is the server's separate day streak and does not change for optional work.
 Perfect days counts consecutive local days when every scheduled question was
@@ -39,8 +39,8 @@ Completion has one **Keep going** action; the existing **Today** navigation retu
 home. During generation it reads **Preparing your next problems…**; a failed or
 uncertain request keeps the recap and changes that action to **Try again**. It
 reuses the original request and completed predecessor instead of generating twice.
-Today keeps the fixed daily goal complete while extra practice is in progress and
-shows saved extra work separately. An older finished batch is dated explicitly.
+Today keeps the fixed daily solved count visible while extra practice is in progress
+and shows saved extra work separately. An older finished batch is dated explicitly.
 An unfinished carryover stays resumable; after its last feedback, the server's
 newest prepared work appears without counting the old work toward today's goal.
 

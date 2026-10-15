@@ -188,7 +188,12 @@ async function readConversation(
 ): Promise<ConversationContext> {
   let history: unknown;
   try {
-    history = await gateway.request("chat.history", { sessionKey, limit: 40 }, { timeoutMs: 5000 });
+    // The runtime defaults to write scope; own-session history needs its explicit read scope.
+    history = await gateway.request(
+      "chat.history",
+      { sessionKey, limit: 40 },
+      { timeoutMs: 5000, scopes: ["operator.sessions.read"] },
+    );
   } catch (error) {
     assertActive();
     const failure = asOptionalRecord(error);

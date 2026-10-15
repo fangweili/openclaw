@@ -37,15 +37,16 @@ export function renderKidsHome(
   const todayComplete = completed !== null && completed.date === activity.snapshot?.date;
   const selected = activity.snapshot?.activity;
   const daily = activity.snapshot?.daily;
+  const dailySolved = String(daily?.questionsSolved ?? 0);
   const extras = activity.snapshot?.extras.questionsSolved ?? 0;
   const detail = activity.preparing
     ? t("kids.activity.preparing")
     : todayComplete
       ? selected?.scope === "extra" && !selected.completed
-        ? t("kids.home.solveExtraResume")
+        ? t("kids.home.solveExtraResume", { count: dailySolved })
         : extras > 0
-          ? t("kids.home.solveExtraComplete", { count: String(extras) })
-          : t("kids.home.solveComplete")
+          ? t("kids.home.solveExtraComplete", { daily: dailySolved, extra: String(extras) })
+          : t("kids.home.solveComplete", { count: dailySolved })
       : selected?.started && !selected.completed && selected.date !== activity.snapshot?.date
         ? t("kids.home.solveResume")
         : daily && daily.date === activity.snapshot?.date

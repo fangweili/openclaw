@@ -133,7 +133,7 @@ describe("next Solve batch generation", () => {
     expect(test.request).toHaveBeenCalledExactlyOnceWith(
       "chat.history",
       { sessionKey: child.sessionKey, limit: 40 },
-      { timeoutMs: 5000 },
+      { timeoutMs: 5000, scopes: ["operator.sessions.read"] },
     );
     expect(test.complete).toHaveBeenCalledOnce();
     const params = test.complete.mock.calls[0]![0];

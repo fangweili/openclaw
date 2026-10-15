@@ -499,7 +499,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       await page.setViewportSize(viewport);
       const recapFrame = await readKidsFrame(page);
       await page.getByRole("button", { name: "Today", exact: true }).click();
-      await page.getByText("Daily goal complete", { exact: true }).waitFor();
+      await page.getByText("Daily goal: 9 solved", { exact: true }).waitFor();
       expect(await readKidsFrame(page)).toEqual(recapFrame);
       const id = `home-complete-${viewport.width}-${viewport.height}`;
       await page.screenshot({ path: path.join(proof, `${id}.png`) });
@@ -799,7 +799,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     expect(await gateway.getRequests("kids.activity.continue")).toHaveLength(0);
     await page.getByRole("button", { name: "Today", exact: true }).click();
     await page
-      .getByText("Daily goal complete · Continue extra practice", { exact: true })
+      .getByText("Daily goal: 10 solved · Continue extra practice", { exact: true })
       .waitFor();
     const almost = structuredClone(extra);
     almost.activity!.currentIndex = 9;
@@ -830,6 +830,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     await gateway.setMethodResponse("kids.activity.get", finished);
     await card.getByRole("button", { name: "Continue", exact: true }).click();
     await card.locator(".kids-daily-mark", { hasText: "Extra practice complete!" }).waitFor();
+    await card.getByRole("heading", { name: "This extra batch", exact: true }).waitFor();
     expect(await card.locator(".kids-daily-value").allTextContents()).toEqual(["7", "2", "4"]);
     expect(await card.locator("button").count()).toBe(1);
     await capture(
@@ -838,7 +839,7 @@ it("keeps the daily goal complete while Keep going prepares, retries, and opens 
     );
     const extraFrame = await readKidsFrame(page);
     await page.getByRole("button", { name: "Today", exact: true }).click();
-    await page.getByText("Daily goal complete · 10 extra solved", { exact: true }).waitFor();
+    await page.getByText("Daily goal: 10 solved · 10 extra solved", { exact: true }).waitFor();
     expect(await readKidsFrame(page)).toEqual(extraFrame);
     await capture("home-extra-complete-landscape", "Today — fixed daily goal plus extra practice");
     await page.getByRole("button", { name: "Solve", exact: true }).click();

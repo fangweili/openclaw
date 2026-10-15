@@ -211,7 +211,9 @@ yesterday. Failure leaves the completed recap available with Try again.
 admission. It combines the daily `learningBrief` snapshot of profile/learning notes,
 full preceding-batch evidence, up to fourteen bounded older activities, and an
 optional text-only tail of the child's own canonical chat (at most forty messages
-and 12,000 characters). Conversation fills gaps since notes were updated, especially
+and 12,000 characters). That read explicitly requests `operator.sessions.read`;
+the host retains the child's own-session boundary without requiring broad read
+permissions. Conversation fills gaps since notes were updated, especially
 read-only voice; it is unscored context, never another independent success.
 Saved Talk turns retain both speakers; voice input has unspecified attribution
 and tutor replies are teaching, so neither establishes independent child success.

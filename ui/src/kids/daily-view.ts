@@ -93,7 +93,7 @@ export function renderKidsRecap(
           : t("kids.daily.completedDate", { date: dayLabel(recap.date) })
       }
     </p>
-    <h2>${t("kids.daily.title")}</h2>
+    <h2>${t(recap.scope === "extra" ? "kids.daily.extraTitle" : "kids.daily.title")}</h2>
     <p class="kids-daily-summary">
       ${t(recap.questionsSolved === 1 ? "kids.daily.questionOne" : "kids.daily.questions", {
         count: String(recap.questionsSolved),

@@ -216,7 +216,7 @@ it("keeps final-answer feedback before replacing the question with the full dail
     expect(solve.textContent).not.toContain("The last question");
     expect(solve.textContent).not.toContain("Science");
     expect(solve.querySelector(".kids-activity-count, [role=progressbar]")).toBeNull();
-    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Daily goal complete");
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain("Daily goal: 10 solved");
     expect(solve.querySelectorAll(".kids-activity-card button")).toHaveLength(1);
     solve.querySelector<HTMLButtonElement>(".kids-daily-footer button")!.click();
     expect(actions.activity.start).toHaveBeenCalledOnce();
@@ -239,18 +239,14 @@ it("dates older work and preserves the nine-question goal of a saved multi-part 
     expect(solve.querySelector("h1")!.textContent?.trim()).toBe("Nice exploring, Child!");
     expect(solve.textContent).toContain("Completed for Oct 13, 2026");
     expect(solve.textContent).not.toContain("tomorrow");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
-      "Daily goal complete",
-    );
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
     snapshot.daily!.date = snapshot.date;
     snapshot.daily!.completed = 0;
     snapshot.activity!.completed = false;
     paint();
     expect(solve.querySelector(".kids-daily-recap")).toBeNull();
     expect(solve.textContent).toContain("Continuing from Oct 13, 2026");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
-      "Daily goal complete",
-    );
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
     snapshot.activity!.date = snapshot.date;
     snapshot.activity!.completed = true;
     snapshot.daily!.total = 3;
@@ -263,9 +259,7 @@ it("dates older work and preserves the nine-question goal of a saved multi-part 
     expect(solve.textContent).toContain("Adventure complete!");
     expect(solve.textContent).toContain("Keep going");
     expect(solve.textContent).toContain("Daily goal · 3 of 9 solved");
-    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain(
-      "Daily goal complete",
-    );
+    expect(root.querySelector(".kids-home-solve")!.textContent).not.toContain("Daily goal:");
   } finally {
     render(null, root);
   }
@@ -301,30 +295,52 @@ it("keeps one completion action through generation and retry, then separates ext
 
     state.activity.canRetry = false;
     state.activity.error = null;
-    data.perfectDayStreak = 3;
-    data.extras.questionsSolved = 20;
+    data.daily = {
+      ...data.daily!,
+      questionTotal: 9,
+      questionsSolved: 9,
+      firstTryCorrect: 6,
+      hintedQuestions: 2,
+      total: 3,
+      completed: 3,
+    };
+    data.extras.questionsSolved = 1;
     data.activity = {
       ...data.activity!,
-      id: "extra-two",
+      id: "extra-sample",
       scope: "extra",
-      firstTryCorrect: 9,
-      hintedQuestions: 1,
+      total: 1,
+      currentIndex: 1,
+      firstTryCorrect: 1,
+      hintedQuestions: 0,
     };
     paint();
     expect(card.textContent).toContain("Extra practice complete!");
+    expect(card.querySelector("h2")!.textContent).toBe("This extra batch");
+    expect(card.textContent).toContain("1 question solved");
     expect(
       Array.from(card.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
-    ).toEqual(["9", "1", "3"]);
+    ).toEqual(["1", "0", "0"]);
     expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
-      "Daily goal complete · 20 extra solved",
+      "Daily goal: 9 solved · 1 extra solved",
+    );
+    data.extras.questionsSolved = 11;
+    paint();
+    expect(card.textContent).toContain("1 question solved");
+    expect(
+      Array.from(card.querySelectorAll(".kids-daily-value"), (item) => item.textContent),
+    ).toEqual(["1", "0", "0"]);
+    expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
+      "Daily goal: 9 solved · 11 extra solved",
     );
     data.activity.completed = false;
+    data.activity.total = 10;
     data.activity.currentIndex = 4;
     data.canContinue = false;
     paint();
     expect(card.querySelector(".kids-daily-recap")).toBeNull();
     expect(root.querySelector(".kids-home-solve")!.textContent).toContain(
-      "Daily goal complete · Continue extra practice",
+      "Daily goal: 9 solved · Continue extra practice",
     );
   } finally {
     render(null, root);

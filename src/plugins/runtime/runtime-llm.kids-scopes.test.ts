@@ -1,11 +1,17 @@
 /** Real host authorization for the kids plugin's sessionless Solve completion. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  appendTranscriptMessage,
+  upsertSessionEntryCore,
+} from "../../config/sessions/session-accessor.js";
 import type { GatewayOperatorRoleDefinition } from "../../config/types.gateway.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { createHistoryReadContext } from "../../gateway/server-methods/chat-history.test-helpers.js";
 import {
   createContext,
   createOperatorClient,
 } from "../../gateway/server-plugin-in-process-dispatch.test-support.js";
+import { dispatchTrustedPluginGatewayMethod } from "../../gateway/server-plugins.js";
 import { setUserProfileRole } from "../../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -44,7 +50,10 @@ const providerResult = {
 /** Only the provider is stubbed; config selection, plugin policy, and child principal are real. */
 async function withChild(
   policy: "allowed" | "agent-denied" | "plugin-model-denied" | "role-model-denied",
-  run: (complete: ReturnType<typeof createRuntimeLlm>["complete"]) => Promise<void>,
+  run: (
+    complete: ReturnType<typeof createRuntimeLlm>["complete"],
+    child: { config: OpenClawConfig; profileId: string },
+  ) => Promise<void>,
 ) {
   await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
     const cfg: OpenClawConfig = {
@@ -64,6 +73,7 @@ async function withChild(
       },
       gateway: {
         roles: {
+          default: "child",
           definitions: {
             child: {
               agents: ["child-tutor"],
@@ -89,7 +99,7 @@ async function withChild(
       },
       () =>
         withPluginRuntimePluginScope({ pluginId: "kids-ui", pluginOrigin: "bundled" }, () =>
-          run(llm.complete),
+          run(llm.complete, { config: cfg, profileId: profile.id }),
         ),
     );
   });
@@ -101,6 +111,60 @@ beforeEach(() => {
 });
 
 describe("kids Solve host completion authority", () => {
+  it("reads only the child's own history with explicit session-read scope", async () => {
+    await withChild("allowed", async (_complete, { config, profileId }) => {
+      const foreignProfile = ensureProfileForEmail("other-solve-child@example.test");
+      const ownKey = "agent:child-tutor:kids:own";
+      const foreignKey = "agent:child-tutor:kids:other";
+      for (const [sessionKey, ownerId] of [
+        [ownKey, profileId],
+        [foreignKey, foreignProfile.id],
+      ] as const) {
+        const target = { agentId: "child-tutor", sessionKey, sessionId: sessionKey };
+        await upsertSessionEntryCore(target, {
+          sessionId: target.sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: { type: "human", source: "profile", id: ownerId },
+        });
+        await appendTranscriptMessage(target, {
+          message: { role: "user", content: "Synthetic learning conversation" },
+        });
+      }
+      const context = await createHistoryReadContext({ getRuntimeConfig: () => config });
+      await withPluginRuntimeGatewayRequestScope(
+        {
+          context,
+          client: createOperatorClient({ profileId, scopes: childScopes }),
+          pluginId: "kids-ui",
+          pluginOrigin: "bundled",
+          isWebchatConnect: () => true,
+        },
+        async () => {
+          const request = (sessionKey: string, scopes?: ["operator.sessions.read"]) =>
+            dispatchTrustedPluginGatewayMethod(
+              "chat.history",
+              { sessionKey, limit: 40 },
+              { timeoutMs: 5000, ...(scopes ? { scopes } : {}) },
+            );
+          // The runtime's default write request cannot borrow this read method's narrow scope.
+          await expect(request(ownKey)).rejects.toMatchObject({
+            code: "FORBIDDEN",
+            message: "missing scope: operator.read",
+          });
+          await expect(request(ownKey, ["operator.sessions.read"])).resolves.toMatchObject({
+            messages: [expect.objectContaining({ content: "Synthetic learning conversation" })],
+          });
+          await expect(request(foreignKey, ["operator.sessions.read"])).rejects.toMatchObject({
+            code: "INVALID_REQUEST",
+            message: `Session "${foreignKey}" was not found.`,
+          });
+          expect(isolated).not.toHaveBeenCalled();
+        },
+      );
+    });
+  });
+
   it("uses the child's configured model with own-session scopes and no model override", async () => {
     await withChild("allowed", async (complete) => {
       await expect(complete(completion)).resolves.toMatchObject({
