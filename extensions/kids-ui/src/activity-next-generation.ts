@@ -229,6 +229,7 @@ async function readConversation(
 /** Select text only; host display normalization owns stripping envelopes and directives. */
 function conversationTurn(value: unknown): ConversationTurn | null {
   const message = asOptionalRecord(value);
+  const provenance = asOptionalRecord(message?.provenance);
   if (
     !message ||
     (message.role !== "user" && message.role !== "assistant") ||
@@ -236,7 +237,8 @@ function conversationTurn(value: unknown): ConversationTurn | null {
     message.excludeFromContext === true ||
     message.senderSession !== undefined ||
     (message.provenance !== undefined &&
-      asOptionalRecord(message.provenance)?.kind !== "external_user") ||
+      provenance?.kind !== "external_user" &&
+      !(provenance?.kind === "realtime_voice" && provenance.sourceChannel === "talk")) ||
     message.phase === "commentary" ||
     message.channel === "commentary" ||
     message.channel === "analysis" ||
@@ -289,10 +291,11 @@ function conversationTurn(value: unknown): ConversationTurn | null {
     text: text.trim(),
     ...(typeof metadata?.id === "string" ? { id: metadata.id.slice(0, 160) } : {}),
     ...(typeof at === "number" && Number.isFinite(at) ? { at } : {}),
+    // Talk provenance identifies the transport, not who spoke or independent work.
     attribution:
       message.role === "assistant"
         ? "tutor"
-        : asOptionalRecord(message.provenance)?.kind === "external_user"
+        : provenance?.kind === "external_user"
           ? "external-user"
           : "unspecified",
   };

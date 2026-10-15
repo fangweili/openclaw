@@ -166,7 +166,7 @@ describe("next Solve batch generation", () => {
         role: "user",
         content: "We planted beans at school.",
         provenance: { kind: "external_user" },
-        __openclaw: { id: "spoken-input", recordTimestampMs: 12 },
+        __openclaw: { id: "typed-input", recordTimestampMs: 12 },
       },
       { role: "assistant", content: [{ type: "thinking", thinking: "private thought" }] },
       { role: "toolResult", content: "private tool output" },
@@ -200,6 +200,23 @@ describe("next Solve batch generation", () => {
         __openclaw: { id: "reply", recordTimestampMs: 13 },
       },
       { role: "user", content: "Maybe grow downward?" },
+      // Talk persists both speakers with this provenance, not external_user.
+      {
+        role: "user",
+        content: [{ type: "text", text: "Do roots need light?" }],
+        timestamp: 14,
+        provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Think about where the roots grow." }],
+        timestamp: 15,
+        provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+        api: "realtime",
+        provider: "realtime",
+        model: "realtime-voice",
+        stopReason: "stop",
+      },
     ]);
     await test.run();
     const prompt = test.complete.mock.calls[0]![0].messages[0]!.content;
@@ -211,7 +228,7 @@ describe("next Solve batch generation", () => {
         {
           role: "user",
           text: "We planted beans at school.",
-          id: "spoken-input",
+          id: "typed-input",
           at: 12,
           attribution: "external-user",
         },
@@ -223,6 +240,13 @@ describe("next Solve batch generation", () => {
           attribution: "tutor",
         },
         { role: "user", text: "Maybe grow downward?", attribution: "unspecified" },
+        { role: "user", text: "Do roots need light?", at: 14, attribution: "unspecified" },
+        {
+          role: "assistant",
+          text: "Think about where the roots grow.",
+          at: 15,
+          attribution: "tutor",
+        },
       ],
     });
   });

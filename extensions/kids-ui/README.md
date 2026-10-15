@@ -213,6 +213,8 @@ full preceding-batch evidence, up to fourteen bounded older activities, and an
 optional text-only tail of the child's own canonical chat (at most forty messages
 and 12,000 characters). Conversation fills gaps since notes were updated, especially
 read-only voice; it is unscored context, never another independent success.
+Saved Talk turns retain both speakers; voice input has unspecified attribution
+and tutor replies are teaching, so neither establishes independent child success.
 Missing or truncated sources remain explicit coverage limits. The daily preparer
 owns the brief; it is not a second editable profile. Nightly remains the sole
 profile/recent-activity writer and deduplicates Solve attempts with linked chat help.
