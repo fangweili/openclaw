@@ -12,9 +12,6 @@ import {
   createCodexTokenAuthStore,
   createMixedCodexAuthStore,
   createMixedOpenAIAuthStore,
-  completed,
-  done,
-  imageItem,
   openAIImageConfig,
 } from "./image-generation-provider.test-support.js";
 
@@ -119,6 +116,21 @@ function mockCodexRawStream(body: string) {
 
 function mockCodexEvents(events: unknown[]) {
   mockCodexRawStream(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+}
+
+function imageItem(
+  result: string | null = Buffer.from("codex-image").toString("base64"),
+  status?: string,
+) {
+  return { type: "image_generation_call", result, ...(status ? { status } : {}) };
+}
+
+function done(item = imageItem()) {
+  return { type: "response.output_item.done", item };
+}
+
+function completed(output: unknown[] = []) {
+  return { type: "response.completed", response: { output } };
 }
 
 function mockCodexImageStream() {
@@ -562,26 +574,22 @@ describe("openai image generation provider", () => {
     expect(result.images).toHaveLength(1);
   });
 
-  it.each(["gpt-image-2", "gpt-image-1.5"])(
-    "preserves %s for transparent PNG generation without compression",
-    async (model) => {
-      const result = await generateOpenAIImage("Transparent sticker", {
-        model,
-        outputFormat: "png",
-        background: "transparent",
-        providerOptions: { openai: { outputCompression: 60 } },
-      });
-      expect(jsonRequestCall().body).toEqual({
-        model,
-        prompt: "Transparent sticker",
-        n: 1,
-        size: "1024x1024",
-        output_format: "png",
-        background: "transparent",
-      });
-      expect(result.model).toBe(model);
-    },
-  );
+  it("routes transparent PNG generation to the alpha-capable model without compression", async () => {
+    const result = await generateOpenAIImage("Transparent sticker", {
+      outputFormat: "png",
+      background: "transparent",
+      providerOptions: { openai: { outputCompression: 60 } },
+    });
+    expect(jsonRequestCall().body).toEqual({
+      model: "gpt-image-1.5",
+      prompt: "Transparent sticker",
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
+      background: "transparent",
+    });
+    expect(result.model).toBe("gpt-image-1.5");
+  });
 
   it("serializes multipart edits with reference names, geometry, output options, and SSRF policy", async () => {
     const result = await generateOpenAIImage("Edit as WebP", {
@@ -848,41 +856,37 @@ describe("openai image generation provider", () => {
       expect(postMultipartRequestMock).not.toHaveBeenCalled();
     });
 
-    it.each(["gpt-image-2", "gpt-image-1.5"])(
-      "preserves %s and configured transport overrides for transparent PNG requests",
-      async (model) => {
-        const result = await generateOpenAIImage("Transparent sticker", {
-          model,
-          cfg: openAIImageConfig({
-            baseUrl: "http://127.0.0.1:44220/backend-api/codex",
-            api: "openai-chatgpt-responses",
-            request: { allowPrivateNetwork: true },
-          }),
-          authStore: createCodexOAuthAuthStore(),
-          ssrfPolicy: { allowRfc2544BenchmarkRange: true },
-          outputFormat: "png",
-          providerOptions: { openai: { background: "transparent", outputCompression: 55 } },
-        });
-        expect(sanitizeConfiguredModelProviderRequestMock).toHaveBeenCalledWith({
-          allowPrivateNetwork: true,
-        });
-        expect(jsonRequestCall()).toMatchObject({
-          url: "http://127.0.0.1:44220/backend-api/codex/responses",
-          allowPrivateNetwork: true,
-          ssrfPolicy: { allowRfc2544BenchmarkRange: true },
-        });
-        expect(jsonRequestCall().body).toHaveProperty("tools", [
-          {
-            type: "image_generation",
-            model,
-            size: "1024x1024",
-            output_format: "png",
-            background: "transparent",
-          },
-        ]);
-        expect(result.model).toBe(model);
-      },
-    );
+    it("honors configured transport overrides for transparent PNG requests", async () => {
+      const result = await generateOpenAIImage("Transparent sticker", {
+        cfg: openAIImageConfig({
+          baseUrl: "http://127.0.0.1:44220/backend-api/codex",
+          api: "openai-chatgpt-responses",
+          request: { allowPrivateNetwork: true },
+        }),
+        authStore: createCodexOAuthAuthStore(),
+        ssrfPolicy: { allowRfc2544BenchmarkRange: true },
+        outputFormat: "png",
+        providerOptions: { openai: { background: "transparent", outputCompression: 55 } },
+      });
+      expect(sanitizeConfiguredModelProviderRequestMock).toHaveBeenCalledWith({
+        allowPrivateNetwork: true,
+      });
+      expect(jsonRequestCall()).toMatchObject({
+        url: "http://127.0.0.1:44220/backend-api/codex/responses",
+        allowPrivateNetwork: true,
+        ssrfPolicy: { allowRfc2544BenchmarkRange: true },
+      });
+      expect(jsonRequestCall().body).toHaveProperty("tools", [
+        {
+          type: "image_generation",
+          model: "gpt-image-1.5",
+          size: "1024x1024",
+          output_format: "png",
+          background: "transparent",
+        },
+      ]);
+      expect(result.model).toBe("gpt-image-1.5");
+    });
 
     it("canonicalizes a legacy Codex endpoint", async () => {
       await generateOpenAIImage("Legacy endpoint", {
