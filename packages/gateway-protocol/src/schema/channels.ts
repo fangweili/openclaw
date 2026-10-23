@@ -272,8 +272,15 @@ export const TalkAgentControlResultSchema = closedObject({
 
 export const TalkSessionCreateParamsSchema = closedObject({
   sessionKey: Type.Optional(Type.String()),
-  /** An administrator's explicit child selection for one realtime relay call. */
+  /** An authenticated controller's child selection for one realtime relay call. */
   participantProfileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  /** Bind an app handoff to its admitted conversation generation, including an absent revision. */
+  participantSession: Type.Optional(
+    closedObject({
+      sessionId: NonEmptyString,
+      lifecycleRevision: Type.Optional(NonEmptyString),
+    }),
+  ),
   voiceChangeId: Type.Optional(NonEmptyString),
   capabilities: Type.Optional(Type.Array(Type.Literal("voice-selection"), { uniqueItems: true })),
   spawnedBy: Type.Optional(NonEmptyString),

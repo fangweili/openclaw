@@ -71,14 +71,17 @@ returns `agentId`, `agentSessionKey`, and `runId`; use that exact target for cha
 cancellation, history, and completion events, including when the canonical key is `global`. Transcription-only sessions
 without a key remain sessionless and do not select a default chat.
 
-## Adult-selected participant on a shared device
+<a id="adult-selected-participant-on-a-shared-device" />
+
+## Selected participant on a shared device
 
 An administrator may start a realtime Gateway-relay call for one explicitly
 selected child using `talk.session.create` with `participantProfileId`,
 `mode: "realtime"`, `transport: "gateway-relay"`, and `brain: "agent-consult"`.
 The authenticated controller continues to own the connection and call cleanup;
-the participant owns the conversation identity. This is an adult's selection,
-not automatic speaker recognition or a new login for the child.
+the participant owns the conversation identity. A controller can receive its
+selection from an adult or an authenticated app handoff. Selection establishes
+the assigned participant, without recognizing who is physically speaking.
 
 The selected profile must be canonical, non-owner, and governed by a restricted
 operator role allowing `operator.sessions.write` and `operator.talk`, with exactly
@@ -88,13 +91,20 @@ The request must name that agent's existing kids key:
 unrestricted, ambiguous, or mismatched selections are rejected before provider
 startup. Existing session access and creation policy apply under the child.
 
+An app handoff also supplies `participantSession: { sessionId, lifecycleRevision? }`
+from its admitted session authority. Both values must match the existing
+conversation before provider startup; an absent revision must match an absent
+stored revision. A missing or replaced conversation is rejected, never created or
+silently adopted. The app's handoff owner separately retains its caller authority
+and owns cancellation; this parameter binds the conversation, not the app login.
+
 The response confirms `participant: { profileId, agentId, sessionKey }`. Clients
 must check that binding before opening the microphone. Old Gateways reject the
 new field; clients must not retry without it. Omit the field for ordinary Talk
 calls, which retain their existing authenticated-caller behavior.
 
-Transcripts identify the selected child. Provider context explains that an adult
-selected this participant. Consultations receive the child's narrow Talk/session
+Transcripts identify the selected child. Provider context explains that the shared
+controller selected this participant. Consultations receive the child's narrow Talk/session
 scopes and read-only tool ceiling, without the controller's admin or approval
 capabilities. Current controller, profile, role, and session authority is checked
 again at input and consultation boundaries. A stale selection rejects further

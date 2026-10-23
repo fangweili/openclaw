@@ -117,6 +117,13 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
       const transport = normalizeTalkSessionTransport({ mode, transport: params.transport });
       const brain = normalizeTalkSessionBrain({ mode, brain: params.brain });
 
+      if (params.participantSession !== undefined && params.participantProfileId === undefined) {
+        return respondInvalidRequest(
+          respond,
+          "A participant session requires a selected participant.",
+        );
+      }
+
       if (
         params.participantProfileId !== undefined &&
         (mode !== "realtime" ||
@@ -263,6 +270,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
             params.participantProfileId !== undefined
               ? await prepareTalkParticipant({
                   profileId: params.participantProfileId,
+                  expectedSession: params.participantSession,
                   target,
                   controller: client ?? null,
                   context,

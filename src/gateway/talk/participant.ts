@@ -49,9 +49,12 @@ function denied(message: string): never {
  * controller privileges. `bindSession` asynchronously retains published facts for the
  * ensured generation; later audio/consult checks perform no database reads. `close`
  * releases that custody and revokes admission without preventing transcript drainage.
+ * An optional app handoff generation must already exist and match exactly; omission
+ * of its lifecycle revision means the stored revision must also be absent.
  */
 export async function prepareTalkParticipant(params: {
   profileId: string;
+  expectedSession?: { sessionId: string; lifecycleRevision?: string };
   target: PreparedTalkSessionTarget;
   controller: GatewayClient | null;
   context: GatewayRequestContext;
@@ -178,6 +181,14 @@ export async function prepareTalkParticipant(params: {
       });
     }
     const initial = sessionFacts.readCurrent(context.getRuntimeConfig()).target;
+    if (
+      params.expectedSession &&
+      (!initial ||
+        initial.entry.sessionId !== params.expectedSession.sessionId ||
+        initial.entry.lifecycleRevision !== params.expectedSession.lifecycleRevision)
+    ) {
+      denied("The selected participant's conversation changed before the handoff.");
+    }
     let expectedSessionId = initial?.entry.sessionId;
     let lifecycleRevision = initial?.entry.lifecycleRevision;
     let bound = false;

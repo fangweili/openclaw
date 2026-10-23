@@ -246,7 +246,7 @@ describe("adult-selected Talk participant through Gateway authorization", () => 
     const provider = providerRequest();
     expect(provider.instructions).toContain(childId);
     expect(provider.instructions).not.toContain(adultId);
-    expect(provider.instructions).toContain('"administrator_selected_participant":');
+    expect(provider.instructions).toContain('"controller_selected_participant":');
     expect(provider.instructions).not.toContain('"authenticated_caller":');
     expect(provider.instructions).toContain('"selected_agent":{"id":"tutor"');
     provider.onReady?.();
@@ -280,6 +280,66 @@ describe("adult-selected Talk participant through Gateway authorization", () => 
       id: childId,
     });
     expect(closeProvider).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, "handoff-revision"])(
+    "admits an app handoff for the exact existing conversation revision %s",
+    async (lifecycleRevision) => {
+      await replaceSessionEntry(
+        { agentId: "tutor", sessionKey },
+        {
+          sessionId: "handoff-session",
+          lifecycleRevision,
+          updatedAt: 1,
+          createdActor: { type: "human", source: "profile", id: childId },
+        },
+      );
+      expect(
+        await createCall({
+          participantSession: { sessionId: "handoff-session", lifecycleRevision },
+        }),
+      ).toHaveBeenCalledWith(true, expect.any(Object), undefined);
+      expect(createBridge).toHaveBeenCalledOnce();
+      expect(providerRequest().instructions).toContain("authenticated app handoff");
+    },
+  );
+
+  it.each(["missing", "replaced", "revised", "omitted-revision"] as const)(
+    "rejects a %s app handoff target before starting the provider",
+    async (change) => {
+      if (change !== "missing") {
+        await replaceSessionEntry(
+          { agentId: "tutor", sessionKey },
+          {
+            sessionId: change === "replaced" ? "replacement-session" : "handoff-session",
+            lifecycleRevision: change === "revised" ? "replacement-revision" : "handoff-revision",
+            updatedAt: 1,
+            createdActor: { type: "human", source: "profile", id: childId },
+          },
+        );
+      }
+      const before = loadSessionEntry({ agentId: "tutor", sessionKey });
+      expect(
+        await createCall({
+          participantSession: {
+            sessionId: "handoff-session",
+            ...(change === "omitted-revision" ? {} : { lifecycleRevision: "handoff-revision" }),
+          },
+        }),
+      ).toHaveBeenCalledWith(false, undefined, expect.objectContaining({ code: "FORBIDDEN" }));
+      expect(createBridge).not.toHaveBeenCalled();
+      expect(loadSessionEntry({ agentId: "tutor", sessionKey })).toEqual(before);
+    },
+  );
+
+  it("rejects an expected participant generation without a selected participant", async () => {
+    expect(
+      await createCall({
+        participantProfileId: undefined,
+        participantSession: { sessionId: "handoff-session" },
+      }),
+    ).toHaveBeenCalledWith(false, undefined, expect.objectContaining({ code: "INVALID_REQUEST" }));
+    expect(createBridge).not.toHaveBeenCalled();
   });
 
   it.each(["anonymous", "profileless-admin", "non-admin", "synthetic", "stale"] as const)(
