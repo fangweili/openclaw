@@ -86,6 +86,13 @@ remain failures rather than being silently treated as cancellations.
 
 Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions also receive the bounded realtime profile context used by Discord voice.
 
+The ChatGPT-authenticated GPT-Live route sends the configured voice instructions
+as an initial developer message, before any conversation seeds. This makes the
+agent's identity, personality, and workspace rules available from the first
+spoken turn. Shared-session history retains its quoted background-data framing;
+it is not replayed as a new request. The public API route keeps its native
+instruction format.
+
 Browser and Gateway-relay Talk carry the selected agent and, when available, the
 verified caller identity into both realtime instructions and delegated agent
 consultations. The caller is captured at call admission, separately from the agent;
