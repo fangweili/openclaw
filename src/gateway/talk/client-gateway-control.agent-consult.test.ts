@@ -51,7 +51,6 @@ function createConsultRunner(
   overrides: Partial<Parameters<typeof createTalkClientAgentConsultRunner>[0]> = {},
 ) {
   return createTalkClientAgentConsultRunner({
-    sessionContext: "Synthetic admitted Talk context",
     config,
     context: { chatAbortControllers: new Map(), logGateway: { warn: vi.fn() } } as never,
     sessionTarget: {
@@ -120,16 +119,15 @@ describe("Talk client agent consult admission", () => {
   });
 
   it.each(["runArgs", "runOwnedArgs", "runPrompt"] as const)(
-    "preserves admitted context in the %s runtime without changing authority",
+    "classifies the %s consultation as a user turn without changing authority",
     async (entry) => {
-      const sessionContext = 'Trusted session context: {"selected_agent":{"id":"researcher"}}';
-      const runner = createConsultRunner({ sessionContext });
+      const runner = createConsultRunner();
       if (entry === "runPrompt") {
         await runner.runPrompt({ prompt: "check" });
       } else {
         await runner[entry]({ question: "check" });
       }
-      expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toBe(sessionContext);
+      expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].trigger).toBe("user");
       expect(mocks.consultRealtimeVoiceAgent).toHaveBeenCalledWith(
         expect.objectContaining({ senderIsOwner: false }),
       );

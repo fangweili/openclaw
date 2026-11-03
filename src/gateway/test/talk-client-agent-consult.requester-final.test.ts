@@ -71,7 +71,6 @@ const coreParams = {
 
 function createRunner(isRunCurrent: (runId: string) => boolean = () => true) {
   return createTalkClientAgentConsultRunner({
-    sessionContext: "Synthetic admitted Talk context",
     config,
     context: { chatAbortControllers: new Map(), logGateway: { warn: vi.fn() } } as never,
     sessionTarget: {

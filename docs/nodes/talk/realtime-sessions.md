@@ -84,15 +84,7 @@ native sessions acknowledge cancellation without speaking the canceled task's
 partial answer, empty-result fallback, or failed-task retry prompt. Timeouts
 remain failures rather than being silently treated as cancellations.
 
-Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions also receive the bounded realtime profile context used by Discord voice.
-
-Browser and Gateway-relay Talk carry the selected agent and, when available, the
-verified caller identity into both realtime instructions and delegated agent
-consultations. The caller is captured at call admission, separately from the agent;
-shared workspace profiles and session ownership do not identify the speaker.
-These facts provide model context without granting permissions. Personalized
-requests go to the selected full agent, which loads its workspace instructions
-and relevant memory with the same caller context.
+Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions receive the selected agent's bounded `IDENTITY.md`, `USER.md`, and `SOUL.md` context through the shared voice bootstrap loader and its session filtering. Agent-specific delegation and handoff rules belong in that workspace's instructions.
 
 User-driven native Gateway consultations are eligible for the same authorized
 Active Memory recall as text turns. They retain the admitted request identity,

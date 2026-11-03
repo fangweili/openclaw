@@ -68,7 +68,6 @@ type TalkRequesterFinalRegistration = ReturnType<typeof registerRequesterFinalAt
 function createTalkClientAgentRuntime(params: {
   config: OpenClawConfig;
   rawSourceRef?: string;
-  sessionContext: string;
   assertCurrent?: () => void;
   getAdditionalSystemPrompt?: () => string | undefined;
   bindOperationalRunInstance?: (instance: OperationalRunInstanceRef) => void;
@@ -116,15 +115,10 @@ function createTalkClientAgentRuntime(params: {
       // its final transcript would lose the answer when no spoken replacement arrives.
       return await execution.runEmbeddedAgent({
         ...runParams,
-        // This wrapper admits a live Gateway user's voice request. Preserve its
-        // existing recorder/request ID so authorized prompt hooks can recall prior
-        // conversations just as they do for text; tool authority is unchanged.
+        // Native Gateway consultations are user turns. Keep the admitted recorder
+        // and request identity so authorized prompt hooks can recall prior context.
         trigger: "user",
-        extraSystemPrompt: [
-          runParams.extraSystemPrompt,
-          params.sessionContext,
-          params.getAdditionalSystemPrompt?.(),
-        ]
+        extraSystemPrompt: [runParams.extraSystemPrompt, params.getAdditionalSystemPrompt?.()]
           .filter(Boolean)
           .join("\n\n"),
         preparedRunAdmission,
@@ -201,13 +195,10 @@ export function prepareTalkClientControlAuthority(params: {
 }
 
 /**
- * Owns user-driven consult runs for one admitted Gateway call. Marks their existing
- * recorded input as a user turn for interactive prompt hooks; generic voice bridges
- * retain their own trigger policy. Retains the immutable agent/caller context
- * supplied at admission through native, explicit-tool, and confirmation-retry runs;
- * callers must provide the context captured at call admission. Context never alters
- * tool authority or current-run checks. Existing run owners still cancel,
- * drain, and release completion claims before the call owner discards this runner.
+ * Owns user-driven consult runs for one admitted Gateway call. Recorded input is a
+ * user turn for interactive prompt hooks; other voice bridges retain their own
+ * trigger policy. The admitted run owns tool authority and current-run checks.
+ * Call owners cancel and drain accepted work before releasing the runner.
  */
 export function createTalkClientAgentConsultRunner(params: {
   config: OpenClawConfig;
@@ -215,7 +206,6 @@ export function createTalkClientAgentConsultRunner(params: {
   sessionTarget: PreparedTalkSessionTarget;
   ownerConnId?: string;
   authority?: TalkAgentConsultAuthority;
-  sessionContext: string;
   getVoiceSessionId: () => string | undefined;
   initialItems: Array<{ role: "user" | "assistant"; text: string }>;
   runIdPrefix?: string;
@@ -225,12 +215,10 @@ export function createTalkClientAgentConsultRunner(params: {
 }) {
   const { agentId, sessionKey, canonicalKey, storePath } = params.sessionTarget;
   const authority = params.authority ?? resolveTalkAgentConsultAuthority(undefined);
-  const sessionContext = params.sessionContext;
   let agentRuntime: ReturnType<typeof createPluginRuntime>["agent"] | undefined;
   const getAgentRuntime = () =>
     (agentRuntime ??= createTalkClientAgentRuntime({
       config: params.config,
-      sessionContext,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
     }));
   type PromptOwner = {
@@ -257,7 +245,6 @@ export function createTalkClientAgentConsultRunner(params: {
   ) =>
     createTalkClientAgentRuntime({
       config: params.config,
-      sessionContext,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
       assertCurrent,
       getAdditionalSystemPrompt,
@@ -316,7 +303,6 @@ export function createTalkClientAgentConsultRunner(params: {
       : assertCurrent || source === "native-delegation" || confirmationGrant
         ? createTalkClientAgentRuntime({
             config: params.config,
-            sessionContext,
             ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
             assertCurrent,
             getAdditionalSystemPrompt,

@@ -440,84 +440,33 @@ describe("Gateway pending-profile authorization", () => {
     },
   );
 
-  it.each(["talk.client.create", "talk.session.create"])(
-    "hydrates identified %s callers before projecting caller context",
+  it.each(["talk.client.create", "talk.session.create", "talk.client.transcript"])(
+    "does not hydrate a caller profile for %s without profile-dependent behavior",
     async (method) => {
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
-        const profile = ensureProfileForEmail("voice-caller@example.test");
         const client = createPendingProfileClient();
         client.connect.scopes = ["operator.talk"];
-        const entered = createDeferredCore();
-        const release = createDeferredCore();
+        client.authenticatedGitHubIdentitySync = vi.fn(async () => ({
+          profileId: "unused-profile",
+          updatedAt: 1,
+        }));
         const handler = vi.fn<GatewayRequestHandler>(({ client: admitted, respond }) => {
-          expect(admitted?.authenticatedUserProfile?.profileId).toBe(profile.id);
+          expect(admitted?.authenticatedUserProfile).toBeUndefined();
           respond(true, { ok: true });
         });
-        client.authenticatedGitHubIdentitySync = vi.fn(async () => {
-          entered.resolve();
-          await release.promise;
-          client.authenticatedUserProfile = {
-            profileId: profile.id,
-            displayName: null,
-            hasAvatar: false,
-            updatedAt: profile.updatedAt,
-          };
-          return { profileId: profile.id, updatedAt: profile.updatedAt };
-        });
-        const requestParams = { sessionKey: "agent:main:voice-attribution" };
-        const pending = dispatchPendingProfileMethod({ client, method, handler, requestParams });
-        try {
-          await Promise.race([entered.promise, pending]);
-          expect(handler).not.toHaveBeenCalled();
-        } finally {
-          release.resolve();
-        }
-        expect(await pending).toHaveBeenCalledWith(true, { ok: true });
-        expect(handler).toHaveBeenCalledOnce();
-        expect(client.authenticatedGitHubIdentitySync).toHaveBeenCalledOnce();
-
-        const profileless = createPendingProfileClient();
-        delete profileless.authenticatedUserId;
-        const legacyHandler = vi.fn<GatewayRequestHandler>(({ respond }) =>
-          respond(true, { ok: true }),
-        );
         expect(
           await dispatchPendingProfileMethod({
-            client: profileless,
+            client,
             method,
-            handler: legacyHandler,
-            requestParams,
+            handler,
+            requestParams: { sessionKey: "agent:main:voice" },
           }),
         ).toHaveBeenCalledWith(true, { ok: true });
-        expect(legacyHandler).toHaveBeenCalledOnce();
+        expect(handler).toHaveBeenCalledOnce();
+        expect(client.authenticatedGitHubIdentitySync).not.toHaveBeenCalled();
       });
     },
   );
-
-  it("does not hydrate a caller profile for tagless Talk transcript writes", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const client = createPendingProfileClient();
-      client.connect.scopes = ["operator.talk"];
-      client.authenticatedGitHubIdentitySync = vi.fn(async () => ({
-        profileId: "unused-profile",
-        updatedAt: 1,
-      }));
-      const handler = vi.fn<GatewayRequestHandler>(({ client: admitted, respond }) => {
-        expect(admitted?.authenticatedUserProfile).toBeUndefined();
-        respond(true, { ok: true });
-      });
-      expect(
-        await dispatchPendingProfileMethod({
-          client,
-          method: "talk.client.transcript",
-          handler,
-          requestParams: { sessionKey: "agent:main:voice" },
-        }),
-      ).toHaveBeenCalledWith(true, { ok: true });
-      expect(handler).toHaveBeenCalledOnce();
-      expect(client.authenticatedGitHubIdentitySync).not.toHaveBeenCalled();
-    });
-  });
 
   it.each(["chat.send", "models.list"])(
     "waits for immutable profile attachment before %s dispatch",

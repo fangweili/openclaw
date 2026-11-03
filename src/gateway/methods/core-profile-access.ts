@@ -14,10 +14,6 @@ const PROFILE_DEPENDENT_CORE_METHODS = new Set([
   // client asking during the post-hello GitHub identity sync window would get
   // the gateway-wide accent instead. Profile-less clients pass through.
   "talk.config",
-  // Call admission projects verified caller context into provider instructions.
-  // Identified clients wait for enrichment; profile-less callers remain supported.
-  "talk.client.create",
-  "talk.session.create",
   // Voice catalogs authorize participation in the call's chat.
   "talk.voice.get",
   "ui.command",
