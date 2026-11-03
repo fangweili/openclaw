@@ -86,6 +86,13 @@ remain failures rather than being silently treated as cancellations.
 
 Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions receive the selected agent's bounded `IDENTITY.md`, `USER.md`, and `SOUL.md` context through the shared voice bootstrap loader and its session filtering. Agent-specific delegation and handoff rules belong in that workspace's instructions.
 
+The ChatGPT-authenticated GPT-Live route sends the configured voice instructions
+as an initial developer message, before any conversation seeds. This makes the
+agent's identity, personality, and workspace rules available from the first
+spoken turn. Shared-session history retains its quoted background-data framing;
+it is not replayed as a new request. The public API route keeps its native
+instruction format.
+
 User-driven native Gateway consultations are eligible for the same authorized
 Active Memory recall as text turns. They retain the admitted request identity,
 caller tool restrictions, and call cancellation checks. Protected recall remains
