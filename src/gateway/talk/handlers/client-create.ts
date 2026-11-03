@@ -41,6 +41,7 @@ import {
   createTalkClientGatewayControlOwner,
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
+import { resolveTalkDirectMemoryTool, TALK_DIRECT_MEMORY_INSTRUCTIONS } from "../direct-memory.js";
 import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
@@ -202,10 +203,34 @@ export const createTalkClient: GatewayRequestHandler = async ({
       if (wantsCameraFrames && tools.length > 0) {
         tools.push(REALTIME_VOICE_DESCRIBE_VIEW_TOOL);
       }
+      const directMemoryTool =
+        params.capabilities?.includes("direct-memory-search") === true &&
+        !wantsGatewayControl &&
+        controlSource !== "delegation" &&
+        providerCapabilities?.supportsToolCalls !== false
+          ? await resolveTalkDirectMemoryTool({
+              config: runtimeConfig,
+              target,
+              scopes: client?.connect.scopes,
+              clientCaps: client?.connect.caps,
+              assertCurrent: () => {
+                sessionMutationAuthorization?.assertCurrent();
+                replacement?.assertCurrent(target);
+              },
+            })
+          : undefined;
+      if (directMemoryTool) {
+        tools.push(directMemoryTool);
+      }
       const instructions =
         controlSource === "delegation"
           ? normalizeOptionalString(providerInstructions)
-          : buildRealtimeInstructions(providerInstructions);
+          : [
+              buildRealtimeInstructions(providerInstructions),
+              directMemoryTool ? TALK_DIRECT_MEMORY_INSTRUCTIONS : undefined,
+            ]
+              .filter(Boolean)
+              .join("\n\n");
       const requestedVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
       const ownsProvider =
         wantsGatewayControl || providerCapabilities?.handlesAgentConsult === true;
