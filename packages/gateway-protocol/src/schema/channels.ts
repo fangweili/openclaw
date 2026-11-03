@@ -198,6 +198,7 @@ export const TalkClientCreateParamsSchema = closedObject({
         Type.Literal("voice-transcript"),
         Type.Literal("gateway-control-v1"),
         Type.Literal("voice-selection"),
+        Type.Literal("direct-memory-search"),
       ]),
       { uniqueItems: true },
     ),

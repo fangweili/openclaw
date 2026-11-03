@@ -189,3 +189,28 @@ If the microphone disconnects or its permission is revoked, browser Talk ends
 the call and shows an error. Choose an available **Microphone input**, restore
 permission if needed, and start Talk again. An unexpected GPT-Live connection
 loss also ends the call with an error; automatic reconnection is not supported.
+
+### Direct memory search for client-owned calls
+
+A function-call client may opt in with `capabilities: ["direct-memory-search"]`
+when creating a browser-owned Talk call. The Gateway adds `memory_search` only
+when the client has `operator.write` or admin scope for `tools.invoke` and the
+selected agent's normal tool policy exposes the registered memory tool. Its
+name, description and parameters come from that tool; no separate search schema
+or memory policy is maintained by Talk. Clients without this capability and
+native delegation/Gateway-controlled calls retain their existing tool set.
+
+The client forwards the model arguments to `tools.invoke` with
+`name: "memory_search"` and its own bound `sessionKey`. It must not accept an
+agent, session or conversation-origin override from the model. The Gateway
+reauthorizes execution and searches the selected agent's permitted sources.
+Results, including unavailable, partial and stale warnings, return to the live
+model without starting an agent-model turn. The live model interprets the
+excerpts as evidence and answers; it does not retry failed lookups through agent
+consultation. More involved work can still use the existing consult tool.
+
+Clients own bounded RPC waits, discard results after call cancellation, and join
+accepted work before releasing their connection. A client timeout is not proof
+of server cancellation; canonical memory search retains its existing deadline
+and cleanup. This capability improves the lookup path but promises no fixed
+latency. Permanent provider credentials and search state remain on the Gateway.
