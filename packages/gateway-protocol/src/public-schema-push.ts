@@ -6,7 +6,6 @@ export {
   WebPushPreferencesGetParamsSchema,
   WebPushPreferencesSetParamsSchema,
   WebPushSubscribeParamsSchema,
-  WebPushForegroundParamsSchema,
   WebPushTestParamsSchema,
   WebPushUnsubscribeParamsSchema,
   WebPushVapidPublicKeyParamsSchema,

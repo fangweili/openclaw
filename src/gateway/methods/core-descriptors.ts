@@ -653,5 +653,4 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["sessions.files.assets", "sessions-files", "operator.read", "2026.9"],
   ["worktrees.recoverRemoval", "worktrees", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["worktrees.retireSnapshot", "worktrees", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
-  ["push.web.foreground", "push", "operator.write", "2026.10"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];

@@ -1424,22 +1424,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
-  extensions/kids-ui:
-    dependencies:
-      typebox:
-        specifier: 1.3.34
-        version: 1.3.34
-      zod:
-        specifier: 4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@openclaw/kids-activity-contract':
-        specifier: workspace:*
-        version: link:../../packages/kids-activity-contract
-      '@openclaw/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-
   extensions/kie:
     devDependencies:
       '@openclaw/plugin-sdk':
@@ -2651,8 +2635,6 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
 
-  packages/kids-activity-contract: {}
-
   packages/llm-core:
     dependencies:
       '@openclaw/normalization-core':
@@ -2875,9 +2857,6 @@ importers:
       '@openclaw/gateway-protocol':
         specifier: workspace:*
         version: link:../packages/gateway-protocol
-      '@openclaw/kids-activity-contract':
-        specifier: workspace:*
-        version: link:../packages/kids-activity-contract
       '@openclaw/libterminal':
         specifier: 0.3.7
         version: 0.3.7

@@ -153,7 +153,6 @@ const EXCLUDED_SCHEMA_EXPORTS = [
   "WebPushPreferencesGetParamsSchema",
   "WebPushPreferencesSetParamsSchema",
   "WebPushSubscribeParamsSchema",
-  "WebPushForegroundParamsSchema",
   "WebPushTestParamsSchema",
   "WebPushUnsubscribeParamsSchema",
   "WebPushVapidPublicKeyParamsSchema",

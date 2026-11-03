@@ -6,10 +6,6 @@ export const databaseWorkerExtensionTestRoots = [
 ];
 
 export const databaseWorkerExtensionTestFiles = [
-  "extensions/kids-ui/src/activity-store.test.ts",
-  "extensions/kids-ui/src/activity-artwork.test.ts",
-  "extensions/kids-ui/src/activity-batches.test.ts",
-  "extensions/kids-ui/src/activity-perfect-days.test.ts",
   "extensions/agentsapi/agentsapi-attempt.test.ts",
   "extensions/agentsapi/agentsapi-harness.persistence.test.ts",
   "extensions/openai/binary-transport.test.ts",

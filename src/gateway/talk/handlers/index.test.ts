@@ -1958,11 +1958,7 @@ describe("talk.session unified handlers", () => {
         language: "de",
       },
       respond: createRespond,
-      client: {
-        connId: "conn-1",
-        connect: { scopes: ["operator.talk"] },
-        authenticatedUserProfile: { profileId: "profile-amber", displayName: "Amber" },
-      },
+      client: { connId: "conn-1", connect: { scopes: ["operator.talk"] } },
       config: {
         agents: {
           defaults: {
@@ -2025,11 +2021,6 @@ describe("talk.session unified handlers", () => {
       model: "gpt-realtime",
       voice: "alloy",
     });
-    expect(relayCreateInput.instructions).toContain('"selected_agent":{"id":"main"}');
-    expect(relayCreateInput.instructions).toContain(
-      '"authenticated_caller":{"profile_id":"profile-amber","display_name":"Amber"}',
-    );
-    expect(relayCreateInput.instructions).toContain("learning level, progress");
     expect(relayCreateInput.instructions).toContain(
       "Additional realtime instructions:\nSpeak warmly.",
     );
@@ -3381,11 +3372,7 @@ describe("talk.client.create handler", () => {
         reasoningEffort: "low",
       },
       respond,
-      client: {
-        connId: "conn-1",
-        connect: { scopes: ["operator.talk"] },
-        authenticatedUserProfile: { profileId: "profile-indigo", displayName: "Indigo" },
-      },
+      client: { connId: "conn-1", connect: { scopes: ["operator.talk"] } },
       config: {
         talk: {
           provider: "elevenlabs",
@@ -3423,11 +3410,6 @@ describe("talk.client.create handler", () => {
         { role: "assistant", text: `3:${"🙂".repeat(799)}` },
       ],
     });
-    expect(createInput.instructions).toContain('"selected_agent":{"id":"main"}');
-    expect(createInput.instructions).toContain(
-      '"authenticated_caller":{"profile_id":"profile-indigo","display_name":"Indigo"}',
-    );
-    expect(createInput.instructions).toContain("learning level, progress");
     expect(createInput.instructions).toContain("Additional realtime instructions:\nSpeak warmly.");
     expect(createInput.instructions).toContain("Bounded profile context.");
     expect(createInput.instructions).toContain("tool-backed actions");
@@ -3721,11 +3703,6 @@ describe("talk.client.create handler", () => {
     await callTalkHandler("talk.client.create", {
       params: { sessionKey: "main", transport: "webrtc" },
       id: "codex",
-      client: {
-        connId: "conn-1",
-        connect: { scopes: ["operator.talk"] },
-        authenticatedUserProfile: { profileId: "profile-amber", displayName: "Amber" },
-      },
       respond,
       config: {
         talk: {
@@ -3739,12 +3716,7 @@ describe("talk.client.create handler", () => {
     });
 
     const createInput = mockCallArg(createBrowserSession) as Record<string, unknown>;
-    expect(createInput.instructions).toContain('"selected_agent":{"id":"main"}');
-    expect(createInput.instructions).toContain(
-      '"authenticated_caller":{"profile_id":"profile-amber","display_name":"Amber"}',
-    );
-    expect(createInput.instructions).toContain("learning level, progress");
-    expect(createInput.instructions).toContain(
+    expect(createInput.instructions).toBe(
       `Speak warmly.\n\n${REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS}\n\nBounded profile context.`,
     );
     expect(createInput.initialItems).toEqual([]);
@@ -4493,13 +4465,6 @@ describe("role-required Talk session creation", () => {
       });
 
       expectRespondOk(respond);
-      if (method === "talk.session.create") {
-        expect(mocks.createTalkRealtimeRelaySession).toHaveBeenCalledWith(
-          expect.objectContaining({
-            transcriptSender: { id: profile.id, identity: { type: "profile", id: profile.id } },
-          }),
-        );
-      }
       expect(mocks.ensureClientVoiceAgentSessionEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           agentId: "main",

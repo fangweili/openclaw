@@ -22,7 +22,6 @@ import { registerDevicesEnglish } from "../../ui/src/i18n/locales/en-devices.ts"
 import { registerDreamingEnglish } from "../../ui/src/i18n/locales/en-dreaming.ts";
 import { registerFilePreviewEnglish } from "../../ui/src/i18n/locales/en-file-preview.ts";
 import { registerGitHubEnglish } from "../../ui/src/i18n/locales/en-github.ts";
-import { registerKidsEnglish } from "../../ui/src/i18n/locales/en-kids.ts";
 import { registerLabsEnglish } from "../../ui/src/i18n/locales/en-labs.ts";
 import { registerLinkReaderEnglish } from "../../ui/src/i18n/locales/en-link-reader.ts";
 import { registerLoginEnglish } from "../../ui/src/i18n/locales/en-login.ts";
@@ -89,7 +88,6 @@ const sourceFiles = [
   "en-login.ts",
   "en-link-reader.ts",
   "en-github.ts",
-  "en-kids.ts",
   "en-mcp.ts",
   "en-mcp-app.ts",
   "en-meetings.ts",
@@ -194,7 +192,6 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     registerDevicesEnglish.catalog,
     registerDreamingEnglish.catalog,
     registerFilePreviewEnglish.catalog,
-    registerKidsEnglish.catalog,
     registerLabsEnglish.catalog,
     registerLoginEnglish.catalog,
     registerLinkReaderEnglish.catalog,

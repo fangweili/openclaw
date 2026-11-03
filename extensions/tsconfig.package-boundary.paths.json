@@ -770,7 +770,6 @@
       "@openclaw/worker-runtime/lifecycle": [
         "../packages/plugin-sdk/dist/packages/worker-runtime/src/lifecycle.d.ts"
       ],
-      "@openclaw/kids-activity-contract": ["../packages/kids-activity-contract/src/index.ts"],
       "@openclaw/workboard-contract": [
         "../packages/workboard-contract/src/index.ts"
       ],

@@ -1,4 +1,4 @@
-/** Real host authorization for the kids plugin's sessionless Solve completion. */
+/** Real host authorization for an external tutor plugin's history and Solve completion. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendTranscriptMessage,
@@ -11,7 +11,7 @@ import {
   createContext,
   createOperatorClient,
 } from "../../gateway/server-plugin-in-process-dispatch.test-support.js";
-import { dispatchTrustedPluginGatewayMethod } from "../../gateway/server-plugins.js";
+import { createGatewaySubagentRuntime } from "../../gateway/server-plugin-subagent-runtime.js";
 import { setUserProfileRole } from "../../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -98,7 +98,7 @@ async function withChild(
         isWebchatConnect: () => true,
       },
       () =>
-        withPluginRuntimePluginScope({ pluginId: "kids-ui", pluginOrigin: "bundled" }, () =>
+        withPluginRuntimePluginScope({ pluginId: "kids-ui", pluginOrigin: "global" }, () =>
           run(llm.complete, { config: cfg, profileId: profile.id }),
         ),
     );
@@ -111,7 +111,7 @@ beforeEach(() => {
 });
 
 describe("kids Solve host completion authority", () => {
-  it("reads only the child's own history with explicit session-read scope", async () => {
+  it("reads attributed history only for the child through the external plugin subagent API", async () => {
     await withChild("allowed", async (_complete, { config, profileId }) => {
       const foreignProfile = ensureProfileForEmail("other-solve-child@example.test");
       const ownKey = "agent:child-tutor:kids:own";
@@ -128,7 +128,23 @@ describe("kids Solve host completion authority", () => {
           createdActor: { type: "human", source: "profile", id: ownerId },
         });
         await appendTranscriptMessage(target, {
-          message: { role: "user", content: "Synthetic learning conversation" },
+          message: {
+            role: "user",
+            content: "Synthetic learning conversation",
+            provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+            __openclaw: {
+              senderId: ownerId,
+              senderIdentity: { type: "profile", id: ownerId },
+            },
+          },
+        });
+        await appendTranscriptMessage(target, {
+          message: {
+            role: "assistant",
+            content: "Synthetic final tutor answer",
+            stopReason: "stop",
+            __openclaw: { runId: "synthetic-answer" },
+          },
         });
       }
       const context = await createHistoryReadContext({ getRuntimeConfig: () => config });
@@ -137,25 +153,32 @@ describe("kids Solve host completion authority", () => {
           context,
           client: createOperatorClient({ profileId, scopes: childScopes }),
           pluginId: "kids-ui",
-          pluginOrigin: "bundled",
+          pluginOrigin: "global",
           isWebchatConnect: () => true,
         },
         async () => {
-          const request = (sessionKey: string, scopes?: ["operator.sessions.read"]) =>
-            dispatchTrustedPluginGatewayMethod(
-              "chat.history",
-              { sessionKey, limit: 40 },
-              { timeoutMs: 5000, ...(scopes ? { scopes } : {}) },
-            );
-          // The runtime's default write request cannot borrow this read method's narrow scope.
-          await expect(request(ownKey)).rejects.toMatchObject({
-            code: "FORBIDDEN",
-            message: "missing scope: operator.read",
+          const runtime = createGatewaySubagentRuntime(() => context);
+          const request = (sessionKey: string) =>
+            runtime.getSessionMessages({ sessionKey, limit: 40 });
+          await expect(request(ownKey)).resolves.toMatchObject({
+            messages: [
+              {
+                role: "user",
+                content: "Synthetic learning conversation",
+                provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+                __openclaw: {
+                  senderId: profileId,
+                  senderIdentity: { type: "profile", id: profileId },
+                },
+              },
+              {
+                role: "assistant",
+                content: "Synthetic final tutor answer",
+                __openclaw: { runId: "synthetic-answer" },
+              },
+            ],
           });
-          await expect(request(ownKey, ["operator.sessions.read"])).resolves.toMatchObject({
-            messages: [expect.objectContaining({ content: "Synthetic learning conversation" })],
-          });
-          await expect(request(foreignKey, ["operator.sessions.read"])).rejects.toMatchObject({
+          await expect(request(foreignKey)).rejects.toMatchObject({
             code: "INVALID_REQUEST",
             message: `Session "${foreignKey}" was not found.`,
           });

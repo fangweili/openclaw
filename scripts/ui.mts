@@ -6,16 +6,15 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPidDefinitelyDead } from "../src/shared/pid-alive.ts";
+import { normalizeControlUiBuildInfo } from "../ui/src/build-info-normalizers.ts";
+import { resolveBuildIdentityEnvironment } from "./lib/build-identity.mts";
 import {
   assertRealOutputRoot,
   CONTROL_UI_BUILD_PREFIX,
   controlUiBuildSiblingPid,
 } from "./lib/output-root-guard.mjs";
-import { resolveUiBuildEnvironment } from "./lib/ui-build-environment.mts";
 import { createPnpmRunnerSpawnSpec } from "./pnpm-runner.mts";
 import { resolveNodePackageBin } from "./run-node-package-bin.mts";
-
-export { resolveUiBuildEnvironment } from "./lib/ui-build-environment.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -25,6 +24,78 @@ const requireFromUi = createRequire(path.join(uiDir, "package.json"));
 const FORWARDED_SIGNAL_KILL_GRACE_MS = 250;
 const PUBLISH_RENAME_DELAYS_MS = [100, 200, 400, 800, 1600];
 const PUBLISH_RENAME_WAIT = new Int32Array(new SharedArrayBuffer(4));
+
+type UiBuildEnvironmentSources = {
+  env?: NodeJS.ProcessEnv;
+  now?: () => Date;
+  readBuildInfo?: () => unknown;
+  readGitCommit?: () => string | null;
+  readPackageVersion?: () => string | null;
+};
+
+function readCurrentGitCommit(): string | null {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function readCurrentPackageVersion(): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === "string" && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readExistingBuildInfo(): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(repoRoot, "dist/build-info.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Reuse a matching runtime identity for a standalone rebuild of the bundled UI. */
+export function resolveUiBuildEnvironment(
+  sources: UiBuildEnvironmentSources = {},
+): NodeJS.ProcessEnv {
+  const env = sources.env ?? process.env;
+  const buildEnv = resolveBuildIdentityEnvironment({
+    commitLabel: "Control UI build commit",
+    env,
+    now: sources.now,
+    readGitCommit: sources.readGitCommit ?? readCurrentGitCommit,
+  });
+  if (env.OPENCLAW_BUILD_TIMESTAMP?.trim() || env.OPENCLAW_CONTROL_UI_BUILD_ID?.trim()) {
+    return buildEnv;
+  }
+
+  const existing = normalizeControlUiBuildInfo((sources.readBuildInfo ?? readExistingBuildInfo)());
+  const version = (sources.readPackageVersion ?? readCurrentPackageVersion)();
+  const release = env.OPENCLAW_CONTROL_UI_RELEASE_BUILD?.trim() === "1";
+  if (
+    existing.buildId === "dev" ||
+    !existing.builtAt ||
+    existing.commit !== buildEnv.GIT_COMMIT ||
+    existing.version !== version ||
+    existing.release !== release
+  ) {
+    return buildEnv;
+  }
+  return {
+    ...buildEnv,
+    OPENCLAW_BUILD_TIMESTAMP: existing.builtAt,
+    OPENCLAW_CONTROL_UI_BUILD_ID: existing.buildId,
+  };
+}
 
 type UiSpawnCall = ReturnType<typeof createPnpmRunnerSpawnSpec>;
 

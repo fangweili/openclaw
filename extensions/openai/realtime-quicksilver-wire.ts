@@ -14,6 +14,7 @@ import {
 import {
   isOpenAIGptLiveModel,
   isOpenAIGptLiveApiModel,
+  isOpenAIGptLiveSubscriptionModel,
   resolveOpenAIQuicksilverVoice,
   type OpenAIGptLiveVoice,
 } from "./realtime-quicksilver.js";
@@ -74,7 +75,7 @@ type OpenAIQuicksilverSession = {
   delegation: { type: "client"; ack_filler?: false };
   initial_items?: Array<{
     type: "message";
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "developer";
     content: Array<{ type: "input_text" | "output_text"; text: string }>;
   }>;
   input?: OpenAIQuicksilverSession["initial_items"];
@@ -100,6 +101,13 @@ class OpenAIQuicksilverCallError extends Error {
   }
 }
 
+/**
+ * Builds a fresh provider payload without mutating caller history. The subscription
+ * route consumes initial developer messages for operating instructions; its native
+ * session.instructions field alone does not apply the configured persona. Both
+ * fields share one rendered policy, including bounded history explicitly quoted as
+ * background data. Other routes retain their existing instruction and seed shapes.
+ */
 export function buildOpenAIQuicksilverSession(params: {
   model: string;
   hostControlsInput?: boolean;
@@ -109,15 +117,21 @@ export function buildOpenAIQuicksilverSession(params: {
 }): OpenAIQuicksilverSession {
   const history = boundOpenAIQuicksilverContextItems(params.initialItems ?? []);
   const publicApi = isOpenAIGptLiveApiModel(params.model);
-  const instructions = [
-    params.instructions?.trim(),
-    params.hostControlsInput ? OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS : undefined,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const instructions =
+    [
+      params.instructions?.trim(),
+      params.hostControlsInput ? OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n\n") +
+    (params.hostControlsInput
+      ? buildOpenAIQuicksilverBackgroundContext(history, OPENAI_QUICKSILVER_CONTEXT_MAX_UTF8_BYTES)
+      : "");
   // Negotiated host-controlled calls receive shared history as background, not
   // as the new call's own speech. Explicit legacy conversation seeds stay native.
-  const initialItems = (params.hostControlsInput ? [] : history).map((item) => ({
+  const initialItems: NonNullable<OpenAIQuicksilverSession["initial_items"]> = (
+    params.hostControlsInput ? [] : history
+  ).map((item) => ({
     type: "message" as const,
     role: item.role,
     content: [
@@ -127,16 +141,16 @@ export function buildOpenAIQuicksilverSession(params: {
       },
     ],
   }));
+  if (isOpenAIGptLiveSubscriptionModel(params.model) && instructions) {
+    initialItems.unshift({
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: instructions }],
+    });
+  }
   return {
     model: params.model,
-    instructions:
-      instructions +
-      (params.hostControlsInput
-        ? buildOpenAIQuicksilverBackgroundContext(
-            history,
-            OPENAI_QUICKSILVER_CONTEXT_MAX_UTF8_BYTES,
-          )
-        : ""),
+    instructions,
     audio: { output: { voice: resolveOpenAIQuicksilverVoice(params.model, params.voice) } },
     // Set at call creation: an attached sideband cannot change existing-call configuration.
     delegation:

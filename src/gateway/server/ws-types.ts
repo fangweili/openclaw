@@ -7,7 +7,6 @@ import type { AuthenticatedGitHubIdentitySync } from "../github-user-identity.ty
 import type { GatewayOperatorAccessAuthority } from "../operator-access-policy.types.js";
 import type { GatewayOperatorRoleActor } from "../operator-role-actor.js";
 import type { PluginNodeCapabilityClient } from "../plugin-node-capability.js";
-import type { WebPushForegroundState } from "../web-push-foreground.js";
 import type { WorkerConnectionIdentity } from "../worker-environments/connection-identity.js";
 import type { GatewayWsBrowserOrigin, PreparedSessionProfile } from "./client-identity-types.js";
 import type { GatewayConnectionTransport } from "./connection-transport.js";
@@ -46,8 +45,6 @@ export type GatewayWsClient = PluginNodeCapabilityClient & {
   sharedGatewaySessionGeneration?: string;
   authPolicy?: GatewayAuthPolicy;
   presenceKey?: string;
-  /** Connection-owned transient push presentation state, never accepted from handshake data. */
-  webPushForeground?: WebPushForegroundState;
   /** Connection-owned timing facts, reconciled across live peers independently of the TTL cache. */
   personPresence?: { onlineSince: number; lastActivityAt?: number };
   /** Accepted interaction on this exact connection, never copied from another client. */
