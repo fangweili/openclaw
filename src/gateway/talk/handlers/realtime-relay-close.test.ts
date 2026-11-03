@@ -91,7 +91,6 @@ describe("realtime relay finalization", () => {
       const broadcastToConnIds = vi.fn();
       const warn = vi.fn();
       const session = createTalkRealtimeRelaySession({
-        sessionContext: "Synthetic admitted Talk context",
         context: {
           broadcastToConnIds,
           chatAbortControllers: new Map(),
