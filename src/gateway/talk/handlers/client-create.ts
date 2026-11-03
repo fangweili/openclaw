@@ -179,11 +179,11 @@ export const createTalkClient: GatewayRequestHandler = async ({
         `Realtime provider ${resolution.provider.id} does not support browser video frames`,
       );
     }
-    const transcriptSender = gatewayClientSenderFields(client ?? null).sender;
+    const sender = gatewayClientSenderFields(client ?? null).sender;
     const sessionContext = buildTalkSessionContext({
       config: runtimeConfig,
       agentId,
-      sender: transcriptSender,
+      sender,
     });
     const providerInstructions = await resolveTalkRealtimeProviderInstructions({
       config: runtimeConfig,
@@ -283,7 +283,6 @@ export const createTalkClient: GatewayRequestHandler = async ({
               consultRunner.getToolAuthorityOverlay(undefined, source),
             appendTranscript: ({ entryId, role, text, confirmation }) =>
               appendClientVoiceTranscript({
-                sender: transcriptSender,
                 agentId,
                 sessionKey,
                 sessionTarget,

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../../../config/types.js";
 import type { RealtimeVoiceProviderPlugin } from "../../../plugins/types.js";
-import type { UserTurnInput } from "../../../sessions/user-turn-transcript.types.js";
 import type { BoundedSerialQueue } from "../../../shared/bounded-serial-queue.js";
 import type { RealtimeVoiceAgentControlResult } from "../../../talk/agent-run-control.js";
 import type { createClientVoiceConfirmationReadiness } from "../../../talk/client-voice-confirmation-readiness.js";
@@ -262,8 +261,6 @@ export type RelaySession = {
   capabilities?: InternalRealtimeVoiceProviderCapabilities;
   outputOwnership: TalkRealtimeRelayOutputOwnership;
   sessionTarget: PreparedTalkSessionTarget;
-  /** Authenticated caller captured at call admission; never inferred from the target. */
-  transcriptSender?: UserTurnInput["sender"];
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;
   activeAgentRuns: Map<string, string>;
@@ -311,8 +308,6 @@ export type CreateTalkRealtimeRelaySessionParams = {
   tools: RealtimeVoiceTool[];
   model?: string;
   sessionTarget: PreparedTalkSessionTarget;
-  /** Authenticated caller captured at call admission; never inferred from the target. */
-  transcriptSender?: UserTurnInput["sender"];
   voice?: string;
   language?: string;
   forceAgentConsultOnFinalTranscript?: boolean;

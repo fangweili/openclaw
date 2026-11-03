@@ -187,7 +187,6 @@ function requireSuccessfulReply(respond: ReturnType<typeof vi.fn<RespondFn>>) {
 }
 
 type NativePluginFixture = {
-  profileId: string;
   create: (negotiated: boolean, voiceSessionId?: string) => Promise<Record<string, unknown>>;
   invoke: (
     method: keyof typeof talkClientHandlers,
@@ -343,7 +342,6 @@ export async function withNativePlugin(
             return { handling, response };
           },
           broadcast,
-          profileId: profile.id,
           chatAbortControllers: context.chatAbortControllers,
         });
       } finally {

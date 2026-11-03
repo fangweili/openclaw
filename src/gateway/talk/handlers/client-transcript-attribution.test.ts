@@ -1,3 +1,4 @@
+/** Talk keeps finalized speech in its session history without inferring who spoke. */
 import { describe, expect, it, vi } from "vitest";
 import {
   readSessionTranscriptMessageEvents,
@@ -14,10 +15,7 @@ import { makeContextParams } from "../../server-request-context.test-support.js"
 import { sharingPolicyClient } from "../../session-sharing.test-utils.js";
 import { talkClientHandlers } from "./client.js";
 
-const sessionKey = "agent:main:voice-attribution";
-const sessionId = "voice-attribution";
-
-/** Each scenario shares a complete request context while supplying its caller per request. */
+/** Exercises persistence after session authorization, with the original request client. */
 function createTranscriptInvoker() {
   const context = createGatewayRequestContext(makeContextParams());
   context.getRuntimeConfig = () => ({});
@@ -38,24 +36,33 @@ function createTranscriptInvoker() {
   };
 }
 
-describe("authenticated voice transcript attribution", () => {
-  it.each(["child", "parent", "synthetic", "profileless"] as const)(
-    "attributes %s voice to the authenticated caller and never to the session owner",
-    async (caller) =>
+describe("Talk transcript speaker attribution", () => {
+  it.each([
+    { name: "ordinary", key: "voice", caller: "caller", owner: undefined, chatType: "direct" },
+    {
+      name: "personal",
+      key: "personal:child",
+      caller: "child",
+      owner: "child",
+      chatType: "direct",
+    },
+    { name: "shared", key: "family", caller: "robot-account", owner: "child", chatType: "group" },
+    { name: "profileless", key: "voice", caller: undefined, owner: "child", chatType: "direct" },
+  ] as const)(
+    "keeps $name voice history tagless without losing provenance or idempotency",
+    async ({ name, key, caller, owner, chatType }) =>
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        const sessionKey = `agent:main:${key}`;
+        const sessionId = `voice-history-${name}`;
         const invokeTranscript = createTranscriptInvoker();
-        const client = sharingPolicyClient(
-          caller === "profileless" ? {} : { user: caller, displayName: "Caller" },
-        );
-        if (caller === "synthetic") {
-          client.internal = { syntheticClient: true };
-        }
+        const client = sharingPolicyClient({ user: caller, displayName: "Connection account" });
         await replaceSessionEntry(
           { agentId: "main", sessionKey },
           {
             sessionId,
             updatedAt: 1,
-            createdActor: { type: "human", source: "profile", id: "child" },
+            chatType,
+            ...(owner ? { createdActor: { type: "human", source: "profile", id: owner } } : {}),
           },
         );
         const voiceSessionId = createOrResumeClientVoiceSession({
@@ -63,76 +70,74 @@ describe("authenticated voice transcript attribution", () => {
           sessionKey,
           origin: "client",
         });
-        const params = {
-          sessionKey,
-          voiceSessionId,
-          entryId: "speaker",
-          role: "user",
-          text: "A spoken answer",
-        };
-        expect(await invokeTranscript(params, client)).toHaveBeenCalledWith(
-          true,
-          { ok: true },
-          undefined,
-        );
-        // A lost-response replay from the same person survives mutable profile labels.
-        if (client.authenticatedUserProfile) {
-          client.authenticatedUserProfile.displayName = "Renamed caller";
-        }
-        expect(await invokeTranscript(params, client)).toHaveBeenCalledWith(
-          true,
-          { ok: true },
-          undefined,
-        );
-        // A replay with different attribution conflicts rather than relabeling the author.
-        expect(
-          await invokeTranscript(params, sharingPolicyClient({ user: "retrying-reader" })),
-        ).toHaveBeenCalledWith(
-          false,
-          undefined,
-          expect.objectContaining({ code: "INVALID_REQUEST" }),
-        );
-        expect(await invokeTranscript(params, client)).toHaveBeenCalledWith(
-          true,
-          { ok: true },
-          undefined,
-        );
-        expect(
-          await invokeTranscript(
-            { ...params, entryId: "reply", role: "assistant", text: "A reply" },
-            client,
-          ),
-        ).toHaveBeenCalledWith(true, { ok: true }, undefined);
-        const events = readSessionTranscriptMessageEvents({ agentId: "main", sessionId });
-        expect(events).toHaveLength(2);
-        const event = events[0]?.event;
-        expect(event).toMatchObject({
-          message: { provenance: { kind: "realtime_voice", sourceChannel: "talk" } },
-        });
-        if (caller === "profileless") {
-          expect(event).not.toHaveProperty("message.__openclaw");
-        } else {
-          expect(event).toHaveProperty("message.__openclaw.senderId", caller);
-          if (caller === "synthetic") {
-            expect(event).not.toHaveProperty("message.__openclaw.senderIdentity");
-          } else {
-            expect(event).toHaveProperty("message.__openclaw.senderIdentity", {
-              type: "profile",
-              id: caller,
+        try {
+          const params = {
+            sessionKey,
+            voiceSessionId,
+            entryId: "utterance",
+            role: "user",
+            text: "A spoken answer",
+          };
+          expect(await invokeTranscript(params, client)).toHaveBeenCalledWith(
+            true,
+            { ok: true },
+            undefined,
+          );
+          // Replaying the same finalized provider event retains a single history row.
+          expect(await invokeTranscript(params, client)).toHaveBeenCalledWith(
+            true,
+            { ok: true },
+            undefined,
+          );
+          expect(
+            await invokeTranscript(
+              { ...params, entryId: "reply", role: "assistant", text: "A reply" },
+              client,
+            ),
+          ).toHaveBeenCalledWith(true, { ok: true }, undefined);
+          const events = readSessionTranscriptMessageEvents({ agentId: "main", sessionId });
+          expect(events).toMatchObject([
+            {
+              event: {
+                message: { role: "user", content: [{ type: "text", text: "A spoken answer" }] },
+              },
+            },
+            {
+              event: {
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "A reply" }],
+                  api: "realtime",
+                  model: "realtime-voice",
+                },
+              },
+            },
+          ]);
+          expect(events).toHaveLength(2);
+          for (const { event } of events) {
+            expect(event).toMatchObject({
+              message: { provenance: { kind: "realtime_voice", sourceChannel: "talk" } },
             });
+            expect(event).not.toHaveProperty("message.__openclaw");
           }
+          expect(
+            await invokeTranscript(
+              { ...params, entryId: "forged", sender: { id: "child" } },
+              client,
+            ),
+          ).toHaveBeenCalledWith(
+            false,
+            undefined,
+            expect.objectContaining({ code: "INVALID_REQUEST" }),
+          );
+        } finally {
+          await closeClientVoiceSession({
+            agentId: "main",
+            sessionKey,
+            voiceSessionId,
+            config: {},
+          });
         }
-        expect(event).not.toHaveProperty("message.__openclaw.senderName");
-        expect(event).not.toHaveProperty("message.__openclaw.senderUsername");
-        expect(events[1]?.event).not.toHaveProperty("message.__openclaw");
-        expect(
-          await invokeTranscript({ ...params, entryId: "forged", sender: { id: "child" } }, client),
-        ).toHaveBeenCalledWith(
-          false,
-          undefined,
-          expect.objectContaining({ code: "INVALID_REQUEST" }),
-        );
-        await closeClientVoiceSession({ agentId: "main", sessionKey, voiceSessionId, config: {} });
       }),
   );
 });

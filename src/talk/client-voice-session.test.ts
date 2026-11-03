@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { readSessionTranscriptMessageEvents } from "../config/sessions/session-accessor.js";
+import { loadTranscriptEvents } from "../config/sessions/session-accessor.js";
 import { emitTrustedDiagnosticEvent } from "../infra/diagnostic-events.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
@@ -466,12 +466,6 @@ describe("client voice session", () => {
       return await actualAppend(...args);
     });
 
-    const sender = {
-      id: "original-caller",
-      name: "Mutable display name",
-      username: "mutable-username",
-      identity: { type: "profile" as const, id: "original-caller" },
-    };
     const appends = Array.from({ length: 10_000 }, (_, index) =>
       appendClientVoiceTranscript({
         agentId: "main",
@@ -480,7 +474,6 @@ describe("client voice session", () => {
         voiceSessionId,
         entryId: String(index + 1),
         role: index % 2 === 0 ? "user" : "assistant",
-        sender,
         text: `  ${"x".repeat(9_000)}  `,
       }).then(
         () => ({ ok: true as const }),
@@ -491,9 +484,6 @@ describe("client voice session", () => {
       expect(sessionAccessorMocks.appendTranscriptMessage).toHaveBeenCalledTimes(1),
     );
     expect(clientVoiceSessionTesting.readRecord("main", voiceSessionId)?.status).toBe("open");
-    // A queued final retains the admitted speaker even if its caller object changes.
-    sender.id = "changed-caller";
-    sender.identity.id = "changed-caller";
     firstAppend.resolve();
     const results = await Promise.all(appends);
 
@@ -509,18 +499,6 @@ describe("client voice session", () => {
             result.error.message === "voice transcript persistence queue capacity exceeded"),
       ),
     ).toBe(true);
-    const persisted = readSessionTranscriptMessageEvents({
-      agentId: "main",
-      sessionId: "session-agent-main-main",
-    });
-    expect(persisted[2]?.event).toHaveProperty("message.__openclaw.senderIdentity", {
-      type: "profile",
-      id: "original-caller",
-    });
-    expect(persisted[2]?.event).toHaveProperty("message.__openclaw.senderId", "original-caller");
-    expect(persisted[2]?.event).not.toHaveProperty("message.__openclaw.senderName");
-    expect(persisted[2]?.event).not.toHaveProperty("message.__openclaw.senderUsername");
-    expect(persisted[1]?.event).not.toHaveProperty("message.__openclaw.senderIdentity");
     expect(sessionAccessorMocks.appendTranscriptMessage).toHaveBeenCalledTimes(41);
     expect(
       sessionAccessorMocks.appendTranscriptMessage.mock.calls.map(([, options]) => options.eventId),
@@ -640,6 +618,61 @@ describe("client voice session", () => {
     expect(
       clientVoiceSessionTesting.readRecord("main", voiceSessionId)?.transcriptFailureKeys,
     ).toEqual([expect.any(String)]);
+  });
+
+  it("replays a legacy tagged voice final without rewriting history and can close after recovery", async () => {
+    const target = { agentId: "main", sessionKey: "agent:main:main" };
+    await seedSession(target.sessionKey);
+    const scope = { ...target, sessionId: "session-agent-main-main" };
+    const voiceSessionId = createOrResumeClientVoiceSession({
+      ...target,
+      origin: "client",
+      voiceSessionId: "voice-author-cutover",
+    });
+    const eventId = `voice:${voiceSessionId}:legacy`;
+    await sessionAccessorMocks.actualAppendTranscriptMessage!(scope, {
+      eventId,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "A spoken answer" }],
+        timestamp: 10,
+        provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+        __openclaw: {
+          senderId: "robot-account",
+          senderIdentity: { type: "profile", id: "robot-account" },
+        },
+      },
+    });
+    const original = await loadTranscriptEvents(scope);
+    const replay = {
+      ...target,
+      sessionTarget: { sessionKey: target.sessionKey },
+      voiceSessionId,
+      entryId: "legacy",
+      role: "user" as const,
+      text: "A spoken answer",
+      timestamp: 20,
+    };
+    await expect(appendClientVoiceTranscript(replay)).resolves.toBeUndefined();
+    expect(await loadTranscriptEvents(scope)).toEqual(original);
+    expect(clientVoiceSessionTesting.readRecord("main", voiceSessionId)).toMatchObject({
+      hasUserTranscript: true,
+      transcriptFailureKeys: [],
+    });
+
+    await expect(
+      appendClientVoiceTranscript({ ...replay, text: "Conflicting spoken answer" }),
+    ).rejects.toThrow(/conflicts with the admitted message/u);
+    await expect(
+      closeClientVoiceSession({ ...target, voiceSessionId, config: {} }),
+    ).rejects.toThrow("voice transcript persistence must be retried before close");
+    await expect(appendClientVoiceTranscript(replay)).resolves.toBeUndefined();
+    expect(await loadTranscriptEvents(scope)).toEqual(original);
+    await closeClientVoiceSession({ ...target, voiceSessionId, config: {} });
+    expect(clientVoiceSessionTesting.readRecord("main", voiceSessionId)).toMatchObject({
+      status: "closed",
+      transcriptFailureKeys: [],
+    });
   });
 
   it("requires every failed transcript entry to recover before close", async () => {

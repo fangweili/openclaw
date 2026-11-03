@@ -61,7 +61,25 @@ function messagesMatchForIdempotentReplay(stored: unknown, candidate: unknown): 
     stored.api === OPENCLAW_TRANSCRIPT_ARTIFACT_API &&
     (storedDelivery === undefined ||
       (isRecord(storedDelivery) && !Object.hasOwn(storedDelivery, "mediaUrls")));
-  const serializedShape = (message: unknown, projectLegacyMedia = false): unknown => {
+  // Retired Talk stamping recorded the connection account, which did not identify
+  // the speaker. A tagless user replay keeps the original row and compares every
+  // other field; this one-way projection never changes accepted transcript bytes.
+  const legacyTalkAuthor =
+    isRecord(stored) &&
+    stored.role === "user" &&
+    isRecord(stored.provenance) &&
+    stored.provenance.kind === "realtime_voice" &&
+    stored.provenance.sourceChannel === "talk" &&
+    isRecord(stored["__openclaw"]) &&
+    isRecord(candidate) &&
+    candidate.role === "user" &&
+    isDeepStrictEqual(stored.provenance, candidate.provenance) &&
+    !Object.hasOwn(candidate, "__openclaw");
+  const serializedShape = (
+    message: unknown,
+    projectLegacyMedia = false,
+    projectLegacyTalkAuthor = false,
+  ): unknown => {
     if (!isRecord(message)) {
       return message;
     }
@@ -79,10 +97,25 @@ function messagesMatchForIdempotentReplay(stored: unknown, candidate: unknown): 
         stable.openclawDelivery = delivery;
       }
     }
+    if (projectLegacyTalkAuthor && isRecord(stable["__openclaw"])) {
+      const {
+        senderId: _senderId,
+        senderIdentity: _senderIdentity,
+        ...metadata
+      } = stable["__openclaw"];
+      if (Object.keys(metadata).length === 0) {
+        delete stable["__openclaw"];
+      } else {
+        stable["__openclaw"] = metadata;
+      }
+    }
     const serialized = JSON.stringify(stable);
     return serialized === undefined ? undefined : JSON.parse(serialized);
   };
-  return isDeepStrictEqual(serializedShape(stored), serializedShape(candidate, legacyMediaMirror));
+  return isDeepStrictEqual(
+    serializedShape(stored, false, legacyTalkAuthor),
+    serializedShape(candidate, legacyMediaMirror),
+  );
 }
 
 type TranscriptMessageEnvelope = {
