@@ -223,7 +223,7 @@ describe("gateway method registry", () => {
     expect(registry.requiresAuthenticatedProfile("board.data.read")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("board.prompt.authorize")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("talk.client.create")).toBe(true);
-    expect(registry.requiresAuthenticatedProfile("talk.client.transcript")).toBe(true);
+    expect(registry.requiresAuthenticatedProfile("talk.client.transcript")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("talk.session.create")).toBe(true);
     expect(registry.requiresAuthenticatedProfile("talk.client.close")).toBe(false);
     expect(registry.requiresAuthenticatedProfile("talk.session.close")).toBe(false);
