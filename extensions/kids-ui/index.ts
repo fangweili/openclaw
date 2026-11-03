@@ -59,7 +59,8 @@ export default definePluginEntry({
       registerActivityTools(api, {
         children: activities.children,
         evidenceJobs: activities.evidenceJobs,
-        getRuntime: () => (generation ? { generation, prepare: owner.prepare } : null),
+        getRuntime: () =>
+          generation ? { generation, prepare: owner.prepare, publish: owner.publish } : null,
       });
     }
     api.registerHttpRoute({

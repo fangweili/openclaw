@@ -2,7 +2,11 @@
  * Checks model-authored content once per boundary; no provider calls or state. */
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { ActivityDefinition, DailyActivityBundle } from "./activity-contract.js";
+import type {
+  ActivityDefinition,
+  DailyActivityBundle,
+  DailyArtworkBundle,
+} from "./activity-contract.js";
 import { ActivityInputError } from "./activity-error.js";
 import { parseActivityNumber } from "./activity-grading.js";
 import type { ActivityStoreTarget } from "./activity-store-contract.js";
@@ -43,7 +47,7 @@ const questionSchema = Type.Union([
 ]);
 
 /** One bounded definition schema serves cron publication and parent-requested practice. */
-export function activityDefinitionSchema(questionCount: 1 | 3) {
+export function activityDefinitionSchema(questionCount: 1 | 10) {
   return Type.Object(
     {
       id: text(160),
@@ -54,7 +58,10 @@ export function activityDefinitionSchema(questionCount: 1 | 3) {
     { additionalProperties: false },
   );
 }
-const definitionSchemas = { 1: activityDefinitionSchema(1), 3: activityDefinitionSchema(3) };
+const definitionSchemas = {
+  1: activityDefinitionSchema(1),
+  10: activityDefinitionSchema(10),
+};
 /** The requested date fences an operator's offer against a local-midnight rollover. */
 export const activityPracticeOfferSchema = Type.Object(
   {
@@ -66,13 +73,19 @@ export const activityPracticeOfferSchema = Type.Object(
 
 /** Validate bounded fields plus answer relationships before immutable storage. */
 export function validateActivityDefinition(
-  activity: ActivityDefinition,
-  questionCount: 1 | 3,
-): void {
+  activity: unknown,
+  questionCount: 1 | 10,
+): asserts activity is ActivityDefinition {
   if (!Check(definitionSchemas[questionCount], activity)) {
     throw new ActivityInputError(
       `Prepare exactly ${questionCount} complete questions per challenge.`,
     );
+  }
+  if (
+    questionCount === 10 &&
+    activity.questions.filter((question) => question.kind === "choice").length > 2
+  ) {
+    throw new ActivityInputError("Prepare at least eight free-answer questions per batch.");
   }
   const ids = new Set<string>();
   for (const question of activity.questions) {
@@ -95,12 +108,10 @@ export function validateActivityDefinition(
 }
 
 /** Reject malformed model output once, before it becomes immutable trusted quiz content. */
-export function validateDailyActivityBundle(
-  bundle: DailyActivityBundle,
+function validatePublicationDate(
+  bundle: Pick<DailyActivityBundle, "childId" | "date">,
   target: ActivityStoreTarget,
 ): void {
-  const bounded = (value: unknown, max: number) =>
-    typeof value === "string" && value.trim().length > 0 && value.length <= max;
   if (
     bundle.childId !== target.childId ||
     !/^\d{4}-\d{2}-\d{2}$/u.test(bundle.date) ||
@@ -111,18 +122,33 @@ export function validateDailyActivityBundle(
   ) {
     throw new Error("Activity publication has an invalid child or date.");
   }
-  if (!Array.isArray(bundle.activities) || bundle.activities.length !== 3) {
-    throw new Error("Prepare exactly three challenges for the day.");
-  }
-  const activityIds = new Set<string>();
-  for (const activity of bundle.activities) {
-    if (activityIds.has(activity?.id)) {
-      throw new Error("Each daily challenge needs its own activity ID.");
-    }
-    activityIds.add(activity?.id);
-    validateActivityDefinition(activity, 3);
-  }
+}
 
+const bounded = (value: unknown, max: number) =>
+  typeof value === "string" && value.trim().length > 0 && value.length <= max;
+
+/** Validate one independent daily learning goal before durable publication. */
+export function validateDailyActivityBundle(
+  bundle: DailyActivityBundle,
+  target: ActivityStoreTarget,
+): void {
+  validatePublicationDate(bundle, target);
+  if (!Array.isArray(bundle.activities) || bundle.activities.length !== 1) {
+    throw new Error("Prepare one ten-question batch for the day.");
+  }
+  validateActivityDefinition(bundle.activities[0], 10);
+
+  if (!bounded(bundle.learningBrief, 8000)) {
+    throw new Error("Prepare a bounded teaching brief for the next batch.");
+  }
+}
+
+/** Validate a complete art pair and optional rest poses, without learning content. */
+export function validateDailyArtworkBundle(
+  bundle: DailyArtworkBundle,
+  target: ActivityStoreTarget,
+): void {
+  validatePublicationDate(bundle, target);
   for (const image of [bundle.scene?.normal, bundle.scene?.excited]) {
     if (!image || !/^[a-zA-Z0-9_-]{1,160}$/u.test(image.imageId) || !bounded(image.caption, 400)) {
       throw new Error("The daily scene is incomplete.");

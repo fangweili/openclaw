@@ -18,6 +18,7 @@ const child = z.strictObject({
   timeZone: z.string().min(1).max(100),
   preparationJobId: identifier,
   preparationAgentId: identifier.optional(),
+  artworkJobId: identifier.optional(),
 });
 
 /** Serializable shape shared by the manifest and runtime configuration parser. */
@@ -39,6 +40,16 @@ export type KidsConfig = z.infer<typeof kidsConfigSchema>;
 export function parseKidsConfig(value: unknown): KidsConfig {
   const config = kidsConfigSchema.parse(value ?? {});
   const children = config.activities?.children ?? [];
+  // A cron invocation receives exactly one role; a read-only job cannot acquire
+  // publication authority through a second binding with the same host identity.
+  const jobIdentities = new Set<string>();
+  const admitJob = (agentId: string, jobId: string) => {
+    const identity = `${agentId}:${jobId}`;
+    if (jobIdentities.has(identity)) {
+      throw new Error("kids-ui activity jobs require distinct agent and job identities.");
+    }
+    jobIdentities.add(identity);
+  };
   for (const field of ["childId", "agentId", "sessionKey", "preparationJobId"] as const) {
     if (new Set(children.map((entry) => entry[field])).size !== children.length) {
       throw new Error(`kids-ui activities require a unique ${field} for each child.`);
@@ -49,6 +60,13 @@ export function parseKidsConfig(value: unknown): KidsConfig {
     if (!entry.sessionKey.startsWith(`agent:${entry.agentId}:`)) {
       throw new Error("kids-ui activity sessions must belong to their configured tutor agent.");
     }
+    admitJob(entry.preparationAgentId ?? entry.agentId, entry.preparationJobId);
+    if (entry.artworkJobId) {
+      admitJob(entry.preparationAgentId ?? entry.agentId, entry.artworkJobId);
+    }
+  }
+  for (const entry of config.activities?.evidenceJobs ?? []) {
+    admitJob(entry.agentId, entry.jobId);
   }
   return config;
 }

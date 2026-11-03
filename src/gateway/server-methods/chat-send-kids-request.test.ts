@@ -78,7 +78,7 @@ it("admits the kids conversation's actual send payload with only child scopes", 
     (text) => accepted.push(text),
   );
   try {
-    await owner.connect({ type: "hello-ok", protocol: 4 });
+    await owner.connect({ type: "hello-ok", protocol: 4, auth: { role: "operator", scopes } });
     const sent = await owner.send("Can we practice fractions?");
     expect(admissions[0]?.ok, JSON.stringify(admissions[0])).toBe(true);
     expect(admissions).toMatchObject([

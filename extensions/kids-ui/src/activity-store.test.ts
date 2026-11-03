@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActivityMutation } from "@openclaw/kids-activity-contract";
 import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import {
   openSqliteWorkerStore,
@@ -15,10 +14,14 @@ import {
   ACTIVITY_EXCITED_MS,
   ACTIVITY_SLEEP_MS,
   type DailyActivityBundle,
+  type DailyArtworkBundle,
+  type ActivityDirectMutation,
   type ActivityGrade,
   type ActivityPracticeOffer,
 } from "./activity-contract.js";
+import { initialActivityProgress } from "./activity-progress.js";
 import type { ActivityStoreOperations } from "./activity-store-contract.js";
+import { dailyActivityBundle, legacyActivityBundle } from "./activity-test-helpers.js";
 
 const timestamp = Date.parse("2026-10-13T12:00:00Z");
 const moduleUrl = resolveRuntimeWorkerUrl({
@@ -30,36 +33,7 @@ let directory: string;
 let databasePath: string;
 let store: SqliteWorkerStore<ActivityStoreOperations>;
 const target = (childId: string, now = timestamp, date = "2026-10-13") => ({ childId, now, date });
-function bundle(childId: string, date = "2026-10-13"): DailyActivityBundle {
-  return {
-    childId,
-    date,
-    activities: [1, 2, 3].map((index) => ({
-      id: index === 1 ? `${childId}-${date}` : `${childId}-${date}-${index}`,
-      title: `Berry math ${index}`,
-      subject: "Math",
-      questions: [1, 2, 3].map((id) => ({
-        kind: "choice" as const,
-        id: `q${id}`,
-        prompt: `What is ${id} + 1?`,
-        options: [
-          { id: "yes", text: `${id + 1}` },
-          { id: "no", text: "100" },
-        ],
-        correctOptionId: "yes",
-        hint: "Count one more.",
-        explanation: "Adding one moves to the next number.",
-      })),
-    })),
-    scene: {
-      normal: { imageId: `normal-${childId}-${date}`, caption: "Ready to explore?" },
-      excited: { imageId: `excited-${childId}-${date}`, caption: "We figured it out!" },
-    },
-    scenePrompt: "Rocky builds a tiny boat from a red maple leaf beside a blue pond.",
-    stateText: { bored: "Thinking of our next adventure.", sleeping: "Taking a cozy nap." },
-  };
-}
-function publishBundle(value: DailyActivityBundle, now = timestamp, date = "2026-10-13") {
+function publishNewBundle(value: DailyActivityBundle, now = timestamp, date = "2026-10-13") {
   return runSqliteWorkerStoreWrite(
     store,
     (scope) =>
@@ -71,12 +45,83 @@ function publishBundle(value: DailyActivityBundle, now = timestamp, date = "2026
     [databasePath],
   );
 }
-function publish(childId: string, date = "2026-10-13") {
-  return publishBundle(bundle(childId, date));
+function publishArtwork(
+  value: DailyArtworkBundle,
+  replaceImageId?: string,
+  guard = () => {},
+  date = "2026-10-13",
+) {
+  const { childId, scene, scenePrompt, stateText, restImages } = value;
+  const bundle = {
+    childId,
+    date: value.date,
+    scene,
+    scenePrompt,
+    stateText,
+    ...(restImages ? { restImages } : {}),
+  };
+  return runSqliteWorkerStoreWrite(
+    store,
+    (scope) =>
+      scope.execute({
+        type: "publishArtwork",
+        input: { ...target(childId, timestamp, date), bundle, replaceImageId },
+      }),
+    guard,
+    [databasePath],
+  );
+}
+/** Seed migrated legacy-size days; current publication admits only new ten-question goals. */
+function seedLegacyBundle(value: DailyActivityBundle & DailyArtworkBundle, now = timestamp) {
+  const db = new DatabaseSync(databasePath);
+  try {
+    if (
+      db
+        .prepare("SELECT 1 FROM kids_day WHERE child_id = ? AND date = ?")
+        .get(value.childId, value.date)
+    ) {
+      return Promise.resolve({ published: false });
+    }
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const { childId, date, activities, learningBrief, ...artwork } = value;
+      db.prepare(
+        "INSERT INTO kids_day(child_id,date,created_at,content,required_count) VALUES(?,?,?,?,?)",
+      ).run(childId, date, now, JSON.stringify({ learningBrief }), activities.length);
+      db.prepare("INSERT INTO kids_art(child_id,date,created_at,content) VALUES(?,?,?,?)").run(
+        childId,
+        date,
+        now,
+        JSON.stringify(artwork),
+      );
+      const insert = db.prepare("INSERT INTO kids_activity VALUES(?,?,?,?,?,?,?)");
+      for (const [ordinal, activity] of activities.entries()) {
+        insert.run(
+          childId,
+          activity.id,
+          date,
+          ordinal,
+          now,
+          JSON.stringify(activity),
+          JSON.stringify(initialActivityProgress(activity)),
+        );
+      }
+      db.exec("COMMIT");
+      return Promise.resolve({ published: true });
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+}
+function seedLegacyDay(childId: string, date = "2026-10-13") {
+  return seedLegacyBundle(legacyActivityBundle(childId, date));
 }
 function mutate(
   childId: string,
-  mutation: ActivityMutation,
+  mutation: ActivityDirectMutation,
   now = timestamp,
   date = "2026-10-13",
   guard = () => {},
@@ -159,7 +204,7 @@ function offerPractice(
 }
 /** Exercise the real sequential child flow, including explicit starts between challenges. */
 async function completeDay(childId: string) {
-  for (const activity of bundle(childId).activities) {
+  for (const activity of legacyActivityBundle(childId).activities) {
     await mutate(childId, {
       kind: "start",
       activityId: activity.id,
@@ -212,14 +257,15 @@ afterAll(async () => {
 describe("activity worker authority and progress", () => {
   it("offers one optional question without changing any completed work, artwork or pet clocks", async () => {
     const childId = "practice-preservation";
-    await publish(childId);
+    await seedLegacyDay(childId);
     await completeDay(childId);
     const before = savedRows(childId);
     const offered = await offerPractice(childId);
     expect(offered.published).toBe(true);
     expect(offered.snapshot.daily).toEqual({
       date: "2026-10-13",
-      total: 4,
+      total: 3,
+      questionTotal: 9,
       completed: 3,
       questionsSolved: 9,
       firstTryCorrect: 9,
@@ -229,7 +275,7 @@ describe("activity worker authority and progress", () => {
       id: `${childId}-practice`,
       title: "Explain your idea",
     });
-    expect(offered.snapshot.activity?.id).toBe(bundle(childId).activities[2]?.id);
+    expect(offered.snapshot.activity?.id).toBe(legacyActivityBundle(childId).activities[2]?.id);
     expect(JSON.stringify(offered.snapshot)).not.toContain("rubric");
     const after = savedRows(childId);
     expect({ ...after, activities: after.activities.slice(0, 3) }).toEqual(before);
@@ -238,8 +284,12 @@ describe("activity worker authority and progress", () => {
       type: "findDaily",
       input: { childId, date: "2026-10-13" },
     });
-    expect(originalBatch).toEqual(bundle(childId));
-    expect(await publish(childId)).toEqual({ published: false });
+    expect(originalBatch).toEqual({
+      childId,
+      date: "2026-10-13",
+      activities: legacyActivityBundle(childId).activities,
+    });
+    expect(await publishNewBundle(dailyActivityBundle(childId))).toEqual({ published: false });
     const opened = await mutate(childId, {
       kind: "start",
       activityId: `${childId}-practice`,
@@ -266,10 +316,21 @@ describe("activity worker authority and progress", () => {
     );
     expect(answered.snapshot.daily).toEqual({
       date: "2026-10-13",
-      total: 4,
-      completed: 4,
-      questionsSolved: 10,
-      firstTryCorrect: 10,
+      total: 3,
+      questionTotal: 9,
+      completed: 3,
+      questionsSolved: 9,
+      firstTryCorrect: 9,
+      hintedQuestions: 0,
+    });
+    expect(answered.snapshot.extras).toEqual({
+      questionsSolved: 1,
+      firstTryCorrect: 1,
+      hintedQuestions: 0,
+    });
+    expect(answered.snapshot.activity).toMatchObject({
+      scope: "extra",
+      firstTryCorrect: 1,
       hintedQuestions: 0,
     });
     const complete = savedRows(childId);
@@ -288,6 +349,22 @@ describe("activity worker authority and progress", () => {
     expect((await offerPractice(childId, retry, () => {}, "2026-10-14")).published).toBe(false);
     expect(savedRows(childId)).toEqual(complete);
     const evidence = await store.execute({ type: "prepare", input: target(childId) });
+    expect(evidence.recentActivities.map((activity) => activity.scope)).toEqual([
+      "extra",
+      "daily",
+      "daily",
+      "daily",
+    ]);
+    // Historical classification must use its owning day's legacy count, not today's new count.
+    await publishNewBundle(dailyActivityBundle(childId, "2026-10-14"));
+    const historical = await store.execute({
+      type: "prepare",
+      input: target(childId, timestamp, "2026-10-14"),
+    });
+    expect(historical.recentActivities.map(({ id, scope }) => ({ id, scope }))).toEqual([
+      { id: dailyActivityBundle(childId, "2026-10-14").activities[0]!.id, scope: "daily" },
+      ...evidence.recentActivities.map(({ id, scope }) => ({ id, scope })),
+    ]);
     expect(
       evidence.recentActivities.find((activity) => activity.id === offer.activity.id)?.attempts,
     ).toEqual([
@@ -302,7 +379,7 @@ describe("activity worker authority and progress", () => {
   it("refuses missing, incomplete, stale, malformed or conflicting practice offers atomically", async () => {
     const childId = "practice-refusal";
     await expect(offerPractice(childId)).rejects.toThrow("scheduled challenges");
-    await publish(childId);
+    await seedLegacyDay(childId);
     const initial = savedRows(childId);
     await expect(offerPractice(childId)).rejects.toThrow("scheduled challenges");
     expect(savedRows(childId)).toEqual(initial);
@@ -348,7 +425,7 @@ describe("activity worker authority and progress", () => {
 
   it("serializes competing offers and rechecks authority before committing", async () => {
     const childId = "practice-race";
-    await publish(childId);
+    await seedLegacyDay(childId);
     await completeDay(childId);
     const before = savedRows(childId);
     let current = true;
@@ -375,7 +452,8 @@ describe("activity worker authority and progress", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect((await get(childId)).daily).toEqual({
       date: "2026-10-13",
-      total: 4,
+      total: 3,
+      questionTotal: 9,
       completed: 3,
       questionsSolved: 9,
       firstTryCorrect: 9,
@@ -385,7 +463,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("keeps child projections separate and never exposes answer keys or unopened hints", async () => {
-    await publish("projection");
+    await seedLegacyDay("projection");
     const snapshot = await get("projection");
     expect(snapshot.activity?.currentQuestion).toEqual({
       id: "q1",
@@ -403,6 +481,7 @@ describe("activity worker authority and progress", () => {
     expect(snapshot.daily).toEqual({
       date: "2026-10-13",
       total: 3,
+      questionTotal: 9,
       completed: 0,
       questionsSolved: 0,
       firstTryCorrect: 0,
@@ -413,7 +492,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("atomically grades and replays duplicates without awarding progress twice", async () => {
-    await publish("replay");
+    await seedLegacyDay("replay");
     await start("replay");
     const first = await answer("replay", 1, "answer-1");
     const duplicate = await answer("replay", 1, "answer-1", "yes", timestamp + 1000);
@@ -426,7 +505,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("counts hinted correct work toward excitement while preserving independent evidence", async () => {
-    await publish("hints");
+    await seedLegacyDay("hints");
     await start("hints");
     await mutate("hints", {
       kind: "hint",
@@ -458,7 +537,9 @@ describe("activity worker authority and progress", () => {
       hintedQuestions: 1,
     });
     const context = await store.execute({ type: "prepare", input: target("hints") });
-    expect(context.recentActivities[0]?.attempts).toEqual(
+    expect(
+      context.recentActivities.find((activity) => activity.id === "hints-2026-10-13")?.attempts,
+    ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "a1",
@@ -479,7 +560,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("resets streak on a wrong answer and records a correction as assisted", async () => {
-    await publish("wrong");
+    await seedLegacyDay("wrong");
     await start("wrong");
     await answer("wrong", 1, "first");
     const incorrect = await answer("wrong", 2, "wrong", "no");
@@ -497,7 +578,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("uses server timestamps for sleep and preserves an ongoing celebration during chat", async () => {
-    await publish("clocks");
+    await seedLegacyDay("clocks");
     expect((await start("clocks")).snapshot.pet.state).toBe("sleeping");
     await answer("clocks", 1, "a1");
     await answer("clocks", 2, "a2");
@@ -525,60 +606,12 @@ describe("activity worker authority and progress", () => {
     ).toBe("normal");
   });
 
-  it.each([
-    { moods: [] },
-    { moods: ["bored"] },
-    { moods: ["sleeping"] },
-    { moods: ["bored", "sleeping"] },
-  ] as const)(
-    "selects same-day rest art and preserves fixed fallbacks for available moods $moods",
-    async ({ moods }) => {
-      const childId = `rest-${moods.join("-") || "legacy"}`;
-      const value = bundle(childId);
-      if (moods.length) {
-        value.restImages = {};
-        for (const mood of moods) {
-          value.restImages[mood] = `${childId}-${mood}`;
-        }
-      }
-      await publishBundle(value);
-      await mutate(childId, { kind: "touch", requestId: "wake", source: "chat" });
-      for (const [mood, elapsed] of [
-        ["bored", ACTIVITY_BORED_MS],
-        ["sleeping", ACTIVITY_SLEEP_MS],
-      ] as const) {
-        expect((await get(childId, timestamp + elapsed)).pet.image).toEqual({
-          imageId: value.restImages?.[mood] ?? mood,
-          caption: value.stateText[mood],
-        });
-      }
-      const saved = await store.execute({
-        type: "findDaily",
-        input: { childId, date: value.date },
-      });
-      expect(saved).toEqual(value);
-      const tomorrow = await get(childId, timestamp + 86_400_000, "2026-10-14");
-      expect(tomorrow.pet.image).toEqual({
-        imageId: "sleeping",
-        caption: "Resting until our next adventure.",
-      });
-      expect(tomorrow.pet.scene).toEqual(value.scene);
-    },
-  );
-
-  it("rejects invalid optional art before publishing any of the day's challenges", async () => {
-    const value = bundle("invalid-rest");
-    value.restImages = { bored: "../../private" };
-    await expect(publishBundle(value)).rejects.toThrow("resting image");
-    expect((await get(value.childId)).activity).toBeNull();
-  });
-
   it("resumes an unfinished day while displaying the new day's scene and refuses replacements", async () => {
-    await publish("resume");
+    await seedLegacyDay("resume");
     await start("resume");
     await answer("resume", 1, "a1");
-    await publish("resume", "2026-10-14");
-    expect(await publish("resume")).toEqual({ published: false });
+    await seedLegacyDay("resume", "2026-10-14");
+    expect(await publishNewBundle(dailyActivityBundle("resume"))).toEqual({ published: false });
     const tomorrow = await get("resume", timestamp + 86_400_000, "2026-10-14");
     expect(tomorrow.activity?.date).toBe("2026-10-13");
     expect(tomorrow.activity?.currentIndex).toBe(1);
@@ -586,8 +619,8 @@ describe("activity worker authority and progress", () => {
 
   it("requires explicit ordered starts and finishes exactly three challenges", async () => {
     const childId = "batch";
-    await publish(childId);
-    const quizzes = bundle(childId).activities;
+    await seedLegacyDay(childId);
+    const quizzes = legacyActivityBundle(childId).activities;
     await expect(
       mutate(childId, {
         kind: "start",
@@ -617,6 +650,7 @@ describe("activity worker authority and progress", () => {
       expect(completed.daily).toEqual({
         date: "2026-10-13",
         total: 3,
+        questionTotal: 9,
         completed: index + 1,
         questionsSolved: (index + 1) * 3,
         firstTryCorrect: (index + 1) * 3,
@@ -641,15 +675,16 @@ describe("activity worker authority and progress", () => {
   it("replaces unstarted extras and separates carryover completion from today's counts", async () => {
     const childId = "carry";
     const now = timestamp + 86_400_000;
-    await publish(childId);
+    await seedLegacyDay(childId);
     await start(childId);
     await answer(childId, 1, "old-q1");
-    await publish(childId, "2026-10-14");
+    await seedLegacyDay(childId, "2026-10-14");
     const carry = await get(childId, now, "2026-10-14");
     expect(carry.activity).toMatchObject({ date: "2026-10-13", currentIndex: 1 });
     expect(carry.daily).toEqual({
       date: "2026-10-14",
       total: 3,
+      questionTotal: 9,
       completed: 0,
       questionsSolved: 0,
       firstTryCorrect: 0,
@@ -702,20 +737,26 @@ describe("activity worker authority and progress", () => {
     expect(replay.feedback?.outcome).toBe("correct");
     expect(replay.snapshot).toEqual(current);
 
-    await publish("unstarted");
-    await publish("unstarted", "2026-10-14");
+    await seedLegacyDay("unstarted");
+    await seedLegacyDay("unstarted", "2026-10-14");
     expect((await get("unstarted", now, "2026-10-14")).activity?.date).toBe("2026-10-14");
   });
 
   it("publishes the whole batch atomically and keeps its scene once in evidence", async () => {
-    const original = bundle("atomic");
-    await publishBundle(original);
+    const original = dailyActivityBundle("atomic");
+    await publishNewBundle(original);
+    await publishArtwork(original);
     expect(
       await store.execute({ type: "findDaily", input: { childId: "atomic", date: original.date } }),
-    ).toEqual(original);
-    const collision = bundle("atomic", "2026-10-14");
-    collision.activities[2]!.id = original.activities[0]!.id;
-    await expect(publishBundle(collision)).rejects.toThrow();
+    ).toEqual({
+      childId: original.childId,
+      date: original.date,
+      activities: original.activities,
+      learningBrief: original.learningBrief,
+    });
+    const collision = dailyActivityBundle("atomic", "2026-10-14");
+    collision.activities[0]!.id = original.activities[0]!.id;
+    await expect(publishNewBundle(collision)).rejects.toThrow();
     expect(
       await store.execute({
         type: "findDaily",
@@ -725,21 +766,23 @@ describe("activity worker authority and progress", () => {
     expect((await get("atomic", timestamp + 86_400_000, "2026-10-14")).daily?.date).toBe(
       original.date,
     );
-    await publish("atomic", "2026-10-14");
+    const next = dailyActivityBundle("atomic", "2026-10-14");
+    await publishNewBundle(next);
+    await publishArtwork(next);
     const context = await store.execute({
       type: "prepare",
       input: target("atomic", timestamp + 86_400_000, "2026-10-14"),
     });
-    expect(context.recentActivities).toHaveLength(6);
+    expect(context.recentActivities).toHaveLength(2);
     expect(context.recentScenes).toHaveLength(2);
   });
 
   it("retains a whole unfinished old day and prunes it after its evidence ages out", async () => {
     const childId = "retention";
-    await publish(childId);
+    await seedLegacyDay(childId);
     await start(childId);
     const future = Date.parse("2027-02-01T12:00:00Z");
-    await publishBundle(bundle(childId, "2027-02-01"), future, "2027-02-01");
+    await seedLegacyBundle(legacyActivityBundle(childId, "2027-02-01"), future);
     expect(
       (await store.execute({ type: "findDaily", input: { childId, date: "2026-10-13" } }))
         ?.activities,
@@ -771,7 +814,7 @@ describe("activity worker authority and progress", () => {
   });
 
   it("refuses queued work after authority is revoked and leaves state unchanged", async () => {
-    await publish("authority");
+    await seedLegacyDay("authority");
     await start("authority");
     let current = true;
     const result = answerGuarded();
@@ -801,7 +844,7 @@ describe("activity worker authority and progress", () => {
 
   it("keeps exact numeric and explanation evidence atomic without treating clarification as wrong", async () => {
     const childId = "free";
-    const value = bundle(childId);
+    const value = legacyActivityBundle(childId);
     const questions = value.activities[0]!.questions;
     questions[0] = {
       kind: "numeric",
@@ -821,7 +864,7 @@ describe("activity worker authority and progress", () => {
       explanation: "They cover the original whole.",
     };
     questions[2] = { ...questions[1], id: "q3" };
-    await publishBundle(value);
+    await seedLegacyBundle(value);
     await start(childId);
     expect((await get(childId)).activity?.currentQuestion).toEqual({
       kind: "numeric",
@@ -830,7 +873,7 @@ describe("activity worker authority and progress", () => {
       unit: null,
       hint: null,
     });
-    const numeric: ActivityMutation = {
+    const numeric: ActivityDirectMutation = {
       kind: "answer",
       requestId: "numeric-invalid",
       activityId: value.activities[0]!.id,

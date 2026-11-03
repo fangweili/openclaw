@@ -1,3 +1,4 @@
+import type { ActivityMutation } from "@openclaw/kids-activity-contract";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import {
@@ -38,7 +39,14 @@ function harness() {
   >();
   const owner = {
     get: vi.fn(async () => ({ child: "private" })),
-    mutate: vi.fn(async () => ({ saved: true })),
+    mutate: vi.fn(
+      async (
+        _childId: string,
+        _mutation: ActivityMutation,
+        _assertCurrent: () => void,
+        _signal?: AbortSignal,
+      ) => ({ saved: true }),
+    ),
     offerPractice: vi.fn(async (_child: string, _offer: unknown, _assertCurrent: () => void) => ({
       published: true,
       snapshot: {},
@@ -83,6 +91,7 @@ function harness() {
       // Plugin sessionAccess methods receive this capability, not the core
       // chat/lifecycle mutation authorization (request-authorization.ts).
       sessionAccessAuthority: sessionAuthority(undefined, assertCurrent),
+      signal: new AbortController().signal,
       ...overrides,
     };
     return { done: registered.handler(request), respond, assertCurrent, request };
@@ -106,7 +115,7 @@ describe("activity RPC session boundary", () => {
       },
     });
     const descriptors = registry.registry.gatewayMethodDescriptors;
-    expect(descriptors).toHaveLength(7);
+    expect(descriptors).toHaveLength(8);
     for (const descriptor of descriptors) {
       // The final Gateway registry permits sessionAccess only with this exact
       // scope/profile pair. Parent-only practice adds its live admin guard.
@@ -257,6 +266,7 @@ describe("activity RPC session boundary", () => {
         answer: { kind: "choice", optionId: "a" },
       },
       expect.any(Function),
+      call.request.signal,
     );
   });
   it("bounds free-answer input and strips client-supplied rubric and verdict", async () => {
@@ -276,6 +286,7 @@ describe("activity RPC session boundary", () => {
         answer: { kind: "explanation", text: "The equal pieces cover it." },
       },
       expect.any(Function),
+      call.request.signal,
     );
     for (const answer of [
       { kind: "numeric", text: "1".repeat(41) },
@@ -293,6 +304,124 @@ describe("activity RPC session boundary", () => {
     }
     expect(test.owner.mutate).toHaveBeenCalledOnce();
   });
+  it("continues only the host-admitted child's predecessor with the exact request signal", async () => {
+    const test = harness();
+    const signal = new AbortController().signal;
+    const call = test.invoke(
+      "continue",
+      {
+        requestId: "continue-request",
+        activityId: "completed-batch",
+        childId: "sibling",
+        sessionKey: "agent:sibling:main",
+        date: "2099-01-01",
+        model: "client-chosen-model",
+        questions: [{ answer: "already correct" }],
+        generation: { completed: true },
+      },
+      { signal },
+    );
+    await call.done;
+    expect(test.owner.mutate).toHaveBeenCalledExactlyOnceWith(
+      "child",
+      { kind: "continue", requestId: "continue-request", activityId: "completed-batch" },
+      expect.any(Function),
+      signal,
+    );
+    expect(call.respond).toHaveBeenCalledWith(true, { saved: true });
+  });
+
+  it("rejects continuation without the exact configured host session admission", async () => {
+    const test = harness();
+    for (const admission of [
+      undefined,
+      sessionAuthority({
+        agentId: "sibling",
+        sessionKey: "agent:sibling:main",
+        sessionId: "other",
+      }),
+      sessionAuthority({
+        agentId: child.agentId,
+        sessionKey: "agent:tutor:other",
+        sessionId: "other",
+      }),
+    ]) {
+      const call = test.invoke(
+        "continue",
+        {
+          requestId: "continue-request",
+          activityId: "completed-batch",
+          sessionKey: child.sessionKey,
+        },
+        { sessionAccessAuthority: admission },
+      );
+      await call.done;
+      expect(call.respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN" }),
+      );
+    }
+    expect(test.owner.mutate).not.toHaveBeenCalled();
+  });
+
+  it("requires bounded continuation request and predecessor identifiers before invoking the owner", async () => {
+    const test = harness();
+    for (const key of ["requestId", "activityId"]) {
+      for (const value of [undefined, null, 1, "", " ", "a".repeat(181)]) {
+        const call = test.invoke("continue", {
+          requestId: "continue-request",
+          activityId: "completed-batch",
+          [key]: value,
+        });
+        await call.done;
+        expect(call.respond).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+      }
+    }
+    expect(test.owner.mutate).not.toHaveBeenCalled();
+  });
+
+  it.each(["revocation", "disconnect"])(
+    "retains the continuation guard and discards a result after %s",
+    async (source) => {
+      const test = harness();
+      const pending = Promise.withResolvers<{ saved: boolean }>();
+      test.owner.mutate.mockReturnValueOnce(pending.promise);
+      const controller = new AbortController();
+      let current = true;
+      const call = test.invoke(
+        "continue",
+        { requestId: "continue-request", activityId: "completed-batch" },
+        {
+          signal: controller.signal,
+          sessionAccessAuthority: sessionAuthority(undefined, () => {
+            if (!current) {
+              throw new Error("Child access revoked");
+            }
+          }),
+        },
+      );
+      const guard = test.owner.mutate.mock.calls[0]![2];
+      if (source === "revocation") {
+        current = false;
+      } else {
+        controller.abort(new Error("Browser disconnected"));
+      }
+      expect(guard).toThrow();
+      pending.resolve({ saved: true });
+      await call.done;
+      expect(call.respond).toHaveBeenCalledExactlyOnceWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "UNAVAILABLE" }),
+      );
+    },
+  );
+
   it("discards private image bytes after authority is revoked while reading", async () => {
     const test = harness();
     const pending = Promise.withResolvers<{ mimeType: string; base64: string }>();

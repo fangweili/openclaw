@@ -31,6 +31,8 @@ self.addEventListener("notificationclick", (event) => {
         return url.origin === self.location.origin && url.pathname === "/kids/";
       });
       if (existing) {
+        // ServiceWorker Client.postMessage has no targetOrigin argument.
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin
         existing.postMessage({ type: "kids:navigate", hash: "#chat" });
         await existing.focus();
       } else {

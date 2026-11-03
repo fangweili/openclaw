@@ -12,10 +12,11 @@ learning outcome, distinguishing independent first answers from hints/retries.
 Clarification submissions are ungraded; do not count them as incorrect answers.
 Use the submitted reasoning alongside the model's feedback, and describe narrow
 observations rather than treating a model verdict as proof of broad mastery.
-There are three optional challenges per prepared day; report actual per-challenge
-completions, including carried-over work completed this week. Remaining optional
-challenges are not missed homework, and one daily artwork pair is not three
-separate learning events.
+New days have a ten-question goal plus optional ten-question batches. Older
+saved formats remain valid. Report actual solved questions and batch completions,
+including carried-over work completed this week; distinguish daily goals from
+extras. Optional work is not missed homework, and daily artwork is not a learning
+event.
 Deduplicate stable attempt IDs and linked conversation discussion. Excitement,
 scene generation and an invitation delivery are not independent learning evidence.
 

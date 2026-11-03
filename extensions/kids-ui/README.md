@@ -134,8 +134,8 @@ versions. A committed write may outlive its response; callers retry the same
 request ID to retrieve its outcome. The newest 512 request receipts per child are
 retained, and a solved question cannot award progress again under a fresh ID.
 
-The six child-facing `kids.activity.*` methods are `get`, `start`, `answer`, `hint`, `touch`,
-and `image`. All accept the existing app `sessionKey`; Gateway session admission
+The child-facing `kids.activity.*` methods are `get`, `start`, `answer`, `hint`,
+`touch`, `continue`, and `image`. All accept the existing app `sessionKey`; Gateway session admission
 selects the configured child. Snapshot responses contain only the current
 question/options, a requested hint, progress, and opaque image references. Answer
 keys, explanation rubrics, and unrevealed explanations stay private. Questions
@@ -191,32 +191,68 @@ work from help or corrections. Incorrect answers reset the streak and leave the
 pet normal. Chat does not clear a streak or interrupt an ongoing celebration.
 Mood is derived from saved timestamps, so no durable timers are necessary.
 
-Each morning prepares one batch of exactly three three-question challenges per
-child and attempts four shared daily pictures (normal, excited, bored, and sleeping).
-Normal and excited are required; either resting picture can fall back to its fixed
-original when rendering, encoding, or the optional deadline fails. Publication is atomic;
-retries reuse the saved batch. The app shows one challenge. Completing it keeps
-the result visible and offers `nextActivity`; only an explicit `start` advances.
-After all three, `nextActivity` is null unless a parent has explicitly offered extra practice. A started incomplete challenge remains
-resumable across midnight. Once it is finished, the first challenge of the newest
-batch appears; yesterday's unstarted extras are no longer offered. `daily` counts
-always describe the newest batch, so completing a carryover does not count toward
-today's three. The same read-only projection supplies the completion recap:
-`questionsSolved` counts eventual correct answers, `firstTryCorrect` counts correct
-answers on their first graded attempt (including hinted answers), and
-`hintedQuestions` counts distinct questions whose hint was opened. Clarification
-is ungraded and duplicate request retries never add to these totals. The totals
-include parent-offered extra practice and use complete saved question counters,
-not truncated attempt history; they add no stored counters, query or migration.
-`correctStreak` remains a current cross-day streak of graded activity answers,
-not a daily best; hints, clarification, chat and voice do not reset or increment it.
-The app may call the recap today's only when `daily.date` matches the local date.
+Separate scheduled jobs prepare the ten-question daily goal (at least eight free
+answers) and four daily pictures (normal, excited, bored, sleeping). Each job is
+creation-bound to one child. `prepare_daily` publishes only questions and their
+learning brief; `prepare_art` owns rendering and publishes only artwork. Their
+schedules and failures are independent. Normal and excited pictures are required;
+resting pictures can use fixed fallbacks. Existing three-by-three days and parent
+single-question practice retain their definitions and original scheduled count.
+
+After the current batch, Keep going either starts an existing `nextActivity` or
+requests `continue` with its completed predecessor ID. The service reads saved
+results before inference, generates ten questions, then appends and starts one
+successor atomically. A per-child in-flight operation joins concurrent requests
+for the same predecessor; a unique child/date/ordinal prevents duplicate successors
+across retries and service lifetimes. Recovery checks the saved successor before
+spending again, even after request-receipt expiry. New publication rechecks the
+local date and predecessor at commit; a call crossing midnight cannot add work to
+yesterday. Failure leaves the completed recap available with Try again.
+
+`activity-next-generation.ts` owns stateless prompt assembly and strict output
+admission. It combines the daily `learningBrief` snapshot of profile/learning notes,
+full preceding-batch evidence, up to fourteen bounded older activities, and an
+optional text-only tail of the child's own canonical chat (at most forty messages
+and 12,000 characters). That read explicitly requests `operator.sessions.read`;
+the host retains the child's own-session boundary without requiring broad read
+permissions. Conversation fills gaps since notes were updated, especially
+read-only voice; it is unscored context, never another independent success.
+Saved Talk turns retain both speakers; voice input has unspecified attribution
+and tutor replies are teaching, so neither establishes independent child success.
+Missing or truncated sources remain explicit coverage limits. The daily preparer
+owns the brief; it is not a second editable profile. Nightly remains the sole
+profile/recent-activity writer and deduplicates Solve attempts with linked chat help.
+
+Generation uses the child's configured model through `runtime.llm.complete` in
+isolated-agent-runtime mode,
+with no tools, model override, new retained session, artwork or message delivery.
+The service permits one outstanding generation per child, joining the SDK
+completion promise before closing the database. The SDK can settle a timeout or
+cancellation before physical provider cleanup; that remaining work is host-owned
+and cannot publish a late batch. The provider timeout hint is ninety seconds,
+with an advisory 8,192-token output budget. The caller/service signal and authority checks fence every publication.
+One generation per child is admitted; a failed or invalid generation records no
+learning result. The server assigns activity/question IDs and the shared validator
+admits exactly ten questions with no more than two choice items.
+
+A started incomplete activity remains resumable across midnight. Completing it
+moves to the newest day's work; old unstarted extras are not offered. `daily`
+contains only the newest day's originally scheduled work, including its
+`questionTotal`. Extras never enlarge that goal. `extras` totals solved questions,
+first-try correctness and hinted questions across all optional batches belonging
+to that same prepared day, including partial work. Adding `daily` and `extras`
+gives the day's overall results; selected-batch counters describe only that batch. Counters
+use complete saved per-question progress, not truncated attempt history.
+`firstTryCorrect` includes hinted first answers; `hintedQuestions` counts distinct
+hinted questions. Clarification is ungraded. `correctStreak` remains the pet's
+cross-day answer streak, not a daily best. The app labels a recap today only when
+its date matches the local date.
 
 `perfectDayStreak` is separate from that pet answer streak. A perfect local day
 means every originally scheduled challenge is finished on its scheduled date,
 with every question correct on its first graded attempt and no hint opened.
 Clarifications are ungraded; corrected wrong answers and hinted answers cannot
-make a perfect day. Optional parent practice neither earns nor breaks this
+make a perfect day. Optional practice batches neither earn nor break this
 streak. The immutable scheduled count comes from the original published batch,
 not a hardcoded number in the streak rules.
 
@@ -229,19 +265,20 @@ commits the compact checkpoint with progress, evidence and the receipt, so retri
 cannot award twice and authority failure cannot leave a partial award.
 
 The current daily scene is independent of that retained quiz. Model or
-required-image failure preserves the last complete bundle. Resting pictures and
+required-image failure preserves the last complete artwork. Resting pictures and
 their daily captions are selected only for the child's current local date; without
-a current batch, the fixed originals use timeless captions. Older saved batches
+a current artwork set, the fixed originals use timeless captions. Older saved art
 without daily resting art still use their fixed poses. Private image reads require the same
 session authority, and no local paths enter browser responses. Generated art is
 stored and served as PNG, preserving any provider alpha through the shared image
 worker's bounded resizing. The plugin rejects output still exceeding 512 KiB;
 compression never flattens it into JPEG. Prompts preserve Rocky's anatomy, colors
 and clay material while allowing contextual activities, costumes, expressions and
-whole-body poses. The planner prioritizes recent conversation and dated school
-context maintained in the child's profile, with established interests or seasonal
-ideas as a fallback. It can revisit a relevant topic through a fresh moment rather
-than forcing a new theme. All three mood variations reference the exact daily normal
+whole-body poses. The artwork planner uses a bounded selection of the latest
+conversation and activity, plus relevant verified school events and supported
+holidays. Events can guide costumes/themes; recent interaction shapes the action,
+props, expression and captions. It does not load the learning profile or weather.
+All three mood variations reference the exact daily normal
 image. The excited image continues the normal image's theme, outfit
 and core equipment with a distinct action and silhouette; its composition can
 change. Resting poses preserve the theme and outfit while showing comfortable
@@ -254,8 +291,8 @@ minutes, ending no later than nine minutes after preparation starts. If required
 work already used that window, both resting pictures use fixed fallbacks. At that
 deadline, the owner freezes completed results and publishes once; late results
 cannot write files or change the saved scene. It still joins admitted provider
-calls before the tool settles or shutdown completes, so challenges can become
-ready before the preparation tool returns. Provider timeouts and fallback chains
+calls before the tool settles or shutdown completes, so artwork can become
+ready before the artwork tool returns. Provider timeouts and fallback chains
 remain provider-owned; the existing ten-minute tool watchdog is not a guarantee
 that all cleanup ends within ten minutes. Required work can itself overrun that
 budget, and authority loss always prevents subsequent publication.
@@ -263,39 +300,58 @@ budget, and authority loss always prevents subsequent publication.
 Daily resting IDs live in an optional private `restImages` field beside the
 existing `stateText` captions. Resting art alone remains an optional JSON field;
 older saved days without it remain readable. Browser
-responses retain the existing selected `pet.image` contract. Refresh the daily
-preparation prompt with this release to supply both resting scene directions.
+responses retain the existing selected `pet.image` contract. Install the independent
+artwork prompt/job with this release to supply all four scene directions.
 
-Schema 3 adds `kids_day.required_count` and the `kids_pet.perfect_day_streak` /
-`last_perfect_date` checkpoint. The existing database, worker, authority and
-transaction remain the owners. Schema-1 upgrades first migrate old choice kinds,
-attempt evidence and request receipts; schema-2 progress, definitions, receipts,
-images, timestamps and pet clocks remain byte-for-byte unchanged. Shipped older
-schemas always had three scheduled activities, so admission backfills that count;
-new publication saves the actual bundle length.
+Schema 4 separates artwork from learning days. The existing SQLite worker owns
+`kids_art(child_id,date,created_at,content)` independently of `kids_day` and
+`kids_activity`. Artwork can arrive before or after the daily Solve goal. An art
+failure does not withhold questions; a Solve failure does not withhold pictures.
+Snapshots select the latest available art independently of the selected activity.
+Normal/excited states can retain the previous picture; resting states use today's
+art or the original fixed fallback.
 
-Admission seeds the day checkpoint once from retained question counters and
-completion timestamps in each configured child's timezone. Its initial tracking
-baseline is the oldest retained day; already-pruned days receive no inferred
-credit. Missing days, hinted or retried work, and late completion break the seeded
-chain. An unconfigured stored child keeps all data with a zero initial checkpoint.
-After migration, the compact streak survives the 90-day history cleanup and
-restarts without recomputing history. Schema migration is atomic; a failure leaves
-the prior version intact and prevents service activation.
+Admission atomically moves existing scene, scene prompt, resting pictures and
+captions out of day content into `kids_art`, retaining their original date and
+creation time. `kids_day.content` retains its learning brief. Image files do not
+move. Schema-3 goals, optional batches, progress, receipts, timestamps, pet clocks
+and perfect-day checkpoints remain unchanged. Older schema-1/2 migrations still
+upgrade their legacy evidence and initialize the required counts/checkpoint first.
+An admission failure rolls back the entire migration and leaves the prior version.
+
+`publish` saves only the immutable daily goal and brief. `publishArtwork` ordinarily
+publishes once per child/date. Explicit refresh passes the existing normal image
+ID as `replaceImageId`; it can replace only the current local day's artwork. Both
+preflight and the worker commit compare that ID, so a stale refresh or a retry
+after a lost acknowledgment cannot overwrite newer art. Missing/stale expected
+IDs return `published:false`. Artwork publication never changes learning state,
+receipts, pet clocks, or streaks. The generation owner retains files after an
+uncertain commit and removes unadopted files after a confirmed no-op.
+
+New Solve days store one required activity containing ten questions; older counts
+and definitions remain unchanged. The private `learningBrief` is required for new
+publication but absent in some old days, where extra generation adapts
+conservatively from saved evidence. Required counts and the durable perfect-day
+checkpoint introduced in schema 3 keep their existing meaning. Artwork presence
+never creates a learning goal or counts toward a perfect day.
 
 Take a coordinated SQLite backup before deployment. Older plugin binaries refuse
-schema 3. To roll back to schema 2 without losing new quiz work: stop the writer,
-back up the latest database, work on a consolidated copy, verify every
-`required_count` is still 3, drop only the three additive columns, set
-`PRAGMA user_version = 2`, and verify integrity before replacing the stopped
-writer's database and starting the old release. This discards only perfect-day
-tracking. If required counts differ, that downgrade is incompatible and must not
-proceed. Restoring a pre-upgrade backup is an alternative but loses later work;
-never restore automatically after a failed activation.
+schema 4. For a schema-3 rollback, stop the writer and back up the latest database;
+work on a consolidated copy. Merge each `kids_day` row's teaching content with
+its same-child/date `kids_art` content, preserving all other rows and columns.
+Every learning day must have art before the older coupled reader can use it. Keep
+an export of artwork-only days, which the old format cannot represent; if a Solve
+day lacks artwork, abort the downgrade rather than inventing content. Drop
+`kids_art`, set `PRAGMA user_version = 3`, and verify integrity before replacing
+the stopped writer's database and starting the old release. Never restore an old
+whole-database backup automatically: that would lose later child work. Rolling
+back further to schema 2 also requires every required count to remain three and
+removes the schema-3 count/streak columns; new ten-question days make that older
+downgrade incompatible.
 
 A parent can call `kids.activity.offerPractice` with `{sessionKey,date,activity}`
-for one optional, one-question practice activity after today's three challenges
-are complete. It requires `operator.admin` **and** prepared session write access
+for one optional, one-question practice activity after today's scheduled goal
+is complete, before any optional batch has been appended. It requires `operator.admin` **and** prepared session write access
 for the configured child; the child's own-session scope cannot call it. The host
 requires all session-resource descriptors to declare `operator.write`, so the
 request-bound assertion additionally checks the authenticated connection's admin
@@ -314,13 +370,14 @@ been answered or the local day changes; changed content under that ID is rejecte
 A fresh offer for any date except the child's current local date is rejected.
 Optional practice uses normal grading, evidence, carryover and retention: a started
 unfinished question carries over; an unstarted one stops being offered when a newer
-daily batch appears. The preparation lookup still returns only the original three
+daily batch appears. The preparation lookup still returns only the original scheduled
 activities, while snapshots and learning evidence include practice. This adds no
 schema version, migration, timer, worker or privileged browser capability.
 
-The store retains 90 days by last activity update. It prunes whole day bundles
-and protects a day containing the current unfinished challenge, keeping scene
-metadata and every immutable definition together. Each activity retains full question counters and the latest
+The store retains 90 days by last activity update. It prunes whole learning days
+and protects a day containing the current unfinished challenge, keeping all its
+immutable definitions together. Artwork history is pruned independently on art
+publication after 90 days, retaining the newest usable art as a fallback. Each activity retains full question counters and the latest
 256 detailed attempts. Preparation reads at most 14 activities and 32 detailed
 attempts each, reporting `activitiesOmitted` and `attemptsOmitted` explicitly.
 Attempt IDs, actual attempt timestamps, selected answer text, hint status, and

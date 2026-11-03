@@ -16,12 +16,15 @@ explanation grading is a model assessment against that question's rubric, not a
 new mastery level. An `outcome: "clarify"` submission is ungraded, not a wrong
 answer or an extra scored attempt. Distinguish missing detail from a demonstrated
 misconception. Never turn the celebration streak into mastery.
-Each daily batch contains three distinct optional challenges. Count completions
-per activity ID, not per prepared day or image pair. A started challenge may carry
-over from an earlier day; use its actual attempts and completion timestamp. The
-child need not finish all three, and unstarted earlier-day extras are not overdue
-work. Keep optional future ideas in challenge notes; scheduled reminders now point
-to saved Today challenges rather than generating another quiz in chat.
+New daily goals contain ten problems. Optional Keep going batches also contain
+ten; older saved days may contain three three-question challenges or parent-offered
+single questions. Count actual solved questions and activity completions using
+saved IDs, scope and timestamps rather than assuming a fixed historic count.
+Optional batches provide learning evidence but never change the daily goal or
+perfect-day streak. A started activity can carry over from an earlier day; use
+its actual attempts and completion timestamp. Unstarted earlier-day extras are
+not overdue work. Keep future ideas in challenge notes; scheduled reminders
+point to saved Today work rather than generating another quiz in chat.
 
 Deduplicate attempts by ID. Combine conversation help and its scored activity as
 one learning episode; conversation discussion is not a second correct answer.
@@ -36,5 +39,5 @@ timezone. Generated pictures/captions are pet fiction, not evidence the child
 performed or learned something. If this tool fails, preserve existing conclusions
 and report a quiz-coverage gap; don't claim zero attempts.
 
-Continue preserving parent-owned sections and live daily logs. Never modify the
+Continue preserving parent-owned sections and existing historical logs. Never modify the
 activity database directly or publish a daily quiz from the nightly update.

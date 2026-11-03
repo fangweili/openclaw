@@ -9,24 +9,33 @@ import {
 } from "../../../talk/client-voice-session.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
 import type { GatewayRequestHandlerOptions } from "../../server-methods/types.js";
+import { createGatewayRequestContext } from "../../server-request-context.js";
+import { makeContextParams } from "../../server-request-context.test-support.js";
 import { sharingPolicyClient } from "../../session-sharing.test-utils.js";
 import { talkClientHandlers } from "./client.js";
 
 const sessionKey = "agent:main:voice-attribution";
 const sessionId = "voice-attribution";
 
-async function invokeTranscript(
-  params: Record<string, unknown>,
-  client: GatewayRequestHandlerOptions["client"],
-) {
-  const respond = vi.fn();
-  await talkClientHandlers["talk.client.transcript"]?.({
-    params,
-    respond,
-    client,
-    context: { getRuntimeConfig: () => ({}) },
-  } as GatewayRequestHandlerOptions);
-  return respond;
+/** Each scenario shares a complete request context while supplying its caller per request. */
+function createTranscriptInvoker() {
+  const context = createGatewayRequestContext(makeContextParams());
+  context.getRuntimeConfig = () => ({});
+  return async function invokeTranscript(
+    params: Record<string, unknown>,
+    client: GatewayRequestHandlerOptions["client"],
+  ) {
+    const respond = vi.fn();
+    await talkClientHandlers["talk.client.transcript"]?.({
+      req: { type: "req", id: "transcript", method: "talk.client.transcript", params },
+      isWebchatConnect: () => false,
+      params,
+      respond,
+      client,
+      context,
+    });
+    return respond;
+  };
 }
 
 describe("authenticated voice transcript attribution", () => {
@@ -34,6 +43,7 @@ describe("authenticated voice transcript attribution", () => {
     "attributes %s voice to the authenticated caller and never to the session owner",
     async (caller) =>
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        const invokeTranscript = createTranscriptInvoker();
         const client = sharingPolicyClient(
           caller === "profileless" ? {} : { user: caller, displayName: "Caller" },
         );
@@ -95,26 +105,26 @@ describe("authenticated voice transcript attribution", () => {
         ).toHaveBeenCalledWith(true, { ok: true }, undefined);
         const events = readSessionTranscriptMessageEvents({ agentId: "main", sessionId });
         expect(events).toHaveLength(2);
-        const message = events[0]?.event.message;
-        expect(message).toMatchObject({
-          provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+        const event = events[0]?.event;
+        expect(event).toMatchObject({
+          message: { provenance: { kind: "realtime_voice", sourceChannel: "talk" } },
         });
         if (caller === "profileless") {
-          expect(message).not.toHaveProperty("__openclaw");
+          expect(event).not.toHaveProperty("message.__openclaw");
         } else {
-          expect(message).toHaveProperty("__openclaw.senderId", caller);
+          expect(event).toHaveProperty("message.__openclaw.senderId", caller);
           if (caller === "synthetic") {
-            expect(message).not.toHaveProperty("__openclaw.senderIdentity");
+            expect(event).not.toHaveProperty("message.__openclaw.senderIdentity");
           } else {
-            expect(message).toHaveProperty("__openclaw.senderIdentity", {
+            expect(event).toHaveProperty("message.__openclaw.senderIdentity", {
               type: "profile",
               id: caller,
             });
           }
         }
-        expect(message).not.toHaveProperty("__openclaw.senderName");
-        expect(message).not.toHaveProperty("__openclaw.senderUsername");
-        expect(events[1]?.event.message).not.toHaveProperty("__openclaw");
+        expect(event).not.toHaveProperty("message.__openclaw.senderName");
+        expect(event).not.toHaveProperty("message.__openclaw.senderUsername");
+        expect(events[1]?.event).not.toHaveProperty("message.__openclaw");
         expect(
           await invokeTranscript({ ...params, entryId: "forged", sender: { id: "child" } }, client),
         ).toHaveBeenCalledWith(

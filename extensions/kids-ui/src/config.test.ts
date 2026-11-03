@@ -43,6 +43,12 @@ describe("activity installation authority", () => {
     for (const config of [
       {},
       { activities: { children: [child] } },
+      { activities: { children: [{ ...child, artworkJobId: "art-student" }] } },
+      {
+        activities: {
+          children: [{ ...child, artworkJobId: "art-student", preparationAgentId: "worker" }],
+        },
+      },
       { activities: { children: [child], evidenceJobs: [{ agentId: "jobs", jobId: "nightly" }] } },
       { extra: true },
       { activities: { children: [] } },
@@ -58,6 +64,43 @@ describe("activity installation authority", () => {
         runtimeAccepts = false;
       }
       expect(runtimeAccepts).toBe(discoveryAccepts);
+    }
+  });
+
+  it("separates Solve, artwork and evidence job authority at installation", () => {
+    const withArtwork = { ...child, artworkJobId: "art-student" };
+    expect(
+      parseKidsConfig({ activities: { children: [withArtwork] } }).activities?.children,
+    ).toEqual([withArtwork]);
+    const other = {
+      ...child,
+      childId: "other",
+      agentId: "other-tutor",
+      sessionKey: "agent:other-tutor:kids:other",
+      preparationJobId: "prepare-other",
+    };
+    for (const activities of [
+      { children: [{ ...child, artworkJobId: child.preparationJobId }] },
+      {
+        children: [
+          withArtwork,
+          { ...other, preparationAgentId: child.agentId, artworkJobId: "art-student" },
+        ],
+      },
+      {
+        children: [child],
+        evidenceJobs: [{ agentId: child.agentId, jobId: child.preparationJobId }],
+      },
+      { children: [withArtwork], evidenceJobs: [{ agentId: child.agentId, jobId: "art-student" }] },
+      {
+        children: [child],
+        evidenceJobs: [
+          { agentId: "jobs", jobId: "nightly" },
+          { agentId: "jobs", jobId: "nightly" },
+        ],
+      },
+    ]) {
+      expect(() => parseKidsConfig({ activities })).toThrow();
     }
   });
 });

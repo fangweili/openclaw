@@ -5,6 +5,7 @@ import {
   replaceSessionEntry,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
+import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PairedDevice } from "../infra/device-pairing.js";
 import type { BoundWebPushSubscription } from "../infra/push-web.js";
@@ -83,7 +84,7 @@ function subscription(deviceId: string, userProfileId: string): BoundWebPushSubs
 
 async function withCompletion(
   run: (fixture: {
-    cfg: OpenClawConfig;
+    policy: GatewayOperatorRoleDefinition;
     update: InternalSessionTranscriptUpdate;
     delivery: ReturnType<typeof createEventWebPushDelivery>;
     controller: AbortController;
@@ -97,19 +98,13 @@ async function withCompletion(
     setUserProfileRole(owner.id, "student");
     setUserProfileRole(other.id, "student");
     mocks.subscriptions = [subscription("owner", owner.id), subscription("other", other.id)];
+    const policy: GatewayOperatorRoleDefinition = {
+      scopes: ["operator.sessions.write"],
+      sessions: { others: "none" },
+      agents: ["main"],
+    };
     const cfg: OpenClawConfig = {
-      gateway: {
-        roles: {
-          default: "student",
-          definitions: {
-            student: {
-              scopes: ["operator.sessions.write"],
-              sessions: { others: "none" },
-              agents: ["main"],
-            },
-          },
-        },
-      },
+      gateway: { roles: { default: "student", definitions: { student: policy } } },
     };
     const sessionKey = "agent:main:kids:owner";
     const generation = { sessionId: "offline-kids-session", lifecycleRevision: "revision-1" };
@@ -143,7 +138,7 @@ async function withCompletion(
     }
     expect(update?.target?.sessionId).toBe(generation.sessionId);
     await run({
-      cfg,
+      policy,
       update: update!,
       controller: new AbortController(),
       delivery: createEventWebPushDelivery({ getRuntimeConfig: () => cfg, log: { warn: vi.fn() } }),
@@ -206,7 +201,7 @@ describe("canonical automation Web Push", () => {
   it.each(["agent", "role", "device", "owner", "generation", "abort"] as const)(
     "rechecks %s authority after sender preparation yields",
     async (change) => {
-      await withCompletion(async ({ cfg, update, delivery, controller, otherId }) => {
+      await withCompletion(async ({ policy, update, delivery, controller, otherId }) => {
         const entered = createDeferred();
         const ready = createDeferred<typeof mocks.send>();
         mocks.prepare.mockImplementationOnce(() => {
@@ -215,7 +210,6 @@ describe("canonical automation Web Push", () => {
         });
         const pending = delivery.deliverAutomationCompletion(update, controller.signal);
         await entered.promise;
-        const policy = cfg.gateway!.roles!.definitions.student;
         if (change === "agent") {
           policy.agents = [];
         }

@@ -91,8 +91,11 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       date: "2026-10-13",
       correctStreak: 0,
       perfectDayStreak: 0,
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
+      canContinue: false,
       daily: {
         date: "2026-10-13",
+        questionTotal: 9,
         total: 3,
         completed: 0,
         questionsSolved: 0,
@@ -117,6 +120,9 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         subject: "Science",
         started: false,
         completed: false,
+        scope: "daily",
+        firstTryCorrect: 0,
+        hintedQuestions: 0,
         currentIndex: 0,
         total: 3,
         currentQuestion: {
@@ -400,17 +406,19 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
     await page.getByRole("heading", { name: "Adventure complete!" }).waitFor();
     expect(await page.locator(".kids-solve .kids-pet--excited").count()).toBe(1);
-    await page.getByText("1 of 3 challenges complete", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Another challenge", exact: true }).waitFor();
-    await capture("today-complete-ipad", "iPad — choose another challenge or chat");
+    await page.getByText("Daily goal · 3 of 9 solved", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Keep going", exact: true }).waitFor();
+    await capture("today-complete-ipad", "iPad — continue the saved nine-question day");
     await landscape("complete");
     // Neither revisiting Today nor choosing Chat starts an optional extra.
     await gateway.setMethodResponse("kids.activity.get", completed);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
     expect(await composer.inputValue()).toContain("I found a leaf in the garden.");
-    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
-    await page.getByText("1 of 3 challenges complete", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.getByText("Daily goal · 3 of 9 solved", { exact: true }).waitFor();
     expect(await gateway.getRequests("kids.activity.start")).toHaveLength(1);
     let selected = completed;
     for (const ordinal of [2, 3]) {
@@ -423,7 +431,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       selected.daily!.firstTryCorrect = selected.daily!.questionsSolved - 1;
       selected.daily!.hintedQuestions = 1;
       await gateway.setMethodResponse("kids.activity.start", { snapshot: selected });
-      await page.getByRole("button", { name: "Another challenge", exact: true }).click();
+      await page.getByRole("button", { name: "Keep going", exact: true }).click();
       await page.getByRole("heading", { name: offer.title }).waitFor();
       await gateway.setMethodResponse("kids.activity.get", selected);
       expect((await gateway.getRequests("kids.activity.start"))[ordinal - 1]?.params).toMatchObject(
@@ -450,6 +458,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
               };
         if (index === 2) {
           selected.daily!.completed = ordinal;
+          selected.canContinue = ordinal === 3;
           selected.nextActivity =
             ordinal === 2 ? { id: "garden-patterns", title: "The garden-pattern puzzle" } : null;
         }
@@ -470,20 +479,18 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         await page.getByRole("button", { name: "Continue", exact: true }).click();
       }
       if (ordinal === 2) {
-        await page.getByText("2 of 3 challenges complete", { exact: true }).waitFor();
+        await page.getByText("Daily goal · 6 of 9 solved", { exact: true }).waitFor();
       }
     }
     await page.getByRole("heading", { name: "You did it, Alex!" }).waitFor();
     await page.getByRole("heading", { name: "Look what you figured out!" }).waitFor();
-    await page.getByText("3 challenges · 9 questions solved", { exact: true }).waitFor();
+    await page.getByText("9 questions solved", { exact: true }).waitFor();
     expect(await page.locator(".kids-daily-value").allTextContents()).toEqual(["8", "1", "0"]);
     expect(await page.getByRole("heading", { name: selected.activity!.title }).count()).toBe(0);
     expect(await page.locator(".kids-activity-subject, .kids-activity-count").count()).toBe(0);
     expect(await page.getByRole("progressbar").count()).toBe(0);
-    expect(await page.getByRole("button", { name: "Another challenge", exact: true }).count()).toBe(
-      0,
-    );
-    await capture("today-all-done-ipad", "iPad — all three complete, chat stays available");
+    expect(await page.getByRole("button", { name: "Keep going", exact: true }).count()).toBe(1);
+    await capture("today-all-done-ipad", "iPad — saved daily goal complete");
     await landscape("daily-recap");
     for (const viewport of [
       { width: 1024, height: 768 },
@@ -492,7 +499,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
       await page.setViewportSize(viewport);
       const recapFrame = await readKidsFrame(page);
       await page.getByRole("button", { name: "Today", exact: true }).click();
-      await page.getByText("Today complete · See how you did", { exact: true }).waitFor();
+      await page.getByText("Today · 9 solved", { exact: true }).waitFor();
       expect(await readKidsFrame(page)).toEqual(recapFrame);
       const id = `home-complete-${viewport.width}-${viewport.height}`;
       await page.screenshot({ path: path.join(proof, `${id}.png`) });
@@ -511,7 +518,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         return text.getBoundingClientRect().top >= navigation.bottom;
       }),
     ).toBe(true);
-    await capture("today-complete-phone", "Phone — all three challenges complete");
+    await capture("today-complete-phone", "Phone — saved daily goal complete");
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
@@ -520,6 +527,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     await page.getByRole("button", { name: "Solve", exact: true }).click();
     await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
     expect(await readKidsFrame(page)).toEqual(phoneRecapFrame);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
     await page.getByRole("button", { name: "Chat with Rocky", exact: true }).click();
     await composer.waitFor({ state: "visible" });
     expect(
@@ -529,9 +537,7 @@ it("keeps saved activities beside chat, grades through the server, and carries a
         return threadArea.top === 0 && Math.abs(footer.bottom - innerHeight) <= 1;
       }),
     ).toBe(true);
-    expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).isVisible()).toBe(
-      true,
-    );
+    expect(await page.getByRole("button", { name: "Back to Solve", exact: true }).count()).toBe(0);
     // Completing a retained quiz can reveal today's prepared invitation in the
     // same reply. Its explanation still belongs under the submitted quiz heading.
     const yesterday = structuredClone(hinted);
@@ -543,7 +549,8 @@ it("keeps saved activities beside chat, grades through the server, and carries a
     nextDay.activity!.title = "Today's fresh discovery";
     await gateway.setMethodResponse("kids.activity.get", yesterday);
     await page.setViewportSize({ width: 1024, height: 1366 });
-    await page.getByRole("button", { name: "Back to Solve", exact: true }).click();
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
     await page.getByRole("heading", { name: yesterday.activity!.title }).waitFor();
     await gateway.setMethodResponse("kids.activity.answer", {
       snapshot: nextDay,
@@ -618,6 +625,8 @@ it("shows recoverable Today loading and failure states while chat remains usable
       date: "2026-10-13",
       correctStreak: 0,
       perfectDayStreak: 0,
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
+      canContinue: false,
       daily: null,
       nextActivity: null,
       activity: null,
@@ -640,6 +649,210 @@ it("shows recoverable Today loading and failure states while chat remains usable
       true,
     );
     expect((await gateway.getRequests("kids.activity.touch")).length).toBe(0);
+  } finally {
+    await context.close();
+  }
+});
+
+it("keeps the daily goal complete while Keep going prepares, retries, and opens adaptive extra batches", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 1024, height: 1366 },
+    reducedMotion: "reduce",
+  });
+  try {
+    await context.addInitScript(notificationPermissionFixture);
+    const page = await context.newPage();
+    const daily: ActivitySnapshot = {
+      now: 1,
+      date: "2026-10-14",
+      correctStreak: 10,
+      perfectDayStreak: 4,
+      daily: {
+        date: "2026-10-14",
+        total: 1,
+        completed: 1,
+        questionTotal: 10,
+        questionsSolved: 10,
+        firstTryCorrect: 10,
+        hintedQuestions: 0,
+      },
+      extras: { questionsSolved: 0, firstTryCorrect: 0, hintedQuestions: 0 },
+      canContinue: true,
+      nextActivity: null,
+      pet: {
+        state: "normal",
+        scene: null,
+        image: { imageId: "reference", caption: "Ready for another discovery." },
+        lastInteractionAt: 1,
+        excitedUntil: null,
+      },
+      activity: {
+        id: "daily-ten",
+        date: "2026-10-14",
+        title: "Ten little discoveries",
+        subject: "Math",
+        scope: "daily",
+        firstTryCorrect: 10,
+        hintedQuestions: 0,
+        started: true,
+        completed: true,
+        currentIndex: 10,
+        total: 10,
+        currentQuestion: null,
+      },
+    };
+    const image = await readFile(path.resolve("extensions/kids-ui/pets/rocky-reference.webp"));
+    const gateway = await installMockGateway(page, {
+      awaitInitialRoster: false,
+      featureMethods: [...defaultControlUiFeatureMethods, "kids.activity.get"],
+      sessionKey,
+      operatorScopes: ["operator.sessions.write", "operator.talk"],
+      methodResponses: {
+        "users.self": { profile },
+        "agents.list": roster,
+        "sessions.create": { key: sessionKey },
+        "chat.history": {
+          sessionId: "student-session",
+          messages: [],
+          sessionInfo: { sessionId: "student-session", activeLeafEntryId: "leaf-one" },
+        },
+        "kids.activity.get": daily,
+        "kids.activity.image": { mimeType: "image/webp", base64: image.toString("base64") },
+      },
+    });
+    const capture = async (id: string, label: string) => {
+      await page.screenshot({ path: path.join(proof, `${id}.png`), animations: "disabled" });
+      examples.push({ id, label });
+    };
+    await page.goto(`${baseUrl}#solve`);
+    const card = page.locator(".kids-solve .kids-activity-card");
+    await card.getByText("10 questions solved", { exact: true }).waitFor();
+    await page
+      .locator('.kids-solve img[src^="blob:"]')
+      .evaluate((element: HTMLImageElement) => element.decode());
+    await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    const frame = await readKidsFrame(page);
+    const pet = await page.locator(".kids-solve .kids-pet-picture img").getAttribute("src");
+    expect(await gateway.getRequests("kids.activity.continue")).toHaveLength(0);
+    await capture("daily-ten-complete-ipad", "iPad — ten-question daily goal complete");
+    await gateway.deferNext("kids.activity.continue");
+    await card.getByRole("button", { name: "Keep going", exact: true }).click();
+    const first = await gateway.waitForRequest("kids.activity.continue");
+    expect(first.params).toMatchObject({ sessionKey, activityId: "daily-ten" });
+    await card
+      .getByRole("button", { name: "Preparing your next problems…", exact: true })
+      .waitFor();
+    expect(await card.locator("button").count()).toBe(1);
+    expect(await readKidsFrame(page)).toEqual(frame);
+    await capture(
+      "next-batch-preparing-ipad",
+      "iPad — preparing keeps the completed results visible",
+    );
+    await gateway.rejectDeferred("kids.activity.continue", {
+      code: "UNAVAILABLE",
+      message: "Synthetic generation failure",
+    });
+    await card.getByRole("button", { name: "Try again", exact: true }).waitFor();
+    expect(await card.locator("button").count()).toBe(1);
+    expect(await card.locator(".kids-daily-recap").count()).toBe(1);
+    await capture(
+      "next-batch-retry-ipad",
+      "iPad — generation failure preserves progress and one retry action",
+    );
+    const extra = structuredClone(daily);
+    extra.canContinue = false;
+    extra.activity = {
+      ...daily.activity!,
+      id: "extra-one",
+      title: "A new pattern puzzle",
+      scope: "extra",
+      firstTryCorrect: 0,
+      hintedQuestions: 0,
+      completed: false,
+      currentIndex: 0,
+      currentQuestion: {
+        id: "q1",
+        kind: "choice",
+        prompt: "What comes after 2, 4, 6?",
+        hint: null,
+        options: [
+          { id: "eight", text: "8" },
+          { id: "nine", text: "9" },
+        ],
+      },
+    };
+    await gateway.deferNext("kids.activity.continue");
+    await card.getByRole("button", { name: "Try again", exact: true }).click();
+    const retry = await gateway.waitForRequest("kids.activity.continue", { after: 1 });
+    expect(retry.params).toEqual(first.params);
+    await gateway.setMethodResponse("kids.activity.get", extra);
+    await gateway.resolveDeferred("kids.activity.continue", { snapshot: extra });
+    await card.getByText(extra.activity.currentQuestion!.prompt, { exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: "Let's explore", exact: true }).count()).toBe(0);
+    expect(await readKidsFrame(page)).toEqual(frame);
+    expect(await page.locator(".kids-solve .kids-pet-picture img").getAttribute("src")).toBe(pet);
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await capture("extra-batch-landscape", "iPad landscape — next ten questions begin immediately");
+    await page.reload();
+    await card.getByText(extra.activity.currentQuestion!.prompt, { exact: true }).waitFor();
+    // The mock request log is page-owned; reopening must issue no new generation.
+    expect(await gateway.getRequests("kids.activity.continue")).toHaveLength(0);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByText("Continue · 10 solved today", { exact: true }).waitFor();
+    const almost = structuredClone(extra);
+    almost.activity!.currentIndex = 9;
+    almost.activity!.currentQuestion!.id = "q10";
+    almost.extras.questionsSolved = 9;
+    await gateway.setMethodResponse("kids.activity.get", almost);
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await card.getByText("Questions: 9 of 10", { exact: true }).waitFor();
+    const finished = structuredClone(almost);
+    finished.activity!.completed = true;
+    finished.activity!.currentIndex = 10;
+    finished.activity!.currentQuestion = null;
+    finished.activity!.firstTryCorrect = 7;
+    finished.activity!.hintedQuestions = 2;
+    finished.extras = { questionsSolved: 10, firstTryCorrect: 7, hintedQuestions: 2 };
+    finished.canContinue = true;
+    await gateway.setMethodResponse("kids.activity.answer", {
+      snapshot: finished,
+      feedback: {
+        questionId: "q10",
+        outcome: "correct",
+        independent: true,
+        explanation: "Each step adds two.",
+      },
+    });
+    await card.getByRole("button", { name: "8", exact: true }).click();
+    await card.getByText("Each step adds two.", { exact: true }).waitFor();
+    await gateway.setMethodResponse("kids.activity.get", finished);
+    await card.getByRole("button", { name: "Continue", exact: true }).click();
+    await card.locator(".kids-daily-mark", { hasText: "Today so far" }).waitFor();
+    await card.getByText("20 questions solved", { exact: true }).waitFor();
+    expect(await card.locator(".kids-daily-value").allTextContents()).toEqual(["17", "2", "4"]);
+    expect(await card.locator("button").count()).toBe(1);
+    await capture(
+      "extra-batch-complete-landscape",
+      "iPad landscape — cumulative day results keep the perfect-day streak unchanged",
+    );
+    const extraFrame = await readKidsFrame(page);
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await page.getByText("Today · 20 solved", { exact: true }).waitFor();
+    expect(await readKidsFrame(page)).toEqual(extraFrame);
+    await capture("home-extra-complete-landscape", "Today — cumulative solved questions");
+    await page.getByRole("button", { name: "Solve", exact: true }).click();
+    await page.locator('.kids-activity-card[aria-busy="false"]').waitFor();
+    const second = structuredClone(extra);
+    second.activity!.id = "extra-two";
+    second.extras = { ...finished.extras };
+    await gateway.setMethodResponse("kids.activity.continue", { snapshot: second });
+    await card.getByRole("button", { name: "Keep going", exact: true }).click();
+    const another = await gateway.waitForRequest("kids.activity.continue");
+    expect(another.params).toMatchObject({
+      activityId: "extra-one",
+      requestId: expect.any(String),
+    });
+    await card.getByText(second.activity!.currentQuestion!.prompt, { exact: true }).waitFor();
   } finally {
     await context.close();
   }

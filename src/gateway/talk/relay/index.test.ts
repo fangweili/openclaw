@@ -1049,8 +1049,8 @@ describe("talk realtime gateway relay", () => {
     setTestEnvValue("OPENCLAW_STATE_DIR", tempDir);
     let runtimeConfig: OpenClawConfig = createRelayAgentConfig("main");
     try {
-      const session = createTalkRealtimeRelaySessionRaw({
-        controlSource: "transcript",
+      const session = createTalkRealtimeRelaySession({
+        cfg: runtimeConfig,
         context: {
           broadcastToConnIds: vi.fn(),
           chatAbortControllers: new Map(),
@@ -1059,12 +1059,8 @@ describe("talk realtime gateway relay", () => {
         } as never,
         connId: "conn-owner-pin",
         provider: createIdleRelayProvider(),
-        providerConfig: {},
-        instructions: "brief",
-        tools: [],
-        sessionTarget: prepareTalkSessionTarget(runtimeConfig, "main"),
+        sessionKey: "main",
       });
-      activeRelaySessions.set(session.relaySessionId, "conn-owner-pin");
       runtimeConfig = createRelayAgentConfig("ops");
 
       ensureTalkRealtimeRelayVoiceSession({
@@ -1096,8 +1092,8 @@ describe("talk realtime gateway relay", () => {
     );
     setTestEnvValue("OPENCLAW_STATE_DIR", tempDir);
     try {
-      const session = createTalkRealtimeRelaySessionRaw({
-        controlSource: "transcript",
+      const session = createTalkRealtimeRelaySession({
+        cfg: createRelayAgentConfig("ops"),
         context: {
           broadcastToConnIds: vi.fn(),
           chatAbortControllers: new Map(),
@@ -1106,12 +1102,8 @@ describe("talk realtime gateway relay", () => {
         } as never,
         connId: "conn-trimmed-owner",
         provider: createIdleRelayProvider(),
-        providerConfig: {},
-        instructions: "brief",
-        tools: [],
-        sessionTarget: prepareTalkSessionTarget(createRelayAgentConfig("ops"), " agent:main:main "),
+        sessionKey: " agent:main:main ",
       });
-      activeRelaySessions.set(session.relaySessionId, "conn-trimmed-owner");
 
       ensureTalkRealtimeRelayVoiceSession({
         relaySessionId: session.relaySessionId,

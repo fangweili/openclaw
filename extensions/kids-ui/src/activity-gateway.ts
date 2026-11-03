@@ -22,7 +22,16 @@ type ImageReader = (
   imageId: string,
   assertCurrent: () => void,
 ) => Promise<{ mimeType: string; base64: string }>;
-const METHODS = ["get", "start", "answer", "hint", "touch", "image", "offerPractice"] as const;
+const METHODS = [
+  "get",
+  "start",
+  "answer",
+  "hint",
+  "touch",
+  "continue",
+  "image",
+  "offerPractice",
+] as const;
 type Method = (typeof METHODS)[number];
 
 function text(value: unknown): string {
@@ -44,7 +53,7 @@ function parseMutation(
     return { kind: method, requestId, source: params.source };
   }
   const activityId = text(params.activityId);
-  if (method === "start") {
+  if (method === "start" || method === "continue") {
     return { kind: method, requestId, activityId };
   }
   const questionId = text(params.questionId);
@@ -151,7 +160,12 @@ export function registerKidsActivityGateway(
                 ? await owner.get(child.childId, assertCurrent)
                 : method === "image"
                   ? await options.readImage(child.childId, text(params.imageId), assertCurrent)
-                  : await owner.mutate(child.childId, parseMutation(method, params), assertCurrent);
+                  : await owner.mutate(
+                      child.childId,
+                      parseMutation(method, params),
+                      assertCurrent,
+                      request.signal,
+                    );
           }
           assertCurrent();
           request.respond(true, result);
