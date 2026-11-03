@@ -104,9 +104,10 @@ and does not prevent the agent from adopting that consult's recorded input.
 Completed agent answers and newly admitted tasks still close the older input;
 speech records do not reopen it.
 
+Transcript-controlled browser calls, including Google Live and OpenAI GA, and
 Gateway-controlled native WebRTC calls receive shared-session history as quoted
-historical background in their instructions, not as the new call's own user or
-assistant messages. This background can include prior calls and backing-agent
+historical background in their initial instructions, not as the new call's own
+user or assistant messages. This background can include prior calls and backing-agent
 answers; it does not establish the current call's live task state. It retains
 the newest history within 16 entries, 800 characters per entry, and 8,000 UTF-8
 bytes including labels and quoting. This changes neither saved transcripts nor

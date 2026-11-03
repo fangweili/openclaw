@@ -1,3 +1,9 @@
+/**
+ * Admits client-owned realtime transports for one prepared agent/session target.
+ * Transcript-controlled providers receive quoted pre-call history in their initial
+ * instructions; native delegation providers retain their own history translation.
+ * The handler owns startup cleanup until it delivers the client transport.
+ */
 import { randomUUID } from "node:crypto";
 import {
   normalizeOptionalLowercaseString,
@@ -48,7 +54,10 @@ import {
   isUnsupportedBrowserWebRtcSession,
   resolveTalkRealtimeProviderInstructions,
 } from "../session-config.js";
-import { readTalkRealtimeInitialItems } from "../session-history.js";
+import {
+  buildTalkRealtimeHistoryInstructions,
+  readTalkRealtimeInitialItems,
+} from "../session-history.js";
 import { requirePreparedTalkSessionTarget } from "../session-target.js";
 import {
   markTalkVoiceSessionReady,
@@ -205,7 +214,8 @@ export const createTalkClient: GatewayRequestHandler = async ({
       const instructions =
         controlSource === "delegation"
           ? normalizeOptionalString(providerInstructions)
-          : buildRealtimeInstructions(providerInstructions);
+          : buildRealtimeInstructions(providerInstructions) +
+            buildTalkRealtimeHistoryInstructions(initialItems);
       const requestedVoiceSessionId = normalizeOptionalString(params.voiceSessionId);
       const ownsProvider =
         wantsGatewayControl || providerCapabilities?.handlesAgentConsult === true;

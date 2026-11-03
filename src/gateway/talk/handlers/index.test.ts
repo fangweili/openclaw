@@ -35,7 +35,8 @@ import type {
 import { bindSessionRowProjection } from "../../session-row-projection-access.js";
 import { resolveSessionMutationAuthorization } from "../../session-sharing.js";
 import { prepareTalkAgentConsultTranscript } from "../agent-consult-transcript.js";
-import { buildTalkRealtimeConfig } from "../session-config.js";
+import { buildRealtimeInstructions, buildTalkRealtimeConfig } from "../session-config.js";
+import { buildTalkRealtimeHistoryInstructions } from "../session-history.js";
 import { preparedTalkSessionProjection as projection } from "../test-helpers.js";
 import { forgetLegacyVoiceBinding } from "./client-legacy-voice-bindings.js";
 import { talkConfigAccentCases } from "./config-accent.test-support.js";
@@ -3344,7 +3345,11 @@ describe("talk.client.create handler", () => {
     });
   });
 
-  it("uses talk.realtime provider, model, voice, and instructions without reading speech provider config", async () => {
+  it("uses talk.realtime launch settings and quoted startup history", async () => {
+    const initialItems = [
+      { role: "user" as const, text: `2:${"🙂".repeat(799)}` },
+      { role: "assistant" as const, text: `3:${"🙂".repeat(799)}` },
+    ];
     mocks.resolveRealtimeVoiceAgentContextInstructions.mockResolvedValue(
       `${REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS}\n\nBounded profile context.`,
     );
@@ -3352,8 +3357,7 @@ describe("talk.client.create handler", () => {
       { role: "user", text: "0:old small item" },
       { role: "assistant", text: `1:${"🙂".repeat(799)}` },
       { role: "tool", text: "internal tool output" },
-      { role: "user", text: `2:${"🙂".repeat(799)}` },
-      { role: "assistant", text: `3:${"🙂".repeat(799)}` },
+      ...initialItems,
     ]);
     const createBrowserSession = createBrowserSessionMock();
     const provider = createBrowserProvider(createBrowserSession);
@@ -3405,19 +3409,16 @@ describe("talk.client.create handler", () => {
       silenceDurationMs: 650,
       prefixPaddingMs: 250,
       reasoningEffort: "low",
-      initialItems: [
-        { role: "user", text: `2:${"🙂".repeat(799)}` },
-        { role: "assistant", text: `3:${"🙂".repeat(799)}` },
-      ],
+      initialItems,
     });
-    expect(createInput.instructions).toContain("Additional realtime instructions:\nSpeak warmly.");
-    expect(createInput.instructions).toContain("Bounded profile context.");
-    expect(createInput.instructions).toContain("tool-backed actions");
-    expect(createInput.instructions).toContain("Let me check that for you");
+    expect(createInput.instructions).toBe(
+      buildRealtimeInstructions(
+        `Speak warmly.\n\n${REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS}\n\nBounded profile context.`,
+      ) + buildTalkRealtimeHistoryInstructions(initialItems),
+    );
     expect(createInput.tools).not.toContainEqual(
       expect.objectContaining({ name: REALTIME_VOICE_DESCRIBE_VIEW_TOOL_NAME }),
     );
-    expect(createInput.runAgentConsult).toEqual(expect.any(Function));
     const consultSignal = new AbortController().signal;
     await (
       createInput.runAgentConsult as (params: {
@@ -3433,10 +3434,7 @@ describe("talk.client.create handler", () => {
         sessionKey: "agent:main:main",
         storePath: expect.any(String),
         args: { question: "Check the repository" },
-        transcript: [
-          { role: "user", text: `2:${"🙂".repeat(799)}` },
-          { role: "assistant", text: `3:${"🙂".repeat(799)}` },
-        ],
+        transcript: initialItems,
         surface: "a browser Talk session",
         abortSignal: consultSignal,
         senderIsOwner: false,
@@ -3515,6 +3513,7 @@ describe("talk.client.create handler", () => {
       model: "gpt-live-1",
       runAgentConsult: expect.any(Function),
     });
+    expect(createInput.instructions).toBe(REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS);
     await (
       createInput.runAgentConsult as (params: { prompt: string }) => Promise<{ text: string }>
     )({ prompt: "Check the repository" });
@@ -3742,9 +3741,10 @@ describe("talk.client.create handler", () => {
       respond,
     });
 
-    expect(createBrowserSession).toHaveBeenCalledWith(
-      expect.objectContaining({ initialItems: [] }),
-    );
+    expectRecordFields(mockCallArg(createBrowserSession), {
+      initialItems: [],
+      instructions: buildRealtimeInstructions(REALTIME_VOICE_AGENT_CONTEXT_INSTRUCTIONS),
+    });
     expect(mocks.ensureClientVoiceAgentSessionEntry).not.toHaveBeenCalled();
     expect(mocks.createOrResumeClientVoiceSession).not.toHaveBeenCalled();
     expectRespondError(respond, { message: "Error: provider startup failed" });
