@@ -42,6 +42,7 @@ import {
   resolveTalkAgentConsultAuthority,
 } from "../client-gateway-control.js";
 import { resolveTalkDirectMemoryTool, TALK_DIRECT_MEMORY_INSTRUCTIONS } from "../direct-memory.js";
+import { validateTalkLocalTools } from "../local-tools.js";
 import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
@@ -166,6 +167,17 @@ export const createTalkClient: GatewayRequestHandler = async ({
       clientControl,
     });
     const providerCapabilities = resolution.capabilities;
+    if (
+      params.localTools?.length &&
+      (wantsGatewayControl ||
+        providerCapabilities?.handlesAgentConsult === true ||
+        providerCapabilities?.supportsToolCalls !== true)
+    ) {
+      return rejectRequest(
+        ErrorCodes.INVALID_REQUEST,
+        "localTools requires a client-owned provider with function calls",
+      );
+    }
     if (wantsGatewayControl && providerCapabilities?.supportsGatewayControl !== true) {
       return rejectRequest(
         ErrorCodes.UNAVAILABLE,
@@ -221,6 +233,13 @@ export const createTalkClient: GatewayRequestHandler = async ({
           : undefined;
       if (directMemoryTool) {
         tools.push(directMemoryTool);
+      }
+      if (params.localTools?.length) {
+        const error = validateTalkLocalTools(params.localTools, tools);
+        if (error) {
+          return rejectRequest(ErrorCodes.INVALID_REQUEST, error);
+        }
+        tools.push(...params.localTools);
       }
       const instructions =
         controlSource === "delegation"

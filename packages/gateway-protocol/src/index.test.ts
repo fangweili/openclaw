@@ -164,6 +164,31 @@ describe("formatValidationErrors", () => {
 });
 
 describe("Talk request policy", () => {
+  it("admits client tool metadata without interpreting nested provider schemas", () => {
+    const tool = {
+      type: "function",
+      name: "set_volume",
+      description: "Set the client speaker volume.",
+      parameters: {
+        type: "object",
+        properties: { volume: { type: "number", minimum: 0, maximum: 100 } },
+        required: ["volume"],
+        additionalProperties: false,
+      },
+    };
+    expect(validateTalkClientCreateParams({ localTools: [tool] })).toBe(true);
+    expect(validateTalkClientCreateParams({ localTools: [] })).toBe(true);
+    expect(
+      validateTalkClientCreateParams({ localTools: Array.from({ length: 17 }, () => tool) }),
+    ).toBe(false);
+    expect(
+      validateTalkClientCreateParams({ localTools: [{ ...tool, name: "bad tool name" }] }),
+    ).toBe(false);
+    expect(
+      validateTalkClientCreateParams({ localTools: [{ ...tool, parameters: { type: "array" } }] }),
+    ).toBe(false);
+  });
+
   it("rejects request-time instruction overrides for Talk client creation", () => {
     const request = { sessionKey: "agent:main:main" };
     expect(validateTalkClientCreateParams(request)).toBe(true);

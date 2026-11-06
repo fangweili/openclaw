@@ -43,6 +43,42 @@ Status and list are read-only. Setting a voice requires the message-channel owne
 
 Client-owned realtime Talk normally forwards provider tool calls through `talk.client.toolCall` instead of calling `chat.send` directly. GPT-Live WebRTC sessions delegate on a Gateway-owned sideband, and the Gateway binds each delegation to the browser or Gateway-relay Talk session that owns it. Backend WebSocket bridges use the normal relay consult path. While a realtime consult is active, clients can call `talk.client.steer` or `talk.session.steer` to classify spoken input as `status`, `steer`, `cancel`, or `followup`; this includes GPT-Live delegations. Accepted steering queues into the active embedded run; rejected steering returns a reason such as `no_active_run`, `not_streaming`, or `compacting`. A newer GPT-Live spoken task also supersedes the running delegation.
 
+### Client-local tools
+
+Clients that own the provider connection can include `localTools` in each
+`talk.client.create` request. Each entry has the existing function-tool shape:
+`type: "function"`, `name`, `description`, and an object `parameters` schema with
+`properties` and optional `required`. For example, a client can declare
+`end_conversation` with empty properties and describe when the model should end
+that client's call. Parameter-schema compatibility remains provider-owned.
+
+The Gateway merges these declarations with its existing tools before creating the
+provider credential. This also works with Google Live's constrained ephemeral
+tokens, whose tools cannot be added afterward by changing the client setup.
+Configured agent instructions and Gateway tool authority remain unchanged.
+
+The list is limited to 16 tools and 32,768 UTF-8 bytes when JSON-serialized. Names
+must start with a letter or underscore, contain only letters, digits or underscores,
+and be at most 64 characters. Duplicate names and names reserved for Gateway tools
+(`openclaw_agent_consult`, `openclaw_agent_control`, `describe_view`, and
+`memory_search`) are rejected, even when the corresponding tool is not enabled.
+Additional currently advertised Gateway tool names are reserved as well.
+
+Nonempty declarations require a provider with function calls and client-owned
+control; native delegation and `gateway-control-v1` reject them before credential
+creation. Omitting the list or sending an empty list preserves existing behavior.
+Supply the declarations again for each new or replacement call.
+
+The client owns local argument validation, execution, cancellation, tool results,
+and resource cleanup. It handles these tool calls directly on the provider
+connection and continues forwarding Gateway tools through their existing routes.
+Declarations do not register backend tools or authorize new Gateway operations;
+the Gateway does not execute, forward, or retain local tool calls. A model tool
+call is not proof that farewell audio has played: clients must finish or bound
+playback before closing a conversation.
+
+### Gateway-controlled calls
+
 Thin audio clients can request `gateway-control-v1` in
 `talk.client.create.capabilities`. OpenAI GA Realtime requires a Platform API
 key for this mode. The released GPT-Live route keeps its existing ChatGPT OAuth
