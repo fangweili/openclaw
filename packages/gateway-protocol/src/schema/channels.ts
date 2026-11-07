@@ -177,6 +177,22 @@ export const TalkEventSchema = Type.Object(
 // charset excludes the `:` delimiter to keep distinct id pairs collision-free.
 const VoiceIdString = Type.String({ pattern: "^[A-Za-z0-9_-]{1,128}$" });
 
+// Client-executed declarations use the provider's existing function-tool shape.
+// Providers own nested JSON Schema support; admission bounds the serialized list.
+const TalkLocalToolSchema = closedObject({
+  type: Type.Literal("function"),
+  name: Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }),
+  description: Type.String(),
+  parameters: Type.Object(
+    {
+      type: Type.Literal("object"),
+      properties: Type.Record(Type.String(), Type.Unknown()),
+      required: Type.Optional(Type.Array(Type.String())),
+    },
+    { additionalProperties: true },
+  ),
+});
+
 export const TalkClientCreateParamsSchema = closedObject({
   sessionKey: Type.Optional(NonEmptyString),
   voiceSessionId: Type.Optional(VoiceIdString),
@@ -191,6 +207,7 @@ export const TalkClientCreateParamsSchema = closedObject({
   mode: Type.Optional(TalkModeSchema),
   transport: Type.Optional(TalkTransportSchema),
   brain: Type.Optional(TalkBrainSchema),
+  localTools: Type.Optional(Type.Array(TalkLocalToolSchema, { maxItems: 16 })),
   capabilities: Type.Optional(
     Type.Array(
       Type.Union([
